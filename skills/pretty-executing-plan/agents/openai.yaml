@@ -1,0 +1,4 @@
+interface:
+  display_name: "pretty-executing-plan"
+  short_description: "按已批准计划执行并提供TDD、测试覆盖率与代码质量证据"
+  default_prompt: "使用 $pretty-executing-plan 严格执行已批准实施计划并生成可审计的质量证据。"

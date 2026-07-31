@@ -1,0 +1,4 @@
+interface:
+  display_name: "pretty-writing-plan"
+  short_description: "生成可执行中文实施计划并强制执行测试覆盖率与质量门禁"
+  default_prompt: "使用 $pretty-writing-plan 基于已批准 Design 创建包含明确测试覆盖率门禁的中文可执行实施计划。"
