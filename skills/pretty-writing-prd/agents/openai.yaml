@@ -1,4 +1,4 @@
 interface:
   display_name: "pretty-writing-prd"
-  short_description: "基于用户澄清与仓库证据生成中文 PRD 并执行需求质量门禁"
+  short_description: "创建或机械审查中文 PRD，并执行需求质量门禁"
   default_prompt: "使用 $pretty-writing-prd 创建经过澄清、批准和质量门禁的中文 PRD。"

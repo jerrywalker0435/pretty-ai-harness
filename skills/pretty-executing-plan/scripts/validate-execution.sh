@@ -423,7 +423,8 @@ validate_control_contract() {
 
     function known_state(state) {
       return state == "未开始" || state == "执行中" || state == "等待 Review" ||
-        state == "等待当前分支提交批准" || state == "最终验证中" || state == "安全暂停" ||
+        state == "等待候选差异应用批准" || state == "等待当前分支提交批准" ||
+        state == "最终验证中" || state == "安全暂停" ||
         state == "立即中断" || state == "已取消" || state == "阻塞" || state == "已完成"
     }
 
@@ -439,6 +440,9 @@ validate_control_contract() {
         return to == "等待 Review" || stoppable_target(to)
       }
       if (from == "等待 Review") {
+        return to == "等待候选差异应用批准" || to == "执行中" || stoppable_target(to)
+      }
+      if (from == "等待候选差异应用批准") {
         return to == "等待当前分支提交批准" || to == "执行中" || stoppable_target(to)
       }
       if (from == "等待当前分支提交批准") {
@@ -448,7 +452,8 @@ validate_control_contract() {
         return to == "已完成" || stoppable_target(to)
       }
       if (from == "安全暂停" || from == "立即中断" || from == "阻塞") {
-        return to == "执行中" || to == "等待 Review" || to == "等待当前分支提交批准" ||
+        return to == "执行中" || to == "等待 Review" || to == "等待候选差异应用批准" ||
+          to == "等待当前分支提交批准" ||
           to == "最终验证中" || to == "已取消" || to == "阻塞"
       }
       return 0
@@ -744,6 +749,9 @@ validate_integration_contract() {
       if (rejection_history_count != 1) {
         fail("集成单元 " unit_id " 必须保留 Review 驳回历史或明确写无")
       }
+      if (apply_approval_count != 1 || apply_approval !~ /^已批准（[^）]+）$/) {
+        fail("集成单元 " unit_id " 必须记录绑定批准内容指纹的人类候选差异应用批准")
+      }
       if (apply_command_count != 1 || apply_command !~ /git apply/ || apply_command ~ /--(index|cached|3way)/) {
         fail("集成单元 " unit_id " 必须记录候选差异应用命令")
       }
@@ -816,11 +824,13 @@ validate_integration_contract() {
           batch_commit_before = commit_before
           batch_commit_after = commit_after
           batch_approval_fingerprint = approval_fingerprint
+          batch_apply_approval = apply_approval
           batch_approval = approval
           batch_unified_review = unified_review
         } else if (apply_before != batch_apply_before || apply_after != batch_apply_after ||
                    commit_before != batch_commit_before || commit_after != batch_commit_after ||
-                   approval_fingerprint != batch_approval_fingerprint || approval != batch_approval ||
+                   approval_fingerprint != batch_approval_fingerprint || apply_approval != batch_apply_approval ||
+                   approval != batch_approval ||
                    unified_review != batch_unified_review) {
           fail("一次性模式的所有单元必须引用同一次统一 Review、当前分支提交及批准证据")
         }
@@ -848,7 +858,8 @@ validate_integration_contract() {
       report_isolation_count = unified_review_count = plan_fingerprint_count = code_fingerprint_count = 0
       command_fingerprint_count = dependency_fingerprint_count = environment_fingerprint_count = 0
       evidence_disposition_count = reviewer1_count = reviewer2_count = rejection_history_count = 0
-      approval_count = apply_command_count = apply_exit_count = apply_before_count = apply_after_count = 0
+      apply_approval_count = approval_count = apply_command_count = apply_exit_count = 0
+      apply_before_count = apply_after_count = 0
       apply_result_count = approval_fingerprint_count = commit_message_count = current_commit_count = 0
       commit_command_count = commit_exit_count = commit_before_count = commit_after_count = 0
       commit_result_count = duration_count = unit_result_count = 0
@@ -871,6 +882,7 @@ validate_integration_contract() {
     in_units && unit_id != "" && /^Reviewer 1 结论：/ { reviewer1_count++; reviewer1 = value_after($0, "Reviewer 1 结论："); next }
     in_units && unit_id != "" && /^Reviewer 2 结论：/ { reviewer2_count++; reviewer2 = value_after($0, "Reviewer 2 结论："); next }
     in_units && unit_id != "" && /^Review 驳回历史：/ { rejection_history_count++; rejection_history = value_after($0, "Review 驳回历史："); next }
+    in_units && unit_id != "" && /^候选差异应用批准：/ { apply_approval_count++; apply_approval = value_after($0, "候选差异应用批准："); next }
     in_units && unit_id != "" && /^候选差异应用命令：/ { apply_command_count++; apply_command = value_after($0, "候选差异应用命令："); gsub(/`/, "", apply_command); next }
     in_units && unit_id != "" && /^候选差异应用退出码：/ { apply_exit_count++; apply_exit = value_after($0, "候选差异应用退出码："); next }
     in_units && unit_id != "" && /^候选差异应用前 HEAD：/ { apply_before_count++; apply_before = hash_after($0, "候选差异应用前 HEAD："); next }
@@ -1242,6 +1254,7 @@ validate_report() {
     require_pattern '任务候选提交：`([0-9a-f]{40}|[0-9a-f]{64})`' '等待当前分支提交批准时缺少任务候选提交'
     require_pattern '任务候选树：`([0-9a-f]{40}|[0-9a-f]{64})`' '等待当前分支提交批准时缺少任务候选树'
     require_pattern '批准内容指纹：`([0-9a-f]{40}|[0-9a-f]{64})`' '等待当前分支提交批准时缺少批准内容指纹'
+    require_pattern '候选差异应用批准：已批准（[^）]+）' '等待当前分支提交批准时缺少候选差异应用批准'
     require_pattern '当前分支提交信息：' '等待当前分支提交批准时缺少拟用提交信息'
     require_pattern '候选差异应用命令：' '等待当前分支提交批准时缺少候选差异应用命令'
     require_pattern '候选差异应用退出码：0' '等待当前分支提交批准时缺少成功的差异应用退出码'
@@ -1251,6 +1264,14 @@ validate_report() {
     if ! validate_pending_workspace_contract "$report_file"; then
       failures=$((failures + 1))
     fi
+  fi
+
+  if [ "$completion_mode" = 'structure' ] && grep -Eq '^当前状态：等待候选差异应用批准。?$' "$report_file"; then
+    require_pattern '任务候选提交：`([0-9a-f]{40}|[0-9a-f]{64})`' '等待候选差异应用批准时缺少任务候选提交'
+    require_pattern '任务候选树：`([0-9a-f]{40}|[0-9a-f]{64})`' '等待候选差异应用批准时缺少任务候选树'
+    require_pattern 'Reviewer 1 结论：通过（[^）]+）' '等待候选差异应用批准时缺少独立 Review 通过证据'
+    require_pattern '批准内容指纹：`([0-9a-f]{40}|[0-9a-f]{64})`' '等待候选差异应用批准时缺少批准内容指纹'
+    reject_pattern '^候选差异应用批准：|^候选差异应用命令：|^候选差异应用退出码：|^候选差异应用前 HEAD：|^候选差异应用后 HEAD：|^候选差异应用结论：|^当前分支提交批准：|^当前分支提交命令：|^当前分支提交退出码：|^当前分支提交前 HEAD：|^当前分支提交后 HEAD：|^当前分支提交：|^当前分支提交结论：' '等待候选差异应用批准时不得记录差异已应用或当前分支已提交'
   fi
 
   if [ "$completion_mode" = 'complete' ]; then
@@ -1290,7 +1311,7 @@ validate_report() {
     require_pattern '业务切片结论：通过|业务切片结论：不适用（[^）]+）' '业务切片门禁未通过且无不适用理由'
     require_pattern '最终回归退出码：0' '最终全量回归未通过'
     require_pattern '最终验证退出码：0' 'completion verification 未通过'
-    require_pattern 'finish-work 结论：通过' 'finish-work 未通过'
+    require_pattern 'finish-work 结论：(通过|不适用（仓库未定义[^）]*）)' 'finish-work 未通过且没有仓库未定义证据'
     require_pattern 'Plan 最终哈希：`([0-9a-f]{40}|[0-9a-f]{64})`' '缺少有效的 Plan 最终哈希'
     require_pattern 'Plan 只读校验：通过' 'Plan 最终只读校验未通过'
     require_pattern 'Worktree 路径：`[^`]+`|Worktree 路径：不适用（[^）]+）' 'Worktree 路径为空或格式无效'
@@ -1368,9 +1389,11 @@ run_self_test() {
   illegal_transition_report="$fixture_dir/2026-08-19-rush-order-execution.md"
   missing_unit_review_report="$fixture_dir/2026-08-20-rush-order-execution.md"
   missing_commit_approval_report="$fixture_dir/2026-08-21-rush-order-execution.md"
+  apply_without_approval_report="$fixture_dir/2026-09-07-rush-order-execution.md"
   missing_evidence_fingerprint_report="$fixture_dir/2026-08-22-rush-order-execution.md"
   mismatched_main_head_report="$fixture_dir/2026-08-23-rush-order-execution.md"
   paused_report="$fixture_dir/2026-08-24-rush-order-execution.md"
+  pending_apply_report="$fixture_dir/2026-09-08-rush-order-execution.md"
   pending_report="$fixture_dir/2026-08-32-rush-order-execution.md"
   pending_head_drift_report="$fixture_dir/2026-09-04-rush-order-execution.md"
   pending_fingerprint_mismatch_report="$fixture_dir/2026-09-05-rush-order-execution.md"
@@ -1385,6 +1408,7 @@ run_self_test() {
   below_threshold_report="$fixture_dir/2026-08-31-rush-order-execution.md"
   paused_stale_hash_report="$fixture_dir/2026-09-01-rush-order-execution.md"
   linked_worktree_report="$test_dir/report-worktree/docs/pretty/rush-order/2026-08-28-rush-order-execution.md"
+  finish_work_unavailable_report="$fixture_dir/2026-09-09-rush-order-execution.md"
 
   cleanup_self_test() {
     rm -rf -- "$test_dir"
@@ -1471,17 +1495,21 @@ Plan 路径：`docs/pretty/rush-order/2026-07-27-rush-order-plan.md`。Design �
 恢复入口：不适用（正常启动）。
 ### 控制事件 2：等待代码审查
 状态转换：执行中 -> 等待 Review。
-触发来源：集成单元 U1 完成任务提交和单元门禁。
-恢复入口：人工 Review 结论。
-### 控制事件 3：等待当前分支提交批准
-状态转换：等待 Review -> 等待当前分支提交批准。
-触发来源：Reviewer 1 审查通过并已应用候选差异。
+触发来源：集成单元 U1 完成候选提交和单元门禁。
+恢复入口：独立 Reviewer 结论。
+### 控制事件 3：等待候选差异应用批准
+状态转换：等待 Review -> 等待候选差异应用批准。
+触发来源：Reviewer 1 审查通过。
+恢复入口：人工批准应用候选差异。
+### 控制事件 4：等待当前分支提交批准
+状态转换：等待候选差异应用批准 -> 等待当前分支提交批准。
+触发来源：人工批准并已应用候选差异。
 恢复入口：人工批准当前分支提交。
-### 控制事件 4：执行最终门禁
+### 控制事件 5：执行最终门禁
 状态转换：等待当前分支提交批准 -> 最终验证中。
 触发来源：人工批准并完成 U1 的当前分支本地提交。
 恢复入口：最终全量门禁结果。
-### 控制事件 5：完成
+### 控制事件 6：完成
 状态转换：最终验证中 -> 已完成。
 触发来源：最终全量门禁通过。
 恢复入口：不适用（执行完成）。
@@ -1543,6 +1571,7 @@ Plan 证据指纹：`__PLAN_HASH__`。
 Reviewer 1 结论：通过（独立完成 Plan 符合性与代码质量审查）。
 Reviewer 2 结论：不适用（低风险单元只需一个独立 Reviewer）。
 Review 驳回历史：无。
+候选差异应用批准：已批准（用户批准记录 C，绑定批准内容指纹）。
 候选差异应用命令：`git diff --binary __BASE_COMMIT__ __UNIT_COMMIT__ | git apply`。
 候选差异应用退出码：0。
 候选差异应用前 HEAD：`__BASE_COMMIT__`。
@@ -1550,7 +1579,7 @@ Review 驳回历史：无。
 候选差异应用结论：通过。
 批准内容指纹：`__UNIT_TREE__`。
 当前分支提交信息：`feat: complete unit U1`。
-当前分支提交批准：已批准（用户批准记录 C，包含上述提交信息）。
+当前分支提交批准：已批准（用户批准记录 D，包含上述提交信息）。
 当前分支提交命令：`git add -- unit-one.txt && git commit -m 'feat: complete unit U1'`。
 当前分支提交退出码：0。
 当前分支提交前 HEAD：`__BASE_COMMIT__`。
@@ -1606,14 +1635,27 @@ EOF
     -e '/^当前分支提交批准：/d;/^当前分支提交命令：/d;/^当前分支提交退出码：/d;/^当前分支提交前 HEAD：/d;/^当前分支提交后 HEAD：/d;/^当前分支提交：/d;/^当前分支提交结论：/d' \
     "$good_report" |
   awk '
-    /^### 控制事件 4：/ { skip=1 }
+    /^### 控制事件 5：/ { skip=1 }
     /^## 工作区与质量基线$/ { skip=0 }
     !skip { print }
   ' |
     sed -e 's/^当前状态：已完成。$/当前状态：等待当前分支提交批准。/' \
+      -e 's/^自动编排状态：停止（执行完成）。$/自动编排状态：停止（等待当前分支提交批准）。/' \
       -e 's/^最终结论：完成。$/最终结论：未完成。/' \
-      -e 's/^触发来源：Reviewer 1 审查通过。$/触发来源：Reviewer 1 审查通过并已应用候选差异。/' \
     > "$pending_report"
+
+  sed -e '/^候选差异应用批准：/d;/^候选差异应用命令：/d;/^候选差异应用退出码：/d;/^候选差异应用前 HEAD：/d;/^候选差异应用后 HEAD：/d;/^候选差异应用结论：/d' \
+    -e '/^当前分支提交信息：/d;/^当前分支提交批准：/d;/^当前分支提交命令：/d;/^当前分支提交退出码：/d;/^当前分支提交前 HEAD：/d;/^当前分支提交后 HEAD：/d;/^当前分支提交：/d;/^当前分支提交结论：/d' \
+    "$good_report" |
+  awk '
+    /^### 控制事件 4：/ { skip=1 }
+    /^## 工作区与质量基线$/ { skip=0 }
+    !skip { print }
+  ' |
+    sed -e 's/^当前状态：已完成。$/当前状态：等待候选差异应用批准。/' \
+      -e 's/^自动编排状态：停止（执行完成）。$/自动编排状态：停止（等待候选差异应用批准）。/' \
+      -e 's/^最终结论：完成。$/最终结论：未完成。/' \
+    > "$pending_apply_report"
   sed "s|^预期主分支 HEAD：.*$|预期主分支 HEAD：\`$current_commit\`。|" \
     "$pending_report" > "$pending_head_drift_report"
   sed 's/^批准内容指纹：.*/批准内容指纹：`0000000000000000000000000000000000000000`。/' \
@@ -1671,10 +1713,12 @@ EOF
   cp "$good_report" "$legacy_report"
   cp "$good_report" "$mismatched_topic_report"
   sed 's/^当前状态：已完成。$/当前状态：安全暂停。/' "$good_report" > "$contradictory_status_report"
-  sed 's/^状态转换：等待 Review -> 等待当前分支提交批准。$/状态转换：执行中 -> 已完成。/' \
+  sed 's/^状态转换：等待候选差异应用批准 -> 等待当前分支提交批准。$/状态转换：执行中 -> 已完成。/' \
     "$good_report" > "$illegal_transition_report"
   sed '/^Reviewer 1 结论：/d' "$good_report" > "$missing_unit_review_report"
   sed '/^当前分支提交批准：/d' "$good_report" > "$missing_commit_approval_report"
+  sed 's/^候选差异应用批准：.*$/候选差异应用批准：未批准（用户离线）。/' \
+    "$good_report" > "$apply_without_approval_report"
   sed 's/&& git commit -m/\&\& git commit --no-verify -m/' "$good_report" > "$no_verify_commit_report"
   sed '/^环境证据指纹：/d' "$good_report" > "$missing_evidence_fingerprint_report"
   awk -v expected_head="$base_commit" '
@@ -1698,7 +1742,7 @@ EOF
     -e 's|^Worktree 路径：.*$|Worktree 路径：不适用（一次性模式自测使用独立主工作区）。|' \
     -e "s/^统一 Review 证据指纹：不适用（默认模式逐单元审查）。$/统一 Review 证据指纹：\`$unified_review_fingerprint\`。/" \
     -e 's/^Reviewer 1 结论：通过（独立完成 Plan 符合性与代码质量审查）。$/Reviewer 1 结论：通过（最终统一 Review 已覆盖 Plan 符合性与代码质量）。/' \
-    -e 's/^当前分支提交批准：已批准（用户批准记录 C，包含上述提交信息）。$/当前分支提交批准：一次性当前分支提交已批准（用户批准记录 C，包含上述提交信息）。/' \
+    -e 's/^当前分支提交批准：已批准（用户批准记录 D，包含上述提交信息）。$/当前分支提交批准：一次性当前分支提交已批准（用户批准记录 D，包含上述提交信息）。/' \
     -e "s|^候选差异应用前 HEAD：.*$|候选差异应用前 HEAD：\`$base_commit\`。|" \
     -e "s|^候选差异应用后 HEAD：.*$|候选差异应用后 HEAD：\`$base_commit\`。|" \
     -e "s|^批准内容指纹：.*$|批准内容指纹：\`$unit2_tree\`。|" \
@@ -1731,6 +1775,7 @@ EOF
         print "Reviewer 1 结论：通过（最终统一 Review 已覆盖 Plan 符合性与代码质量）。"
         print "Reviewer 2 结论：不适用（低风险单元只需一个独立 Reviewer）。"
         print "Review 驳回历史：无。"
+        print "候选差异应用批准：已批准（用户批准记录 C，绑定批准内容指纹）。"
         print "候选差异应用命令：`git diff --binary " base " " mapped_head " | git apply`。"
         print "候选差异应用退出码：0。"
         print "候选差异应用前 HEAD：`" base "`。"
@@ -1738,7 +1783,7 @@ EOF
         print "候选差异应用结论：通过。"
         print "批准内容指纹：`" tree "`。"
         print "当前分支提交信息：`feat: integrate batch units`。"
-        print "当前分支提交批准：一次性当前分支提交已批准（用户批准记录 C，包含上述提交信息）。"
+        print "当前分支提交批准：一次性当前分支提交已批准（用户批准记录 D，包含上述提交信息）。"
         print "当前分支提交命令：`git add -- unit-one.txt unit-two.txt && git commit -m feat-integrate-batch-units`。"
         print "当前分支提交退出码：0。"
         print "当前分支提交前 HEAD：`" base "`。"
@@ -1783,6 +1828,8 @@ EOF
   sed 's/任务类型：非行为验证。/任务类型：业务行为。/' "$good_report" > "$second_behavior_missing_tdd_report"
   sed 's/行覆盖率结果：90%。/行覆盖率结果：10%。/;s/分支覆盖率结果：80%。/分支覆盖率结果：5%。/' \
     "$good_report" > "$below_threshold_report"
+  sed 's/^finish-work 结论：通过。$/finish-work 结论：不适用（仓库未定义该质量 Skill）。/' \
+    "$good_report" > "$finish_work_unavailable_report"
   awk '
     /^### 任务 / { task_count++ }
     task_count == 2 && /^Plan 只读复验哈希：/ {
@@ -1856,7 +1903,8 @@ EOF
     "$reapproval_not_confirmed" "$existing_results_review_failed" "$global_ignore_only_report" \
     "$stale_current_plan_report" "$contradictory_status_report" "$illegal_transition_report" \
     "$missing_unit_review_report" "$missing_commit_approval_report" "$no_verify_commit_report" \
-    "$missing_evidence_fingerprint_report" "$mismatched_main_head_report"; do
+    "$missing_evidence_fingerprint_report" "$mismatched_main_head_report" \
+    "$apply_without_approval_report"; do
     if validate_report "$bad_report" complete >/dev/null 2>&1; then
       echo "SELF-TEST FAILED: invalid report was accepted: $bad_report" >&2
       return 1
@@ -1881,6 +1929,10 @@ EOF
   fi
   if ! validate_report "$pending_report" structure; then
     echo 'SELF-TEST FAILED: valid pending current-branch commit report was rejected' >&2
+    return 1
+  fi
+  if ! validate_report "$pending_apply_report" structure; then
+    echo 'SELF-TEST FAILED: valid pending candidate-application approval report was rejected' >&2
     return 1
   fi
   for invalid_pending_report in "$pending_head_drift_report" "$pending_fingerprint_mismatch_report"; do
@@ -1921,6 +1973,10 @@ EOF
   done
   if ! validate_report "$non_plan_block_recovered_report" complete; then
     echo 'SELF-TEST FAILED: a recovered non-Plan blocking batch was rejected' >&2
+    return 1
+  fi
+  if ! validate_report "$finish_work_unavailable_report" complete; then
+    echo 'SELF-TEST FAILED: missing optional repository finish-work skill was not accepted with evidence' >&2
     return 1
   fi
   for invalid_semantic_report in "$second_behavior_missing_tdd_report" "$below_threshold_report" \

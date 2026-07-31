@@ -207,9 +207,10 @@ validate_orchestration_contract() {
                   isolation !~ /依赖/ || isolation !~ /集成顺序/)) {
         fail("允许并行实现的集成单元 " unit_id " 必须证明 worktree、文件、依赖和集成顺序隔离")
       }
-      if (checkpoint_count != 1 || checkpoint !~ /worktree/ || checkpoint !~ /候选提交/ || checkpoint !~ /人工 Review/ ||
-          checkpoint !~ /应用.*未暂存/ || checkpoint !~ /人工批准.*当前分支提交/ || checkpoint !~ /当前分支本地提交/) {
-        fail("集成单元 " unit_id " 必须声明隔离 worktree 候选提交、Review、未暂存差异应用、当前分支提交批准和本地提交检查点")
+      if (checkpoint_count != 1 || checkpoint !~ /worktree/ || checkpoint !~ /候选提交/ || checkpoint !~ /独立 Reviewer/ ||
+          checkpoint !~ /人工批准.*应用.*候选差异/ || checkpoint !~ /应用.*未暂存/ ||
+          checkpoint !~ /人工批准.*当前分支提交/ || checkpoint !~ /当前分支本地提交/) {
+        fail("集成单元 " unit_id " 必须声明候选提交、独立 Review、差异应用批准、未暂存差异应用、当前分支提交批准和本地提交检查点")
       }
       unit_id = ""
       reading_included = 0
@@ -684,6 +685,7 @@ run_self_test() {
   multi_task_independent_plan="$fixture_dir/2026-09-05-rush-order-plan.md"
   single_task_atomic_plan="$fixture_dir/2026-09-06-rush-order-plan.md"
   non_behavior_plan="$fixture_dir/2026-09-07-rush-order-plan.md"
+  task_level_commit_plan="$fixture_dir/2026-09-08-rush-order-plan.md"
   legacy_plan="$legacy_dir/2026-07-28-rush-order-plan.md"
   mismatched_topic_plan="$fixture_dir/2026-08-07-other-plan.md"
   missing_plan_suffix="$fixture_dir/2026-08-08-rush-order.md"
@@ -786,7 +788,7 @@ public boolean isRush() {
 - **独立验证：** `mvn -Dtest=RushCommandTest test`
 - **并行实现：** 禁止
 - **并行隔离证据：** 不适用（默认模式串行实现）
-- **集成检查点：** 隔离 worktree 候选提交 -> 人工 Review -> 将候选差异应用到当前工作区（保持未暂存） -> 人工批准当前分支提交 -> 当前分支本地提交
+- **集成检查点：** 隔离 worktree 候选提交 -> 独立 Reviewer -> 人工批准应用候选差异 -> 将候选差异应用到当前工作区（保持未暂存） -> 人工批准当前分支提交 -> 当前分支本地提交
 
 ## 需求到任务追溯
 
@@ -924,7 +926,7 @@ EOF
 - **独立验证：** `mvn -Dtest=RushCommandTest test`
 - **并行实现：** 禁止
 - **并行隔离证据：** 不适用（默认模式串行实现）
-- **集成检查点：** 隔离 worktree 候选提交 -> 人工 Review -> 将候选差异应用到当前工作区（保持未暂存） -> 人工批准当前分支提交 -> 当前分支本地提交
+- **集成检查点：** 隔离 worktree 候选提交 -> 独立 Reviewer -> 人工批准应用候选差异 -> 将候选差异应用到当前工作区（保持未暂存） -> 人工批准当前分支提交 -> 当前分支本地提交
 
 ## 测试与覆盖率门禁
 
@@ -1062,7 +1064,7 @@ EOF
       print "- **独立验证：** `mvn -Dtest=RushCommandTest test`"
       print "- **并行实现：** 禁止"
       print "- **并行隔离证据：** 不适用（默认模式串行实现）"
-      print "- **集成检查点：** 隔离 worktree 候选提交 -> 人工 Review -> 将候选差异应用到当前工作区（保持未暂存） -> 人工批准当前分支提交 -> 当前分支本地提交"
+      print "- **集成检查点：** 隔离 worktree 候选提交 -> 独立 Reviewer -> 人工批准应用候选差异 -> 将候选差异应用到当前工作区（保持未暂存） -> 人工批准当前分支提交 -> 当前分支本地提交"
       print ""
     }
     { print }
@@ -1076,6 +1078,17 @@ EOF
   sed '/步骤 4：验证 GREEN/,/步骤 5：重构/{ /步骤 5：重构/!d; }' "$good_plan" > "$missing_green_plan"
   sed '/步骤 6：再验证/,/^## 集成单元与执行编排$/{ /^## 集成单元与执行编排$/!d; }' \
     "$good_plan" > "$missing_refactor_recheck_plan"
+  awk '
+    /^## 集成单元与执行编排$/ {
+      print "- [ ] **步骤 7：提交**"
+      print ""
+      print "运行：`git commit -m '\''feat: task commit'\''`"
+      print ""
+      print "预期：任务级提交创建成功。"
+      print ""
+    }
+    { print }
+  ' "$good_plan" > "$task_level_commit_plan"
   sed 's/行覆盖率不低于 80%/行覆盖率不低于 70%/;s/分支覆盖率不低于 70%/分支覆盖率不低于 60%/' \
     "$good_plan" > "$weak_threshold_plan"
   awk '
@@ -1303,7 +1316,8 @@ EOF
     "$mixed_task_reference_plan" "$misplaced_trace_reference_plan" \
     "$multi_task_independent_plan" "$single_task_atomic_plan" \
     "$invalid_dependency_plan" "$reviewer_mismatch_plan" \
-    "$parallel_without_isolation_plan" "$missing_ownership_plan" "$invalid_unit_id_plan"; do
+    "$parallel_without_isolation_plan" "$missing_ownership_plan" "$invalid_unit_id_plan" \
+    "$task_level_commit_plan"; do
     if "$0" "$invalid_contract_plan" >/dev/null 2>&1; then
       echo "自测失败：无效执行编排合同被错误接受：$invalid_contract_plan" >&2
       return 1
@@ -1448,6 +1462,7 @@ reject_pattern '(^|[[:space:]])\.\.\.([[:space:]]|$)|…' '包含占位省略号
 reject_pattern '^## 执行编排合同$|^## 最终覆盖率与全量回归门禁$|^### 任务 [0-9]+：|^- \*\*包含任务：\*\*.+|未使用的候选 Skill 及原因' '包含必须显式迁移的旧 Plan 结构'
 reject_pattern 'git merge --ff-only|ff-only 合并' '仍使用旧的 ff-only 当前分支集成合同'
 reject_pattern '等待合并批准|合并批准：|合并前 HEAD：|合并后 HEAD：|合并命令：' '仍使用旧的当前分支合并批准合同'
+reject_pattern '^- \[ \] \*\*步骤 [0-9]+：提交\*\*|git commit([[:space:]]|$)' '任务正文不得包含提交步骤；提交只由集成单元检查点产生'
 reject_pattern '^# .+ Implementation Plan$|^## Plan-generation quality review$|^### Task[[:space:]]|^- \[ \] \*\*Step[[:space:]]|^(\*\*)?(Goal|Architecture|Tech Stack|Files|Run|Expected):|^> \*\*For agentic workers' '包含英文计划模板标签'
 
 if [ "$failures" -ne 0 ]; then

@@ -1,15 +1,15 @@
 ---
 name: pretty-writing-design
-description: Use when creating, reviewing, or refining a technical design from an approved PRD or approved technical problem statement before implementation planning.
+description: Use when creating or substantively revising a technical design from approved input, or mechanically reviewing an existing Pretty Design before implementation planning.
 ---
 
 # 编写高质量设计
 
 ## 概述
 
-将已批准需求转化为一份基于仓库证据、经过方案权衡和用户批准的中文 Design。需求追溯、设计澄清、架构审查、文档校验和文件复审都是阻断式门禁。
+将已批准需求转化为一份基于仓库证据、经过方案权衡和用户批准的中文 Design；也可在不改变技术语义时修复既有 Design 的机械合同。先判定分支，再执行对应门禁。
 
-**必需子 Skill：** 使用 `superpowers:brainstorming` 完成仓库探索、方案比较、分节呈现和整体批准。
+新建 Design，或改变架构、职责、契约、数据、一致性、兼容性、测试策略与风险处置时，**必需子 Skill：** 使用 `superpowers:brainstorming` 完成方案比较、分节呈现和整体批准。
 
 ## 1. 校验输入
 
@@ -22,13 +22,20 @@ description: Use when creating, reviewing, or refining a technical design from a
 
 Design 不得补写或改变需求。输入存在矛盾、关键缺口或不可实现约束时，返回需求阶段澄清。
 
+先判定工作分支：
+
+- **机械审查：** 只调整路径、章节顺序、固定字段、中文格式或占位符，保持全部设计决策与批准记录不变。读取文档合同后直接修订、校验并请求文件复审。
+- **新建或实质修订：** 新建设计，或改变任何技术决策、边界、风险及验证策略。完整执行后续探索、方案和批准步骤。
+
+机械审查中发现语义缺陷时停止，说明影响并切换到实质修订分支。
+
 ## 2. 加载约束与仓库证据
 
 宣布正在使用 `pretty-writing-design`。仓库包含 `.trellis/` 时，**必需子 Skill：** 使用 `before-dev`。
 
 建立有边界的证据清单，覆盖入口与调用方、应用编排、领域模型与端口、持久化、外部适配、API/事件/schema 契约、测试缝、配置、兼容性和运维影响。
 
-只执行一次结构扫描和一次针对性 caller/callee/contract 依赖扫描。独立证据可并行查询；清单解决后停止广泛浏览。缺少关键事实时只询问一个聚焦问题，不得根据文件名、旧文档或架构印象虚构能力。
+对每个清单项记录仓库来源、已批准输入或明确阻塞结论。独立证据可并行查询；清单全部闭环后停止广泛浏览。缺少关键事实时只询问一个聚焦问题，不得根据文件名、旧文档或架构印象虚构能力。
 
 ## 3. 审计未决问题并条件执行 grilling
 
@@ -45,9 +52,9 @@ Design 不得补写或改变需求。输入存在矛盾、关键缺口或不可�
 
 涉及领域术语、状态、不变量、聚合职责、业务身份或边界变化时，**必需子 Skill：** 使用 `domain-modeling`，即时更新 `CONTEXT.md`；只在难以逆转、缺少背景会令人困惑且存在真实权衡时创建 ADR。
 
-## 4. 在 brainstorming 中生成并审查设计
+## 4. 在 brainstorming 中生成并审查实质设计
 
-调用 `superpowers:brainstorming`，复用已有证据，提出两个到三个方案，说明权衡和推荐项，分节呈现设计并逐节批准，最后获得整体设计批准。
+新建或实质修订分支调用 `superpowers:brainstorming`，复用已有证据，提出两个到三个方案，说明权衡和推荐项，分节呈现设计并逐节批准，最后获得整体设计批准。机械审查分支不制造虚假的技术方案或批准。
 
 根据证据确定并实际使用适用 Skill：
 
@@ -71,18 +78,15 @@ Design 必须包含：
 
 **质量发现与设计修正：**
 - <具体发现和修正，或基于已审查证据说明无阻塞问题>
-
-**未使用的候选 Skill 及原因：**
-- 无。
 ```
 
-用户零散确认不能代替整体批准。实质修改已批准章节后，重新批准受影响章节和整体设计。整体批准前不得写正式 Design 文件。
+新建或实质修订分支中，用户零散确认不能代替整体批准。实质修改已批准章节后，重新批准受影响章节和整体设计。整体批准前不得写正式 Design 文件。
 
 涉及页面布局、交互流程、复杂拓扑或视觉比较时，按 brainstorming 规则单独询问是否使用可视化伴侣；纯文本决策不主动启用。视觉结果必须转写为文档中的明确规则和契约。
 
 ## 5. 覆盖 brainstorming 默认终态
 
-整体批准后写本地 Design，但覆盖 brainstorming 的默认终态：
+新建或实质修订分支整体批准后写本地 Design；机械审查分支沿用既有批准并直接修订原文件。产出阶段遵循以下终态；调用过 brainstorming 时这些规则覆盖其默认终态：
 
 - 不自动提交 Git；
 - 不自动调用 `superpowers:writing-plans` 或 `pretty-writing-plan`；
@@ -105,42 +109,11 @@ docs/pretty/<topic>/YYYY-MM-DD-<topic>-design.md
 
 标题、章节、正文、方案权衡和测试说明使用中文；代码标识、协议字段、路径和技术名称可保留英文。章节不适用时写明“不适用”及理由，不得删除章节或留下占位符。
 
-必须按顺序使用以下章节：
-
-1. `设计目标与范围`
-2. `仓库现状与约束`
-3. `方案比较与决策`
-4. `领域模型与业务规则`
-5. `架构与职责边界`
-6. `数据流与边界契约`
-7. `数据模型与持久化`
-8. `异常、一致性与并发`
-9. `兼容性、迁移与回滚`
-10. `安全、性能与可观测性`
-11. `测试策略`
-12. `风险与非目标`
-13. `计划交接约束`
-14. `需求追溯`
-15. `设计生成质量审查`
-16. `设计批准记录`
-
-`需求追溯` 必须包含：
-
-```markdown
-| 需求/验收编号 | 需求摘要 | 设计决策 | 涉及边界 | 验证方式 |
-```
-
-每条范围内需求和验收标准至少映射一个设计决策；每个重要设计决策必须追溯到需求、仓库约束或已批准技术目标。禁止无来源扩展。
+起草或机械修订前，完整读取 [references/quality-gates.md](references/quality-gates.md) 的“文档合同”，按其唯一章节顺序和追溯表结构生成。该 reference 是固定文档结构的单一真相源。
 
 ## 7. 测试与覆盖率设计
 
-Design 必须定义最高可行测试缝、单元/集成/契约/端到端测试职责、核心行为矩阵、主流程、边界、无效输入、异常、幂等和并发场景，以及覆盖率统计对象与排除原则。
-
-PRD、仓库或用户已有阈值时固化更严格约束；否则声明沿用 `pretty-writing-plan` 默认门禁：变更业务代码行覆盖率不低于 `80%`、分支覆盖率不低于 `70%`，核心业务分支全部有行为测试。具体测试文件、测试代码、命令和报告位置留给 Plan 基于仓库证据确定。
-
-允许排除没有自定义行为的纯 Qo/Vo/DTO/PO/Entity、生成访问器和 builder、纯常量、纯配置绑定、启动类、生成代码、无逻辑简单异常和标记接口。
-
-不得排除包含校验、归一化、转换、默认值、派生字段、状态判断、映射、查找、回退、领域规则或自定义访问逻辑的类型，也不得排除 converter、assembler、mapper 默认方法、type handler 和本次变更行为。Design 定义原则和风险，Plan 再逐项列出具体排除对象及理由。
+完整读取 [references/quality-gates.md](references/quality-gates.md) 的“测试与覆盖率合同”。Design 定义测试分层、行为矩阵、统计与排除原则；具体测试文件、代码、命令、报告位置和逐项排除对象由 Plan 基于仓库证据确定。
 
 ## 8. 执行质量门禁
 
@@ -161,6 +134,7 @@ bash <skill-dir>/scripts/validate-design.sh <design-file>
 ## 危险信号
 
 - 没有批准输入就开始技术设计。
+- 把改变设计决策的修订伪装成机械审查。
 - 把 grilling 当成自动文档生成器。
 - 重复询问 PRD 已批准的问题。
 - 只调用 brainstorming，跳过项目质量包装。

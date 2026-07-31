@@ -1,6 +1,6 @@
 ---
 name: pretty-writing-plan
-description: Use when creating, reviewing, or refining a multi-step implementation plan from an approved technical design before implementation.
+description: Use when creating or substantively revising a multi-step implementation plan from an approved Design, or mechanically reviewing an existing Pretty Plan before implementation.
 ---
 
 # 编写高质量实施计划
@@ -11,13 +11,15 @@ description: Use when creating, reviewing, or refining a multi-step implementati
 
 **核心实现原则：** 在完整覆盖全部功能需求、边界行为和非功能约束的前提下，优先采用满足当前需求的最简单实现。代码必须命名准确、意图清晰、结构易读并直接表达业务规则；功能正确或测试通过不能替代简洁性、可读性和业务表达力审查。简洁不得以删减校验、错误处理、安全措施、可观测性或用户明确要求的行为为代价。
 
-**必需子 Skill：** 使用 `superpowers:writing-plans` 提供基础计划格式和任务粒度。
+新建或实质修订分支的**必需子 Skill：** 使用 `superpowers:writing-plans` 提供基础计划格式和任务粒度。
 
 ## 工作流
 
 ### 1. 校验输入
 
 Plan 必须以已批准且通过门禁的 Design 为输入；缺少 Design、Design 未批准或仍有阻塞项时停止并路由到 `pretty-writing-design`。Plan 不得补写或改变需求与设计。
+
+先判定工作分支：机械审查只修复路径、章节顺序、固定字段、任务引用或中文格式，不改变任务语义、代码方案、命令、阈值和集成边界；否则属于新建或实质修订，必须重新执行适用的生成质量 Skill 和批准门禁。机械审查发现语义缺陷时停止并切换分支。
 
 ### 2. 加载约束上下文
 
@@ -27,17 +29,17 @@ Plan 必须以已批准且通过门禁的 Design 为输入；缺少 Design、Des
 
 只检查足以确定准确文件、既有惯例、调用方、契约和测试命令的代码。时间压力不能成为虚构路径或 API 的理由。
 
-明确限制探索范围：
+以证据清单限制探索范围：
 
 1. 为入口、应用流程、领域端口、适配器、持久化、契约和测试编写证据清单。
 2. 条件允许时，并行搜索相互独立的清单项。
-3. 完成一轮仓库结构扫描和一轮定向依赖扫描后，停止宽泛探索。
-4. 清单闭环后立即起草计划，不要继续浏览可有可无的上下文。
+3. 每个清单项记录仓库来源、已批准输入或明确阻塞结论。
+4. 清单全部闭环后立即起草计划，不要继续浏览可有可无的上下文。
 5. 如果关键清单项仍未知，向用户提出一个聚焦问题；不得无限探索或输出占位内容。
 
 ### 3. 选择并执行计划生成质量 Skill
 
-始终使用 `superpowers:writing-plans`，并在起草前完整读取 [references/quality-gates.md](references/quality-gates.md) 的“Skill 选择”映射。建立“证据到 Skill”审计：当前阶段实际读取并应用所有被触发的计划生成 Skill；只用于实施的 Skill 则写入对应执行门禁。不得推测性加载、弱化确定性触发条件或在必需能力缺失时静默继续。
+新建或实质修订分支使用 `superpowers:writing-plans`，并在起草前完整读取 [references/quality-gates.md](references/quality-gates.md) 的“Skill 选择”映射。建立“证据到 Skill”审计：当前阶段实际读取并应用所有被触发的计划生成 Skill；只用于实施的 Skill 则写入对应执行门禁。不得推测性加载、弱化确定性触发条件或在必需能力缺失时静默继续。机械审查分支只读取固定文档合同并运行校验；发现任务语义、代码方案或门禁需要变化时切换到实质修订。
 
 对于每个被触发的计划生成 Skill：
 
@@ -50,7 +52,9 @@ Plan 必须以已批准且通过门禁的 Design 为输入；缺少 Design、Des
 
 ### 4. 起草计划
 
-严格遵循 `superpowers:writing-plans`，包括准确路径、细粒度复选步骤、代码变更步骤的完整代码、测试先行顺序、准确命令、预期结果，以及禁止占位内容。
+新建或实质修订分支遵循 `superpowers:writing-plans`，包括准确路径、细粒度复选步骤、代码变更步骤的完整代码、测试先行顺序、准确命令、预期结果，以及禁止占位内容。
+
+本 Skill 显式覆盖 `superpowers:writing-plans` 的任务级 `Commit` 步骤和频繁提交习惯：任务正文不得包含 `git commit` 或提交步骤。提交粒度由 `集成单元与执行编排` 唯一决定；worktree 候选提交、候选差异应用和当前分支本地提交均由 `pretty-executing-plan` 在对应检查点执行。
 
 覆盖 `superpowers:writing-plans` 的英文文档模板：计划标题、章节、任务名、步骤说明、正文、预期结果和执行交接必须使用中文。代码标识、类名、方法名、文件路径、命令、技术名称、Skill 名称和协议字段允许保留英文。业务代码示例中的分步注释必须遵循项目中文注释规范。Git 提交信息沿用仓库既有格式。
 
@@ -84,6 +88,8 @@ Plan 的顶级章节必须按以下唯一顺序组织，让用户先 Review 具�
 
 任务必须自包含任务类型、准确文件、完整失败测试、RED 命令与预期、最小实现、GREEN 命令与预期、重构动作和再验证。非行为任务改为记录带理由的任务类型、等价验证命令与预期。用户不应跳到文档后部才能理解当前任务如何实现和验证。
 
+如果两个拟议任务只有合并后才能构建或执行各自的 GREEN/等价验证，将它们合并为一个任务。原子任务组只表达多个已可聚焦验证的任务必须作为一个交付、Review 和回滚边界，不能豁免任务级验证或保留不可运行的中间状态。
+
 ### 4.2 再定义集成、追溯与跨层验收
 
 全部任务之后添加唯一的 `## 集成单元与执行编排`。每个集成单元的 `包含任务` 使用嵌套列表，一行一个反引号包裹的完整任务标识；名称必须与任务标题完全一致。任务恰好归属一个单元，单元依赖仍使用 `U<n>`。
@@ -98,7 +104,7 @@ Plan 的顶级章节必须按以下唯一顺序组织，让用户先 Review 具�
 
 `计划生成质量审查` 放在倒数第二，包含 `实际使用的计划生成 Skill`、`质量发现与计划修正` 和 `最终审查结论`。只声明本轮实际读取并应用的 Skill，删除无信息量的“未使用候选 Skill”清单。`执行交接说明` 严格置底，只记录权威 Plan 路径、校验状态、未决项和用户下一步选择，不重复任务、矩阵或门禁。
 
-严格按 [references/quality-gates.md](references/quality-gates.md) 的固定合同生成全部字段。集成检查点必须表达“隔离 worktree 候选提交 -> Review -> 应用未暂存差异 -> 当前分支提交批准 -> 当前分支本地提交”，不得生成 `git merge --ff-only` 作为当前分支集成动作。旧格式 Plan 不做双格式兼容；必须显式迁移、重新校验并获得人工批准，执行器不得猜测名称或补齐引用。
+严格按 [references/quality-gates.md](references/quality-gates.md) 的固定合同生成全部字段。集成检查点必须表达“隔离 worktree 候选提交 -> 独立 Reviewer -> 人工批准应用候选差异 -> 应用未暂存差异 -> 人工批准当前分支提交 -> 当前分支本地提交”，不得生成 `git merge --ff-only` 或任务级提交。旧格式 Plan 不做双格式兼容；必须显式迁移、重新校验并获得人工批准，执行器不得猜测名称或补齐引用。
 
 ### 5. 注入执行质量门禁
 
@@ -151,7 +157,7 @@ bash <skill-dir>/scripts/validate-plan.sh <plan-file>
 
 ### 8. 交接执行
 
-请求用户复审计划并停止。用户后续要求执行时，将其作为独立请求交由 `pretty-executing-plan`；不得直接调用底层 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans` 绕过执行质量包装。默认告知用户将逐个集成单元停在 Review 检查点，也可以自然语言要求一次性执行。提醒执行者集成单元、质量 Skill、TDD 顺序、覆盖率合同、执行报告和复验规则都是验收标准，而非可选阅读。
+请求用户复审计划并停止。用户后续要求执行时，将其作为独立请求交由 `pretty-executing-plan`；不得直接调用底层 `superpowers:subagent-driven-development` 或 `superpowers:executing-plans` 绕过执行质量包装。默认告知用户每个集成单元会分别停在候选差异应用批准和当前分支提交批准两个检查点，也可以自然语言要求一次性执行。提醒执行者集成单元、质量 Skill、TDD 顺序、覆盖率合同、执行报告和复验规则都是验收标准，而非可选阅读。
 
 ## 危险信号
 

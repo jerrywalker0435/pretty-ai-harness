@@ -25,6 +25,38 @@ validate_prd_path() {
   printf '%s\n' "$file_name" | grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}-${topic}-prd\\.md$"
 }
 
+validate_document_contract() {
+  document_prd=$1
+  awk '
+    function fail(message) {
+      print "ERROR: " message > "/dev/stderr"
+      failures++
+    }
+
+    BEGIN {
+      section_order = "问题陈述|解决方案|用户故事|实施决策|测试决策|非目标|补充说明|验收标准"
+      expected_count = split(section_order, expected, "|")
+    }
+
+    /^```/ { in_fence = !in_fence; next }
+    !in_fence && /^## / {
+      section = $0
+      sub(/^## /, "", section)
+      section_count++
+      if (section_count > expected_count || section != expected[section_count]) {
+        fail("顶级章节顺序错误，第 " section_count " 节实际为：" section)
+      }
+    }
+
+    END {
+      if (section_count != expected_count) {
+        fail("PRD 必须且只能包含约定的 " expected_count " 个顶级章节")
+      }
+      exit failures > 0 ? 1 : 0
+    }
+  ' "$document_prd"
+}
+
 validate_prd() {
   prd_file=$1
 
@@ -39,6 +71,10 @@ validate_prd() {
   fi
 
   failures=0
+
+  if ! validate_document_contract "$prd_file"; then
+    failures=$((failures + 1))
+  fi
 
   require_heading() {
     heading=$1
@@ -186,6 +222,9 @@ run_self_test() {
   missing_adr_prd="$fixture_dir/2026-08-05-sample-prd.md"
   legacy_prd="$legacy_dir/2026-07-28-sample-prd.md"
   mismatched_topic_prd="$fixture_dir/2026-08-06-other-prd.md"
+  wrong_order_prd="$fixture_dir/2026-08-08-sample-prd.md"
+  duplicate_section_prd="$fixture_dir/2026-08-09-sample-prd.md"
+  extra_section_prd="$fixture_dir/2026-08-10-sample-prd.md"
   mkdir -p "$fixture_dir" "$legacy_dir"
 
   cleanup_self_test() {
@@ -243,6 +282,14 @@ EOF
 
   cp "$good_prd" "$legacy_prd"
   cp "$good_prd" "$mismatched_topic_prd"
+  cp "$good_prd" "$wrong_order_prd"
+  sed -i.bak -e 's/^## 问题陈述$/## 临时章节/' \
+    -e 's/^## 解决方案$/## 问题陈述/' \
+    -e 's/^## 临时章节$/## 解决方案/' "$wrong_order_prd"
+  cp "$good_prd" "$duplicate_section_prd"
+  printf '\n## 问题陈述\n重复章节。\n' >> "$duplicate_section_prd"
+  cp "$good_prd" "$extra_section_prd"
+  printf '\n## 临时章节\n不应出现的顶级章节。\n' >> "$extra_section_prd"
 
   awk '
     $0 == "### 领域上下文同步" { skip=1; next }
@@ -282,6 +329,12 @@ EOF
     echo "SELF-TEST FAILED: 含占位符的 PRD 被接受" >&2
     return 1
   fi
+  for invalid_structure_prd in "$wrong_order_prd" "$duplicate_section_prd" "$extra_section_prd"; do
+    if validate_prd "$invalid_structure_prd" >/dev/null 2>&1; then
+      echo "SELF-TEST FAILED: 章节顺序、重复或额外章节错误的 PRD 被接受: $invalid_structure_prd" >&2
+      return 1
+    fi
+  done
 
   if validate_prd "$missing_context_sync_prd" >/dev/null 2>&1; then
     echo "SELF-TEST FAILED: 缺少领域上下文同步记录的 PRD 被接受" >&2

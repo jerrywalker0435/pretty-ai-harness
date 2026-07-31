@@ -102,6 +102,7 @@ validate() {
   require '分节批准|章节批准' '缺少分节批准记录'
   require '整体批准' '缺少整体批准记录'
   reject 'TODO|TBD|待补充|待定|\.\.\.|……' '存在占位符或省略内容'
+  reject '未使用的候选 Skill 及原因' '包含无信息量的未使用 Skill 清单'
   reject '^# .*\b(Design|Technical Design)\b|^## (Goal|Architecture|Testing Strategy|Approval)' '存在英文设计模板标题'
   return "$failures"
 }
@@ -122,6 +123,7 @@ self_test() {
   stricter_threshold="$fixture_dir/2026-08-05-rush-order-design.md"
   weak_threshold="$fixture_dir/2026-08-06-rush-order-design.md"
   wrong_order="$fixture_dir/2026-08-07-rush-order-design.md"
+  unused_skill_list="$fixture_dir/2026-08-08-rush-order-design.md"
   legacy="$legacy_dir/2026-07-28-rush-order-design.md"
   mismatched_topic="$fixture_dir/2026-08-04-other-design.md"
   cat > "$good" <<'EOF'
@@ -175,9 +177,12 @@ EOF
   sed -i.bak -e 's/^## 设计目标与范围$/## 临时章节/' \
     -e 's/^## 仓库现状与约束$/## 设计目标与范围/' \
     -e 's/^## 临时章节$/## 仓库现状与约束/' "$wrong_order"
+  cp "$good" "$unused_skill_list"
+  sed -i.bak '/^## 设计批准记录$/i\
+**未使用的候选 Skill 及原因：** 无。' "$unused_skill_list"
   cp "$good" "$legacy"
   cp "$good" "$mismatched_topic"
-  for bad in "$english" "$trace" "$options" "$testing" "$approval" "$todo" "$weak_threshold" "$wrong_order"; do
+  for bad in "$english" "$trace" "$options" "$testing" "$approval" "$todo" "$weak_threshold" "$wrong_order" "$unused_skill_list"; do
     if validate "$bad" >/dev/null 2>&1; then echo "SELF-TEST FAILED: invalid content fixture was accepted: $bad" >&2; return 1; fi
   done
   if validate "$legacy" >/dev/null 2>&1; then echo 'SELF-TEST FAILED: legacy docs/superpowers Design path was accepted' >&2; return 1; fi
