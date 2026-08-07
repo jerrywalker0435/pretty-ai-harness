@@ -1,21 +1,23 @@
 ---
 name: pretty-writing-prd
-description: Use when creating or revising a Pretty prd.md for a Java/Spring feature, bug fix, or behavior-preserving refactor before technical design begins.
+description: Use when creating, revising, or reviewing a Pretty prd.md for a Java/Spring feature, bug fix, or behavior-preserving refactor before technical design begins.
 ---
 
 # 编写 Java/Spring PRD
 
 ## 目标
 
-把用户目标和仓库事实整理成一份简洁、可验证、可供人 Review 的 PRD。PRD 只定义问题、范围、外部可观察行为和验收标准，不提前决定技术实现。
+把用户目标和仓库事实整理成一份简洁、可验证、可供人 Review 的 PRD，或判断现有 PRD 是否足以进入 Design。PRD 只定义问题、范围、外部可观察行为和验收标准，不提前决定技术实现。
 
 **REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同与 PRD 模板。本 Skill 是当前阶段的唯一流程控制器；不要再启动第二套创意讨论或文档流程。
 
 ## 工作流
 
-### 1. 确认主题与输入
+### 1. 确认模式、主题与输入
 
-宣布使用 `pretty-writing-prd`。确定小写 kebab-case 的 `<topic>`，并使用唯一文件：
+宣布使用 `pretty-writing-prd`。用户只要求评估、检查或 Review 现有 PRD 时，进入评审模式（不修改文件）；用户要求创建、完善、改写或修订时，进入写作模式。
+
+写作模式确定小写 kebab-case 的 `<topic>`，并使用唯一文件：
 
 ```text
 docs/pretty/<topic>/prd.md
@@ -25,7 +27,22 @@ docs/pretty/<topic>/prd.md
 
 Bug PRD 至少确认复现条件、当前行为、期望行为和回归边界。纯重构 PRD 至少确认当前问题、行为保持约束和可验证成功标准。简单任务的文档可以很短。
 
-### 2. 只解决阻塞决策
+### 2. 执行评审模式（不修改文件）
+
+评审模式接受任意路径的 PRD，只读取文档、必要仓库事实和领域上下文，不修改 PRD、`CONTEXT.md`、`CONTEXT-MAP.md` 或 ADR，不创建评审文档，也不移动或复制文件。
+
+检查问题与价值、目标/非目标、真实角色和代表性场景、`REQ/AC` 单一性与覆盖、成功/状态/失败/回归边界、术语与时间/身份/状态/优先级语义、规则冲突、可测试性和实现泄漏。判断 Design 能否据此决定边界、Plan 能否据此设计测试，而无需猜测业务规则。
+
+在对话中按以下顺序输出并停止：
+
+1. 阻塞问题；
+2. 建议改进，包括是否需要具象业务故事；
+3. 下游影响，说明对 Design 决策和 Plan 测试的影响；
+4. 总体结论以及“可进入 Design”或“修正阻塞项后再进入 Design”。
+
+标准 `docs/pretty/<topic>/prd.md` 可以运行完整 PRD 文档链校验；非标准路径不运行标准链路校验，并说明路径迁移建议，但不得拒绝内容评审或自动移动文件。发现会触发 `domain-modeling` 的领域问题时只报告；发现高影响歧义时给出推荐解决方向，用户要求解决或修订后才使用 `grilling`。评审模式不得改写文档来关闭发现。
+
+### 3. 只解决写作模式的阻塞决策
 
 区分仓库事实、用户明确要求和仍会改变需求结果的未知项，但不要生成“澄清审计”章节。
 
@@ -37,7 +54,7 @@ Bug PRD 至少确认复现条件、当前行为、期望行为和回归边界。
 
 PRD 只维护不含实现细节的领域词汇，不创建 ADR。`domain-modeling` 触发后不可用时停止并说明依赖。不得要求逐节确认、方案审批元数据或其他审计字段。
 
-### 3. 起草 PRD
+### 4. 起草 PRD
 
 使用共享 PRD 模板并替换全部占位内容：
 
@@ -47,7 +64,13 @@ PRD 只维护不含实现细节的领域词汇，不创建 ADR。`domain-modelin
 - 使用已同步的项目领域语言；将生命周期、不变量和失败结果落实到对应 `REQ/AC`。
 - 不写类、方法、模块职责、数据库 schema、事务边界、设计模式、完整代码或实施任务。
 
-### 4. 自审并机械校验
+按复杂度组织 `用户与场景`：简单需求使用简短场景列表；出现多个真实角色或系统触点、状态分支、多步骤端到端流程、失败隔离、幂等、并发或异步结果，或者只读 `REQ/AC` 难以理解完整流程时，自动生成 3–6 个具象业务故事，不额外询问。
+
+每个故事使用共享模板中的短叙事块，覆盖代表性主线；由 `AC` 负责详细边界组合。存在真实角色、目标和价值时优先使用“作为……我希望……以便……”句式，但不强制；不得把系统、数据库或接口伪装成用户，也不使用故事表格。每个故事关联已有的需求与验收，不新增 `US` 编号。
+
+业务故事只是解释视图，`REQ/AC` 是唯一需求合同。不得只在故事中定义规则，不得与 `REQ/AC` 冲突或重复枚举验收细节。
+
+### 5. 自审并机械校验
 
 逐项确认：
 
@@ -56,6 +79,7 @@ PRD 只维护不含实现细节的领域词汇，不创建 ADR。`domain-modelin
 - 成功、失败和重要边界均有可验证结果；
 - PRD 与相关 `CONTEXT.md` 的术语、身份、状态和不变量一致；
 - 没有把实现偏好伪装成需求；
+- 复杂 PRD 的故事覆盖代表性端到端路径，每个故事都有关联需求和关联验收，且没有伪用户或第二套需求合同；
 - 没有 `TODO`、`TBD`、`FIXME`、待定或占位内容。
 
 运行：
@@ -67,7 +91,7 @@ python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
 
 修正所有机械或语义问题后再交付。
 
-### 5. 请求一次 Review 并停止
+### 6. 请求一次 Review 并停止
 
 告知用户 PRD 路径、需求数量、验收标准数量、相关 `CONTEXT.md` 变更和校验结果，请求一次文档 Review，然后停止。该次 Review 同时覆盖 PRD 与本阶段领域词汇变更；不得自动生成 Design、Plan、Issue 或生产代码。
 
@@ -76,5 +100,7 @@ python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
 - 没有真实分歧仍制造多方案或盘问。
 - 使用日期文件名、审批元数据、哈希、指纹或跨阶段修订协议。
 - 为了填满模板扩写简单 Bug 或重构。
+- 强制所有需求套用用户故事，或让故事成为第二套需求合同。
+- 用户只要求评审时修改、移动 PRD 或更新领域文档。
 - 机械校验通过就声称需求语义正确。
 - PRD 完成后自动进入下一阶段。
