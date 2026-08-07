@@ -1,4 +1,4 @@
 interface:
-  display_name: "pretty-executing-plan"
-  short_description: "按已批准 Plan 执行或恢复，并维护双授权检查点"
-  default_prompt: "使用 $pretty-executing-plan 严格执行已批准实施计划并生成可审计的质量证据。"
+  display_name: "Pretty Executing Plan"
+  short_description: "执行 Java/Spring Plan 并完成测试、覆盖率和代码 Review"
+  default_prompt: "Use $pretty-executing-plan to implement the reviewed Java/Spring Plan with classified TDD and quality gates."

@@ -1,148 +1,96 @@
 ---
 name: pretty-writing-design
-description: Use when creating or substantively revising a technical design from approved input, or mechanically reviewing an existing Pretty Design before implementation planning.
+description: Use when a reviewed Pretty PRD for a Java/Spring feature, bug fix, or behavior-preserving refactor needs a technical design before implementation planning.
 ---
 
-# 编写高质量设计
+# 编写 Java/Spring Design
 
-## 概述
+## 目标
 
-将已批准需求转化为一份基于仓库证据、经过方案权衡和用户批准的中文 Design；也可在不改变技术语义时修复既有 Design 的机械合同。先判定分支，再执行对应门禁。
+把已 Review 的 PRD 和真实仓库约束转化为一份可实施、可测试、可供人 Review 的技术设计。Design 决定技术边界与关键权衡，不展开实施步骤或完整代码。
 
-新建 Design，或改变架构、职责、契约、数据、一致性、兼容性、测试策略与风险处置时，**必需子 Skill：** 使用 `superpowers:brainstorming` 完成方案比较、分节呈现和整体批准。
+**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Design 模板和 Java/Spring 质量检查。本 Skill 是当前阶段的唯一流程控制器。
 
-## 1. 校验输入
+## 工作流
 
-业务功能、业务规则或跨系统能力必须以已批准且通过门禁的 PRD 为输入；缺少 PRD 时停止并路由到 `pretty-writing-prd`。
+### 1. 校验输入与范围
 
-以下情况可使用经用户批准的替代输入：
-
-- 纯技术重构、性能治理或基础设施调整：问题陈述、范围、非目标和可验证成功标准。
-- Bug 修复：复现条件、期望行为、根因分析和回归边界。
-
-Design 不得补写或改变需求。输入存在矛盾、关键缺口或不可实现约束时，返回需求阶段澄清。
-
-先判定工作分支：
-
-- **机械审查：** 只调整路径、章节顺序、固定字段、中文格式或占位符，保持全部设计决策与批准记录不变。读取文档合同后直接修订、校验并请求文件复审。
-- **新建或实质修订：** 新建设计，或改变任何技术决策、边界、风险及验证策略。完整执行后续探索、方案和批准步骤。
-
-机械审查中发现语义缺陷时停止，说明影响并切换到实质修订分支。
-
-## 2. 加载约束与仓库证据
-
-宣布正在使用 `pretty-writing-design`。仓库包含 `.trellis/` 时，**必需子 Skill：** 使用 `before-dev`。
-
-建立有边界的证据清单，覆盖入口与调用方、应用编排、领域模型与端口、持久化、外部适配、API/事件/schema 契约、测试缝、配置、兼容性和运维影响。
-
-对每个清单项记录仓库来源、已批准输入或明确阻塞结论。独立证据可并行查询；清单全部闭环后停止广泛浏览。缺少关键事实时只询问一个聚焦问题，不得根据文件名、旧文档或架构印象虚构能力。
-
-## 3. 审计未决问题并条件执行 grilling
-
-每次都区分仓库事实、已批准需求、已批准设计决策和未决设计问题，并记录审计结论。
-
-以下任一条件成立时，**必需子 Skill：** 使用 `grilling`：
-
-- 用户明确要求 `grill-me` 或压力测试设计；
-- 存在会改变架构、契约、数据所有权或一致性语义的未决项；
-- PRD、领域语言、ADR 或仓库事实相互冲突；
-- 关键边界场景仍可被多种方式解释。
-
-`grilling` 一次只问一个决策并给出推荐答案，只负责达成共同理解，不生成 Design。没有未决项时记录“未决设计问题：无”及证据，不重复盘问已批准需求。
-
-涉及领域术语、状态、不变量、聚合职责、业务身份或边界变化时，**必需子 Skill：** 使用 `domain-modeling`，即时更新 `CONTEXT.md`；只在难以逆转、缺少背景会令人困惑且存在真实权衡时创建 ADR。
-
-## 4. 在 brainstorming 中生成并审查实质设计
-
-新建或实质修订分支调用 `superpowers:brainstorming`，复用已有证据，提出两个到三个方案，说明权衡和推荐项，分节呈现设计并逐节批准，最后获得整体设计批准。机械审查分支不制造虚假的技术方案或批准。
-
-根据证据确定并实际使用适用 Skill：
-
-- Bug 或异常行为：`superpowers:systematic-debugging`。
-- Java 对象职责变化：`121-java-object-oriented-design`。
-- Java 类型、DTO、Entity、VO、PO、枚举或边界变化：`122-java-type-design`。
-- 端口、服务、依赖方向或职责拆分变化：`solid-principles`。
-- 领域术语、状态、不变量或聚合变化：`domain-modeling` 和 `solid-principles`。
-- 跨层或跨模块设计：读取项目跨层思考规范。
-- 行为保持型重构：`refactor`。
-
-完整读取每个被触发 Skill，在候选方案比较和章节批准前应用其检查表并修正设计，直至无阻塞发现。不得只列 Skill 名称或推迟到 Plan。
-
-Design 必须包含：
-
-```markdown
-## 设计生成质量审查
-
-**实际使用的设计 Skill：**
-- `<skill>` — <触发证据与审查范围>
-
-**质量发现与设计修正：**
-- <具体发现和修正，或基于已审查证据说明无阻塞问题>
-```
-
-新建或实质修订分支中，用户零散确认不能代替整体批准。实质修改已批准章节后，重新批准受影响章节和整体设计。整体批准前不得写正式 Design 文件。
-
-涉及页面布局、交互流程、复杂拓扑或视觉比较时，按 brainstorming 规则单独询问是否使用可视化伴侣；纯文本决策不主动启用。视觉结果必须转写为文档中的明确规则和契约。
-
-## 5. 覆盖 brainstorming 默认终态
-
-新建或实质修订分支整体批准后写本地 Design；机械审查分支沿用既有批准并直接修订原文件。产出阶段遵循以下终态；调用过 brainstorming 时这些规则覆盖其默认终态：
-
-- 不自动提交 Git；
-- 不自动调用 `superpowers:writing-plans` 或 `pretty-writing-plan`；
-- 不发布外部 Issue；
-- 先执行机械和语义质量门禁；
-- 请求用户复审本地文件并停止；
-- 用户后续明确要求 Plan 时，作为独立请求交由 `pretty-writing-plan`。
-
-## 6. 发布唯一中文 Design
-
-唯一权威文档写入：
+宣布使用 `pretty-writing-design`。读取：
 
 ```text
-docs/pretty/<topic>/YYYY-MM-DD-<topic>-design.md
+docs/pretty/<topic>/prd.md
 ```
 
-`<topic>` 必须沿用已批准 PRD 的小写 kebab-case 主题，目录名必须与文件名中的 `<topic>` 完全一致。日期使用 Design 首次创建日期，后续修订不得改名。使用已批准替代输入时，先确定稳定主题，并在后续 Plan 和 Execution Report 中沿用同一主题目录。
+确认 PRD 已由用户 Review，且不存在占位内容。缺失、未 Review 或需求错误时，停止并返回 PRD 阶段。根目录存在 `CONTEXT-MAP.md` 时读取相关上下文的 `CONTEXT.md`，否则读取根目录已有的 `CONTEXT.md`。Design 使用同一主题目录和唯一文件：
 
-同一主题已有权威 Design 时更新原文件，不创建第二份。只有主题、业务边界或独立交付单元确实不同才创建新文件。未经用户明确要求，不提交、推送或发布。
+```text
+docs/pretty/<topic>/design.md
+```
 
-标题、章节、正文、方案权衡和测试说明使用中文；代码标识、协议字段、路径和技术名称可保留英文。章节不适用时写明“不适用”及理由，不得删除章节或留下占位符。
+已有文件时原地修订。简单 Bug 或局部重构可以写得很短，但仍须覆盖所有适用的需求、边界和风险。
 
-起草或机械修订前，完整读取 [references/quality-gates.md](references/quality-gates.md) 的“文档合同”，按其唯一章节顺序和追溯表结构生成。该 reference 是固定文档结构的单一真相源。
+### 2. 建立仓库事实
 
-## 7. 测试与覆盖率设计
+检查与本次变化相关的入口、调用链、模块职责、领域对象、持久化、外部契约、配置和测试缝。只探索足以支持设计决策的范围，并区分仓库事实、PRD 要求和设计选择。
 
-完整读取 [references/quality-gates.md](references/quality-gates.md) 的“测试与覆盖率合同”。Design 定义测试分层、行为矩阵、统计与排除原则；具体测试文件、代码、命令、报告位置和逐项排除对象由 Plan 基于仓库证据确定。
+- 能由源码、测试或项目规则决定的事项自行查明。
+- 非阻塞细节沿用仓库惯例和最简单可逆方案。
+- 存在共享合同定义的高影响分歧时，使用 `grilling`，一次只解决一个决策并给出推荐答案。
+- 只有存在真实、结果不同的设计选项时才比较方案；仓库证据已经决定时，直接说明依据。
 
-## 8. 执行质量门禁
+不得虚构现有能力，也不得为展示完整性而扩展范围。
 
-完整读取 [references/quality-gates.md](references/quality-gates.md)，运行：
+### 3. 路由 Java/Spring 设计质量
+
+Java 对象职责、封装和协作是默认设计检查，**REQUIRED SUB-SKILL：** 使用 `121-java-object-oriented-design`。再按证据选择增强检查：
+
+| 触发场景 | 使用的 Skill |
+|---|---|
+| 值对象、泛型、类型层次、金额类型或 primitive obsession | `122-java-type-design` |
+| 服务职责、端口、依赖方向或扩展点 | `solid-principles` |
+| 保持行为的遗留结构调整 | `refactor` |
+| 公共 API 或模块接口有多种合理形状 | `design-an-interface` |
+| 已证明确有构造、替换、通知或适配变化轴 | `design-patterns` |
+| 共享合同定义的 Design 领域模型变化 | `domain-modeling` |
+| Spring 测试层级、JUnit、MockMvc 或 Testcontainers 选择 | `springboot-tdd` |
+
+完整读取实际触发的 Skill，并把发现落实为设计决策。`domain-modeling` 触发后按共享合同同步对应 `CONTEXT.md`、必要的 `CONTEXT-MAP.md` 和 `DEC`；若结果改变外部行为、`REQ` 或 `AC`，停止并返回 PRD。ADR 只按共享合同的三项条件创建；触发后缺少该 Skill 时停止。不要无条件串行调用全部 Skill；接口已由兼容性或项目惯例决定时不制造备选接口，没有现实变化轴时不套设计模式。
+
+### 4. 编写 Design
+
+使用共享 Design 模板，替换全部占位内容：
+
+- 用 `DEC-001` 起连续编号；每个 `DEC` 说明覆盖的 `REQ`、职责边界、接口/数据、错误与一致性。
+- 覆盖全部 `REQ` 和 `AC`，保持 PRD 的外部行为不变。
+- 明确模块职责、依赖方向、主要数据流、边界契约、失败行为和适用的事务/并发/幂等语义。
+- 测试策略把每个 `AC` 映射到合适的单元、slice、集成或契约测试层级。
+- 记录实际使用的质量 Skill、重要发现及设计修正；无阻塞问题时明确写出。
+- 事务、消息、缓存、安全、迁移等专项内容只在相关时增加三级章节。
+
+Design 可以展示短接口签名或关键伪代码来澄清契约，但不写逐文件任务、完整实现或完整测试代码。
+
+### 5. 自审并机械校验
+
+逐项确认需求追溯、职责内聚、依赖方向、接口最小化、错误语义、数据一致性、可测试性、兼容性、风险与回退互相一致；领域术语、身份、状态、不变量、所有权和边界与相关领域文档一致，并符合共享 Java/Spring 质量检查。机械校验不能证明架构正确。
+
+运行：
 
 ```bash
-bash <skill-dir>/scripts/validate-design.sh <design-file>
+python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
+  docs/pretty/<topic> --through design
 ```
 
-机械校验不能批准架构。脚本通过后继续审查需求覆盖、仓库证据、方案权衡、领域与分层、边界契约、一致性、兼容性、可测试性、覆盖率策略、范围和批准记录。任何失败都必须修复并重新运行对应门禁。
+修正所有机械或语义问题后再交付。
 
-## 9. 停在文件复审门禁
+### 6. 请求一次 Review 并停止
 
-请求用户复审已写入的 Design。用户要求修改时，修订、重新执行机械与语义门禁，并重新获得受影响批准。
+告知用户 Design 路径、主要 `DEC`、相关 `CONTEXT.md`/`CONTEXT-MAP.md`/ADR 变更、实际使用的质量 Skill 和校验结果，请求一次人工 Review，然后停止。该次 Review 同时覆盖本阶段领域文档变更；不得自动生成 Plan、Issue 或生产代码。
 
-用户批准文件后停止。不得生成实施计划或修改生产代码；后续明确要求计划时使用 `pretty-writing-plan`。
+## 红线
 
-## 危险信号
-
-- 没有批准输入就开始技术设计。
-- 把改变设计决策的修订伪装成机械审查。
-- 把 grilling 当成自动文档生成器。
-- 重复询问 PRD 已批准的问题。
-- 只调用 brainstorming，跳过项目质量包装。
-- 方案比较、分节批准或整体批准缺失。
-- 用旧文档或文件名推测当前契约。
-- 声称使用质量 Skill 却没有记录发现和修正。
-- 把测试命令、完整代码或实施任务提前塞进 Design。
-- 机械校验通过后跳过语义审查。
-- 自动提交、自动生成 Plan 或创建第二份 Design。
-
-出现任一危险信号时停止、修正并重新执行门禁。
+- PRD 尚未 Review 就开始设计，或在 Design 中悄悄改变需求。
+- 没有真实分歧仍强制多个方案、多个接口或设计模式。
+- 只列质量 Skill 名称，却不应用其发现。
+- 强制固定架构、无现实调用方的抽象或逐层对象复制。
+- 用机械校验结果代替技术判断。
+- Design 完成后自动进入下一阶段。

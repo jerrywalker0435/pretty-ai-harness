@@ -1,4 +1,4 @@
 interface:
-  display_name: "pretty-writing-plan"
-  short_description: "创建或机械审查中文实施计划，并执行交付合同门禁"
-  default_prompt: "使用 $pretty-writing-plan 基于已批准 Design 创建包含明确测试覆盖率门禁的中文可执行实施计划。"
+  display_name: "Pretty Writing Plan"
+  short_description: "为 Java/Spring 变更生成可作 CR 的实施计划"
+  default_prompt: "Use $pretty-writing-plan to create a reviewable Java/Spring implementation plan with new-code coverage gates."

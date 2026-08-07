@@ -1,4 +1,4 @@
 interface:
-  display_name: "pretty-writing-design"
-  short_description: "创建或机械审查中文技术设计，并执行架构质量门禁"
-  default_prompt: "使用 $pretty-writing-design 基于已批准需求生成经过方案权衡、架构审查和质量门禁的中文设计。"
+  display_name: "Pretty Writing Design"
+  short_description: "为 Java/Spring 变更生成清晰、可 Review 的技术设计"
+  default_prompt: "Use $pretty-writing-design to create a Java/Spring technical design from the reviewed PRD."
