@@ -16,6 +16,24 @@ COVERAGE_RUNNER = CORE_DIR / "scripts" / "run-coverage.sh"
 
 
 class PrettyTemplateContractTest(unittest.TestCase):
+    def test_plan_template_makes_test_boundary_reviewable(self) -> None:
+        template = (CORE_DIR / "assets" / "templates" / "plan.md").read_text(
+            encoding="utf-8"
+        )
+
+        for marker in (
+            "测试边界",
+            "测试层级",
+            "独立预期值来源",
+            "允许替换的外部边界",
+            "RED 命令",
+            "GREEN 命令",
+            "重构复验",
+            "测试提案",
+            "拟议生产代码",
+        ):
+            self.assertIn(marker, template)
+
     def test_execution_template_requires_an_independent_reviewer(self) -> None:
         template = (CORE_DIR / "assets" / "templates" / "execution.md").read_text(
             encoding="utf-8"
@@ -23,6 +41,20 @@ class PrettyTemplateContractTest(unittest.TestCase):
 
         self.assertIn("环境不支持时标记阻塞", template)
         self.assertNotIn("环境不支持时说明自审", template)
+
+    def test_execution_template_records_tdd_and_refactor_evidence(self) -> None:
+        template = (CORE_DIR / "assets" / "templates" / "execution.md").read_text(
+            encoding="utf-8"
+        )
+
+        for marker in (
+            "测试边界",
+            "RED",
+            "GREEN",
+            "`refactor`",
+            "重构复验",
+        ):
+            self.assertIn(marker, template)
 
 
 class PrettyDocumentValidatorTest(unittest.TestCase):

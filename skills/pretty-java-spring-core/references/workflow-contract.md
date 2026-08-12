@@ -5,6 +5,7 @@
 - [共同规则](#共同规则)
 - [领域模型一致性](#领域模型一致性)
 - [阶段合同](#阶段合同)
+- [TDD 与测试合同](#tdd-与测试合同)
 - [问题与回退](#问题与回退)
 - [质量 Skill 路由](#质量-skill-路由)
 - [依赖缺失](#依赖缺失)
@@ -61,8 +62,8 @@ PRD 评审模式（不修改文件）发现领域歧义时，不修改文件，�
 ### Plan
 
 - 输入：已 Review 的 `prd.md`、`design.md` 和真实源码/API。
-- 决定：实施任务、准确文件、关键代码、完整测试代码、增量覆盖率合同和验证命令。
-- 展示：公共接口、核心业务方法、异常/事务边界和测试代码；机械修改使用逐项变更表。
+- 决定：实施任务、准确文件、测试边界、完整测试提案、拟议生产代码、增量覆盖率合同和验证命令。
+- 展示：公共接口、核心业务方法、异常/事务边界和测试提案；机械修改使用逐项变更表。
 - 输出：`plan.md`，定义 `TASK` 并覆盖全部 `REQ/AC/DEC`。
 - 构建文件不是默认禁区；业务目标确需依赖、插件或构建调整时，把它作为普通受 Review 变更写入任务。只有 Harness 的临时覆盖率采集不得改写项目构建文件。
 
@@ -71,6 +72,20 @@ PRD 评审模式（不修改文件）发现领域歧义时，不修改文件，�
 - 输入：已 Review 的 `plan.md` 及其上游文档。
 - 执行：基线验证、分类式 TDD、增量覆盖率、一次最终独立 Review 和最终验证。
 - 输出：代码变更与 `execution.md`；不自动提交 Git。
+
+## TDD 与测试合同
+
+- **Design：** 只定义测试策略、候选测试边界和测试层级；涉及 JUnit、MockMvc、Testcontainers 等 Spring 技术选型时可使用 `springboot-tdd`，不调用 `tdd`。
+- **Plan：** 任意新增或改变生产行为、Bug 修复均 **REQUIRED SUB-SKILL：** 使用 `tdd`。每个行为任务显式写出调用方可观察且重构后稳定的最窄合理测试边界、测试层级、独立预期值来源和允许替换的外部边界。先起草完整测试提案，再起草完整拟议生产代码，并按一个测试、一个最小实现的垂直切片排列。用户对 Plan 的一次 Review 同时确认这些测试边界。
+- **Executing：** 对行为任务 **REQUIRED SUB-SKILL：** 使用 `tdd`，不再逐项询问已确认的测试边界。每次只落地一个测试并确认正确 RED，再写当前切片的最小 GREEN。Plan 中的测试和生产代码是可执行、可 Review 的提案，不要求逐字复制；命名、fixture、控制流和辅助方法可等价调整，但改变测试边界、行为、预期、覆盖范围或上游合同必须返回相应阶段。
+
+测试通过公共行为观察结果，不直接测试 private 方法、内部 helper 或无业务意义的调用次数。预期值必须来自 `REQ/AC`、业务规则、协议示例、已批准真值表或独立推导案例，不得复制生产算法。数据库、消息、远程 API、文件系统、时间和随机性等外部边界可以使用完整且真实的 fake、stub 或 mock；优先断言业务结果或完整外部契约。`springboot-tdd` 只提供 Spring 测试技术，测试质量与切片规则以 `tdd` 为准。
+
+缺失测试基础设施时，可先建立并验证最小测试环境，但不把环境或配置失败记作 RED。Java 新类型或公共签名缺失导致的预期编译失败可作为初始 RED，随后仍须取得因目标行为缺失而产生的行为 RED。测试首次通过时先查明已有行为、无效断言或部分实现，不伪造 RED；已确认测试边界内且上游合同能唯一决定的遗漏测试可直接补充并记录。
+
+GREEN 后只有存在明确、局部且行为保持的整理目标时才触发重构；一旦重构，**REQUIRED SUB-SKILL：** 使用 `refactor`，小步修改并立即复验。独立的行为保持型重构只使用 `refactor`，先建立通过的特征或回归基线，不制造 RED。`refactor` 触发后缺失时，独立重构任务阻塞；可选整理可以跳过并记录，但阻塞最终质量 Review 的问题仍须解决。使用该 Skill 不代表获得 commit、分支或其他 Git 操作授权。
+
+Execution 为每个行为保留 RED 命令、退出码、预期与实际失败摘要、GREEN 命令和结果；实际重构时再记录 `refactor` 目标及复验。最终独立 Reviewer 按上述 `tdd` 质量规则复核测试，但不重新表演已有 TDD 历史；只有新增测试才执行新的 RED→GREEN。
 
 ## 问题与回退
 
@@ -96,8 +111,8 @@ PRD 评审模式（不修改文件）发现领域歧义时，不修改文件，�
 | PRD/Design 改变领域术语、身份、生命周期、不变量、归属或边界 | `domain-modeling` |
 | 公共 API/模块接口存在多种合理形状 | `design-an-interface` |
 | 已证明存在构造、替换、通知或适配变化轴 | `design-patterns` |
-| Spring 测试选型与实现 | `springboot-tdd` |
-| 任意生产行为变更 | `superpowers:test-driven-development` |
+| Spring 测试技术选型与实现 | `springboot-tdd`，测试质量服从 `tdd` |
+| 任意生产行为变更 | `tdd` |
 | 完成后的通用代码质量 | `clean-code-guard` |
 | 完成后的 Java 专项 Review | `java-code-review` |
 | 声明完成前 | `superpowers:verification-before-completion` |
@@ -109,11 +124,13 @@ PRD 评审模式（不修改文件）发现领域歧义时，不修改文件，�
 以下核心门禁缺失时停止并说明安装需求：
 
 - `121-java-object-oriented-design`
-- `superpowers:test-driven-development`
+- `tdd`
 - `clean-code-guard`
 - `java-code-review`
 - `superpowers:verification-before-completion`
 
 `domain-modeling` 是条件必需能力：PRD 或 Design 命中领域模型触发条件时缺失则停止；未命中时不加载。
 
-条件增强 Skill 缺失时继续，说明未执行的专项检查：`122-java-type-design`、`solid-principles`、`refactor`、`design-an-interface`、`design-patterns`、`springboot-tdd`。
+`refactor` 是条件必需能力：独立行为保持型重构，或 GREEN 后实际执行代码整理时必须使用；触发后的缺失处理遵循 TDD 与测试合同。未触发时不加载。
+
+其他条件增强 Skill 缺失时继续，说明未执行的专项检查：`122-java-type-design`、`solid-principles`、`design-an-interface`、`design-patterns`、`springboot-tdd`。

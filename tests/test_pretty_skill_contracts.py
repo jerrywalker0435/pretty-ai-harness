@@ -5,9 +5,70 @@ import unittest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS = REPO_ROOT / "skills"
+INSTALLER_DESIGN = (
+    REPO_ROOT
+    / "docs"
+    / "superpowers"
+    / "specs"
+    / "2026-08-12-pretty-skills-prompt-only-installer-design.md"
+)
+ORCHESTRATION_GUIDE = REPO_ROOT / "ai-harness-skill-orchestration-guide.md"
 
 
 class PrettySkillContractTest(unittest.TestCase):
+    def test_installer_routes_tdd_from_mattpocock_and_keeps_superpowers_verifier(
+        self,
+    ) -> None:
+        design = INSTALLER_DESIGN.read_text(encoding="utf-8")
+
+        self.assertRegex(
+            design,
+            re.compile(
+                r"mattpocock/skills\.git.*domain-modeling.*grilling.*design-an-interface.*`tdd`",
+                re.DOTALL,
+            ),
+        )
+        self.assertRegex(
+            design,
+            re.compile(
+                r"obra/superpowers\.git.*`verification-before-completion`",
+                re.DOTALL,
+            ),
+        )
+        self.assertNotIn("`test-driven-development`", design)
+        self.assertRegex(
+            design,
+            re.compile(
+                r"five Pretty\s+Skills and their thirteen required external Skills"
+            ),
+        )
+
+    def test_orchestration_guide_describes_pretty_tdd_contract(self) -> None:
+        guide = ORCHESTRATION_GUIDE.read_text(encoding="utf-8")
+
+        self.assertNotIn("superpowers:test-driven-development", guide)
+        for marker in (
+            "`tdd`",
+            "测试边界",
+            "独立预期值",
+            "垂直切片",
+            "`refactor`",
+            "90%",
+            "80%",
+        ):
+            self.assertIn(marker, guide)
+
+    def test_repository_markdown_uses_chinese_test_boundary_term(self) -> None:
+        violations = []
+        for path in REPO_ROOT.rglob("*.md"):
+            if ".git" in path.parts:
+                continue
+            content = path.read_text(encoding="utf-8")
+            if re.search(r"\bseams?\b", content, re.IGNORECASE):
+                violations.append(str(path.relative_to(REPO_ROOT)))
+
+        self.assertEqual([], violations)
+
     def test_shared_core_does_not_route_removed_quality_skill(self) -> None:
         core = (SKILLS / "pretty-java-spring-core" / "SKILL.md").read_text(
             encoding="utf-8"
@@ -48,6 +109,31 @@ class PrettySkillContractTest(unittest.TestCase):
         )
         self.assertRegex(workflow, re.compile(r"难以撤销.*真实权衡.*ADR", re.DOTALL))
         self.assertRegex(workflow, re.compile(r"Plan 与 Executing.*不得.*更新", re.DOTALL))
+
+    def test_shared_core_routes_behavior_through_tdd_and_refactoring_separately(
+        self,
+    ) -> None:
+        workflow = (
+            SKILLS
+            / "pretty-java-spring-core"
+            / "references"
+            / "workflow-contract.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("| 任意生产行为变更 | `tdd` |", workflow)
+        self.assertNotIn("superpowers:test-driven-development", workflow)
+        self.assertRegex(
+            workflow,
+            re.compile(r"测试边界.*Plan.*Review.*确认", re.DOTALL),
+        )
+        self.assertRegex(
+            workflow,
+            re.compile(r"springboot-tdd.*测试技术.*tdd.*测试质量", re.DOTALL),
+        )
+        self.assertRegex(
+            workflow,
+            re.compile(r"重构.*触发.*refactor.*缺失.*阻塞", re.DOTALL),
+        )
 
     def test_prd_review_mode_does_not_mutate_domain_documents(self) -> None:
         workflow = (
@@ -230,6 +316,28 @@ class PrettySkillContractTest(unittest.TestCase):
         self.assertIn("CR", skill)
         self.assertRegex(skill, re.compile(r"完整.*关键.*生产.*测试代码", re.DOTALL))
         self.assertRegex(skill, re.compile(r"机械.*变更表", re.DOTALL))
+        self.assertIn("**REQUIRED SUB-SKILL：** 使用 `tdd`", skill)
+        self.assertNotIn("superpowers:test-driven-development", skill)
+        for marker in (
+            "测试边界",
+            "独立预期值",
+            "垂直切片",
+            "测试提案",
+            "拟议生产代码",
+        ):
+            self.assertIn(marker, skill)
+        self.assertRegex(
+            skill,
+            re.compile(r"先.*测试提案.*再.*拟议生产代码", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"用户.*Review.*确认.*测试边界", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"springboot-tdd.*技术.*tdd.*质量", re.DOTALL),
+        )
         self.assertIn("90%", skill)
         self.assertIn("80%", skill)
         self.assertIn("新增生产代码", skill)
@@ -294,12 +402,51 @@ class PrettySkillContractTest(unittest.TestCase):
             skill,
             re.compile(r"需求.*PRD.*领域设计.*Design.*实施计划.*Plan", re.DOTALL),
         )
-        self.assertIn("superpowers:test-driven-development", skill)
+        self.assertIn("**REQUIRED SUB-SKILL：** 使用 `tdd`", skill)
+        self.assertNotIn("superpowers:test-driven-development", skill)
         self.assertIn("clean-code-guard", skill)
         self.assertIn("java-code-review", skill)
         self.assertIn("superpowers:verification-before-completion", skill)
         self.assertRegex(skill, re.compile(r"行为.*RED.*GREEN", re.DOTALL))
         self.assertRegex(skill, re.compile(r"非行为.*等价验证", re.DOTALL))
+        self.assertRegex(skill, re.compile(r"每次只.*一个.*测试", re.DOTALL))
+        self.assertRegex(skill, re.compile(r"垂直切片", re.DOTALL))
+        self.assertRegex(
+            skill,
+            re.compile(r"Plan.*Review.*确认.*测试边界.*不再.*询问", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"编译.*RED.*行为 RED", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"首次通过.*不.*伪造.*RED", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"重构.*REQUIRED SUB-SKILL.*refactor.*复验", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"独立预期值.*实现", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"mock.*外部边界.*业务结果", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"紧急.*期限.*已投入.*负责人.*不.*豁免", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"首次通过.*诊断证据", re.DOTALL),
+        )
+        self.assertRegex(
+            skill,
+            re.compile(r"当前.*行为切片.*无关遗留.*返回 Plan", re.DOTALL),
+        )
         self.assertRegex(skill, re.compile(r"一次.*最终.*独立.*Review", re.DOTALL))
         self.assertIn("90%", skill)
         self.assertIn("80%", skill)
