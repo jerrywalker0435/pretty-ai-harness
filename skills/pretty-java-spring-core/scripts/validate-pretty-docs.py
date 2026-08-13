@@ -35,14 +35,6 @@ REQUIRED_HEADINGS = {
         "测试与验证",
         "共享约束和代码事实",
     ),
-    "execution": (
-        "输入与基线",
-        "执行摘要",
-        "任务证据",
-        "测试与验证结果",
-        "偏差与未验证范围",
-        "最终审计与结论",
-    ),
 }
 ID_PATTERN = re.compile(r"\b(REQ|AC|DEC|TASK)-(\d{3,})\b")
 HEADING_DEFINITION_PATTERN = re.compile(
@@ -62,25 +54,18 @@ PLAN_PRODUCTION_CODE_HEADING = "#### 核心生产代码"
 PLAN_TEST_CODE_HEADING = "#### 核心测试代码"
 PLAN_MECHANICAL_CHANGE_HEADING = "#### 完整机械变更"
 JAVA_FENCE_PATTERN = re.compile(r"```java\s*\n.+?\n```", re.DOTALL)
-EXECUTION_REQUIRED_MARKERS = (
-    "工作区归因",
-    "Plan 基线",
-    "实际声明范围",
-    "Pretty 外未验证范围",
-    "自动审计",
+EXECUTION_COMPLETE_HEADINGS = (
+    "执行起点",
+    "TASK 结果",
+    "最终验证",
+    "结论与限制",
 )
-EXECUTION_TASK_REQUIRED_MARKERS = (
-    "状态",
-    "实际变更",
-    "任务级完成证据",
-    "实质偏差",
+EXECUTION_STOP_HEADINGS = (
+    ("执行起点", "恢复点", "结论与限制"),
+    ("执行起点", "TASK 结果", "恢复点", "结论与限制"),
 )
-BASELINE_STOP_MARKERS = (
-    "工作区归因",
-    "Plan 基线",
-    "停止：基线失败",
-    "恢复条件",
-    "Pretty 外未验证范围",
+EXECUTION_PLACEHOLDER_PATTERN = re.compile(
+    r"待执行|待验证|待审计|待逐[^\n]*记录|执行中"
 )
 NON_UT_TEST_CODE_PATTERN = re.compile(
     r"^\s*(?:@(SpringBootTest|WebMvcTest|DataJpaTest)\b|"
@@ -126,22 +111,6 @@ def references(text: str, prefix: str) -> Set[str]:
     }
 
 
-def definition_blocks(text: str, prefix: str) -> List[Tuple[str, str]]:
-    pattern = re.compile(rf"^###\s+({prefix}-\d{{3,}})\b", re.MULTILINE)
-    matches = list(pattern.finditer(text))
-    blocks = []
-    for index, match in enumerate(matches):
-        next_definition = (
-            matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        )
-        next_h2 = re.search(r"^##\s+", text[match.end() :], re.MULTILINE)
-        end = next_definition
-        if next_h2:
-            end = min(end, match.end() + next_h2.start())
-        blocks.append((match.group(1), text[match.start() : end]))
-    return blocks
-
-
 def plan_task_blocks(text: str) -> List[Tuple[str, str]]:
     matches = list(PLAN_TASK_HEADING_PATTERN.finditer(text))
     blocks: List[Tuple[str, str]] = []
@@ -174,26 +143,6 @@ def add_sequence_errors(errors: List[str], stage: str, defined_ids: List[str]) -
             errors.append(
                 f"{stage}.md {prefix} definitions must be continuous from {prefix}-001"
             )
-
-
-def add_required_marker_errors(
-    errors: List[str], stage: str, text: str, required: Iterable[str]
-) -> None:
-    for marker in required:
-        if marker not in text:
-            errors.append(f"{stage}.md is missing required field: {marker}")
-
-
-def add_block_marker_errors(
-    errors: List[str],
-    stage: str,
-    blocks: Iterable[Tuple[str, str]],
-    required: Iterable[str],
-) -> None:
-    for identifier, block in blocks:
-        for marker in required:
-            if marker not in block:
-                errors.append(f"{stage}.md {identifier} is missing required field: {marker}")
 
 
 def add_unknown_reference_errors(
@@ -247,7 +196,7 @@ def read_documents(
             errors.append(f"{stage}.md contains a personal absolute path")
 
         headings = heading_titles(text)
-        if headings != list(REQUIRED_HEADINGS[stage]):
+        if stage != "execution" and headings != list(REQUIRED_HEADINGS[stage]):
             errors.append(
                 f"{stage}.md H2 headings must exactly match the fixed stage order"
             )
@@ -352,34 +301,59 @@ def validate_plan(
     return tasks
 
 
+def execution_status(text: str) -> str:
+    conclusion = subsection(text, "## 结论与限制")
+    if re.search(r"^- 状态：完成\s*$", conclusion, re.MULTILINE):
+        return "completed"
+    if re.search(
+        r"^- 状态：(停止：.+|返回 (?:Plan|Design|PRD)：.+)\s*$",
+        conclusion,
+        re.MULTILINE,
+    ):
+        return "stopped"
+    return ""
+
+
+def add_execution_task_errors(
+    errors: List[str], text: str, tasks: Set[str]
+) -> None:
+    reported = set(PLAN_TASK_HEADING_PATTERN.findall(text))
+    for unknown in sorted(reported - tasks):
+        errors.append(f"execution.md references unknown {unknown}")
+    for missing in sorted(tasks - reported):
+        errors.append(f"execution.md does not report {missing}")
+
+
+def validate_execution_document(text: str, tasks: Set[str]) -> List[str]:
+    errors: List[str] = []
+    headings = tuple(heading_titles(text))
+    status = execution_status(text)
+
+    if EXECUTION_PLACEHOLDER_PATTERN.search(text):
+        errors.append("execution.md contains a placeholder")
+
+    if status == "completed":
+        if headings != EXECUTION_COMPLETE_HEADINGS:
+            errors.append("execution.md completed headings are invalid")
+        add_execution_task_errors(errors, text, tasks)
+        return errors
+
+    if status == "stopped":
+        if headings not in EXECUTION_STOP_HEADINGS:
+            errors.append("execution.md stopped headings are invalid")
+        return errors
+
+    errors.append("execution.md must contain a final completed or stopped status")
+    return errors
+
+
 def validate_execution(
-    documents: Dict[str, str],
-    definitions_by_stage: Dict[str, Set[str]],
-    tasks: Set[str],
-    errors: List[str],
+    documents: Dict[str, str], tasks: Set[str], errors: List[str]
 ) -> None:
     if "execution" not in documents:
         return
     execution = documents["execution"]
-    if "停止：基线失败" in execution:
-        add_required_marker_errors(errors, "execution", execution, BASELINE_STOP_MARKERS)
-    else:
-        execution_tasks = {
-            item
-            for item in definitions_by_stage["execution"]
-            if item.startswith("TASK-")
-        }
-        for unknown in sorted(execution_tasks - tasks):
-            errors.append(f"execution.md references unknown {unknown}")
-        for missing in sorted(tasks - execution_tasks):
-            errors.append(f"execution.md does not report {missing}")
-        add_required_marker_errors(errors, "execution", execution, EXECUTION_REQUIRED_MARKERS)
-        add_block_marker_errors(
-            errors,
-            "execution",
-            definition_blocks(execution, "TASK"),
-            EXECUTION_TASK_REQUIRED_MARKERS,
-        )
+    errors.extend(validate_execution_document(execution, tasks))
     if NON_UT_TEST_CODE_PATTERN.search(execution):
         errors.append("execution.md records non-UT test code creation")
 
@@ -401,7 +375,7 @@ def validate(topic_dir: Path, through: str = None) -> List[str]:
         (("REQ", reqs), ("AC", acceptance), ("DEC", decisions)),
         errors,
     )
-    validate_execution(documents, definitions_by_stage, tasks, errors)
+    validate_execution(documents, tasks, errors)
 
     return errors
 

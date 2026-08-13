@@ -1,5 +1,7 @@
 # Pretty 四阶段 Skill 设计
 
+> Execution 精简与渐进质量门禁的现行调整见 `docs/superpowers/plans/2026-08-13-pretty-execution-quality-gates-implementation-plan.md`；本文保留历史设计语义。
+
 ## 输入与范围
 
 本设计以 `docs/prd.md`、`docs/design.md`、`docs/plan.md`、`docs/execution.md` 的反向评审结果和逐项确认的决策为输入，统一改进 Pretty 四阶段 Skill 的职责、阶段门禁、文档结构、测试策略和验证声明。

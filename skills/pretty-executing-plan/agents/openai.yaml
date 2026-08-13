@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Executing Plan"
-  short_description: "执行 Java/Spring Plan 并完成逐切片 TDD 与自动审计"
+  short_description: "执行 Java/Spring Plan，逐用例 TDD 并渐进关闭代码质量问题"
   default_prompt: "Use $pretty-executing-plan to implement an approved Java/Spring Plan and produce its execution evidence."
