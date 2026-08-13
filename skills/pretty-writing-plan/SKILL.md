@@ -1,119 +1,115 @@
 ---
 name: pretty-writing-plan
-description: Use when reviewed Pretty PRD and Design documents for a Java/Spring change need a pre-implementation code-review plan before execution begins.
+description: Use when creating, revising, or reviewing a Pretty plan.md for an approved Java/Spring PRD and Design before implementation begins.
 ---
 
 # 编写 Java/Spring Plan
 
 ## 目标
 
-把已 Review 的 PRD、Design 和真实源码转化为实施前 CR 文档。Plan 应让人能够审查具体实现与测试，并让执行者逐项实施和验证；它不修改代码，也不编排 Git 操作。
+把已批准的 PRD、Design 和真实源码转化为约束性实施合同与可审查实现提案。Plan 是代码事实前置 CR 和 Execution 的事实依据；不实施代码，不执行 TDD，不编排 Git。
 
-**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Plan 模板和 Java/Spring 质量检查。本 Skill 是当前阶段的唯一流程控制器。
+**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Plan 模板和 Java/Spring 质量检查。本 Skill 是本阶段唯一流程控制器。
 
 ## 工作流
 
-### 1. 校验输入
+### 1. 确认模式与输入
 
-宣布使用 `pretty-writing-plan`。读取同一主题下已由用户 Review 的：
+宣布使用 `pretty-writing-plan`。用户只要求评估、检查或 Review 时进入只读评审；要求创建或修订时进入写作模式。
+
+写作模式读取同一标准目录下已由用户批准的：
 
 ```text
 docs/pretty/<topic>/prd.md
 docs/pretty/<topic>/design.md
 ```
 
-根目录存在 `CONTEXT-MAP.md` 时读取相关上下文的 `CONTEXT.md`，否则读取根目录已有的 `CONTEXT.md`。缺失、未 Review 或存在矛盾时停止，返回最早受影响阶段。Plan 不改变 `REQ`、`AC` 或 `DEC`。唯一输出文件是：
+读取共享合同要求的领域上下文。缺失、未批准、含占位或互相矛盾时返回最早受影响阶段。Plan 不改变 `REQ/AC/DEC`，唯一输出为：
 
 ```text
 docs/pretty/<topic>/plan.md
 ```
 
-已有文件时原地修订。简单 Bug 或局部重构可以只有一个任务。
+已有文件原地修订。简单变更仍保留五章，可以只有一个短 TASK。
 
-### 2. 核实实施证据
+### 2. 执行只读评审
 
-读取完成本次变化所需的真实生产源码、调用方、测试、构建配置和仓库规则，确认准确路径、类型、签名、依赖、测试命令及现有 JaCoCo 约定。
+只接受 `docs/pretty/<topic>/plan.md`；同目录必须存在 PRD、Design，并能定位真实源码。非标准路径不接受、不迁移、不复制。
 
-- 能从仓库确定的事实自行查明，不虚构文件、API、命令或预期结果。
-- 非阻塞细节沿用仓库惯例和最简单实现。
-- 缺少会导致关键代码不准确的事实时，只问一个聚焦问题。
-- Plan 只消费领域模型，不调用 `domain-modeling`，不得更新 `CONTEXT.md`、`CONTEXT-MAP.md` 或 ADR。当前代码示例或命名错误而上游语义明确时直接修正 Plan；需要改变需求、`REQ` 或 `AC` 时返回 PRD，需要改变领域设计、边界、所有权或 `DEC` 时返回 Design。
+严格不修改文件、不生成 Execution、不开始实施。核对真实源码、上游合同、TASK、UT 方案、基线、覆盖率和声明边界，运行至 Plan 的机械校验但只把失败作为发现。依次输出并停止：阻塞问题、重要改进、代码事实与上下游偏差、执行与验证影响、`可进入 Execution / 修正后再进入 Execution`。结论不等于用户批准。
 
-### 3. 审查拟议 Java/Spring 代码
+### 3. 核实代码事实并分流未知
 
-涉及生产 Java 对象、方法或职责时，**REQUIRED SUB-SKILL：** 使用 `121-java-object-oriented-design`。再按真实变化选择：
+读取完成变更所需的生产源码、调用方、现有测试、构建配置、仓库规则和 JaCoCo 政策，确认真实相对路径、symbol、类型、签名、依赖和命令。
 
-| 触发场景 | 使用的 Skill |
-|---|---|
-| 类型层次、值对象、泛型或 primitive obsession | `122-java-type-design` |
-| 新增或改变服务职责、端口或依赖方向 | `solid-principles` |
-| 保持行为的遗留结构调整 | `refactor` |
-| Spring 测试层级、JUnit、Mockito、MockMvc 或 Testcontainers | `springboot-tdd`，仅用于技术选型；测试质量服从 `tdd` |
+- 区分已核实代码事实、`REQ/AC/DEC` 上游约束和拟议实现。
+- 仓库事实自行查明，不虚构文件、API、命令或结果。
+- Plan 不调用 `grilling`：业务结果未知返回 PRD；职责、边界、合同、所有权、一致性或 `DEC` 未知返回 Design；低风险外部等价实现给出推荐提案。
+- Plan 只消费领域文档，不调用 `domain-modeling`，不得更新 `CONTEXT.md`、`CONTEXT-MAP.md` 或 ADR。
+- 数据库、外部服务、凭证、部署或 Reviewer 是否存在可以保持运行时未知，不阻塞 Plan。
 
-完整读取实际触发的 Skill，把发现落实到代码和任务。在 Design 已确定的既有职责内修改方法实现，不单独触发职责或依赖方向检查。关键生产代码起草后使用 `clean-code-guard` 做一次实现方案 Review，修正命名、职责、控制流、重复、无必要抽象和 LLM 常见缺陷。若修正会改变 Design，返回 Design 阶段。
+### 4. 审查拟议实现
 
-### 4. 编写可作为 CR 的 Plan
+按真实风险使用质量能力：对象职责、封装、聚合、组合或继承变化时使用 `121-java-object-oriented-design`；类型、SOLID、接口和行为保持重构按共享路由触发。不要无条件运行 Java/OOD 检查；纯 SQL、配置、部署、文档和机械修改不触发无关能力。
 
-使用共享 Plan 模板并替换全部占位内容。用 `TASK-001` 起连续编号；每个任务关联适用的 `REQ`、`AC` 和 `DEC`，列出准确文件和依赖顺序。
+对职责、依赖、契约、算法、异常、事务、SQL、安全、兼容和可测试性执行风险导向 CR。改变职责、依赖方向、所有权、事务、跨模块合同或长期扩展点时返回 Design；改变业务结果时返回 PRD。不为测试暴露生产方法，不引入无现实用途抽象。
 
-每个任务必须足够自包含：
+### 5. 编写五章 Plan
 
-- 标明变更类型与实现要点。
-- 新增或改变生产行为、Bug 修复时，**REQUIRED SUB-SKILL：** 使用 `tdd`。为每个行为显式写出测试边界、测试层级、独立预期值来源和允许替换的外部边界；测试边界选择调用方可观察且重构后稳定的最窄合理入口，不直接测试 private 方法或内部 helper。
-- 先起草可执行的完整测试提案，再起草可编译的完整拟议生产代码。按一个测试、一个最小实现的垂直切片规划 RED、预期失败、最小 GREEN、通过命令；不得先批量规划全部测试再统一实现。
-- 测试提案通过业务结果或完整外部契约断言，独立预期值来自 `REQ/AC`、业务规则、协议示例或独立推导案例，不复制生产算法。mock 只用于不可避免的外部边界，不以内部调用次数或顺序作为主要成功标准。
-- 完整展示关键生产代码与测试代码，包括公共签名、核心业务方法、校验/异常/事务边界以及可执行的关键测试。Plan 中二者是供 CR 的提案，Execution 可作不改变合同的等价调整，不要求逐字复制。
-- 修改既有方法时展示完整替换方法及必要上下文；新增类型展示可编译的完整类型。
-- import、注解替换、配置键、简单映射和重复改名等机械修改使用逐项变更表，列清文件、符号、旧值、新值和验证方式。
-- 行为保持型重构使用 `refactor`，先建立通过基线并按小步复验，不制造 RED；非行为变化给出与风险匹配的等价验证。
-- 给出可直接运行的 RED、GREEN、受影响模块测试和最终仓库验证命令及预期结果。Java 类型或签名缺失可以先预期编译 RED，但必须继续规划因目标行为缺失产生的行为 RED；测试基础设施准备不算 RED。
+使用共享模板。`TASK-001` 起连续编号，优先按可验证行为或独立风险垂直切分，不按技术层或 commit 大小切分。每个 TASK 按适用性写清目标闭环、追溯、事实、继承约束、拟议变更、具名行为切片、验证入口、真实依赖和完成证据。
 
-不得使用省略内容、伪代码或“类似修改”。Plan 中的代码必须与任务间的类型、签名和错误语义一致，并严格限定在需求所需范围。
+所有 `REQ/AC/DEC` 必须有真实落点，但可以落到生产代码、UT、跨任务门禁或不变边界验证。TASK 只声明真实依赖，外部环境不是依赖。两个以上 TASK 提供任务索引；简单 Plan 不生成空表或虚假内容。
 
-### 5. 定义测试与新增代码覆盖率门禁
+代码按风险选择性展开：
 
-Plan 必须让执行阶段可以证明，而不是猜测覆盖率：
+- 高风险算法、SQL、事务、并发、兼容、异常路径或复杂 UT 可以展示完整代码；
+- DTO、getter、普通映射、import、改名和样板使用签名、关键片段或机械变更表；
+- 展示的签名、类型和片段必须与仓库一致、自洽，不用省略号隐藏高风险逻辑；
+- Plan 不要求所有片段可单独编译，也不是完整候选补丁。
 
-- 新增生产代码行覆盖率至少 `90%`，分支覆盖率至少 `80%`。
-- 修改遗留行为必须有针对本次变化的回归测试。
-- 未触碰历史代码不进入覆盖率分母，也不要求补测。
-- 测试须覆盖主流程、关键边界、失败行为以及适用的权限、金额、状态、幂等和事务语义；覆盖率不能替代有效断言。
-- PRD 含业务故事时，用其检查测试方案是否覆盖代表性业务结果；故事与测试允许多对多，不要求每个故事都有独立 E2E 测试，也不新增 `US` 标识，`REQ/AC` 仍是唯一需求合同。
+### 6. 用 `tdd` 审查 UT 方案
 
-写入捕获执行起点、生成报告和检查增量的准确命令，使用共享工具：
+新增/改变行为或 Bug 修复时，**REQUIRED SUB-SKILL：** 使用 `tdd`，但只用于保证测试计划质量。Plan 不写测试文件、不执行 RED/GREEN、不声称 TDD 已发生。
 
-```bash
-<pretty-java-spring-core-dir>/scripts/run-coverage.sh --project-dir <repo-root>
-python3 <pretty-java-spring-core-dir>/scripts/check-new-code-coverage.py \
-  --repo <repo-root> --base <execution-start-head> --report <jacoco.xml> \
-  --file <plan-owned-production-file> \
-  --line-threshold 90 --branch-threshold 80
-```
+每个行为切片必须说明：
 
-按仓库实际情况把命令中的运行时值写成可取得的具体路径或变量，并为每个 Plan 拥有的生产文件重复 `--file`，避免把工作区内无关改动算入分母；同时说明报告位置与失败判定。共享覆盖率工具不得为了采集报告修改项目构建文件；业务实现确需的依赖或构建变化仍作为普通 CR 内容列出。
+- 不启动 Spring 的稳定 UT 边界和 Given-When-Then；
+- 独立预期值；
+- mock/fake/stub 边界；
+- 因目标行为缺失而失败的预期 RED 原因；
+- 当前切片最小 GREEN 条件；
+- 可解析验证入口。
 
-### 6. 自审并机械校验
+文档统一使用“UT 边界”或“测试边界”，不另造英文同义术语。
 
-确认所有 `REQ/AC/DEC` 均有任务和验证，每个任务都有来源；拟议命名、身份、状态、不变量、所有权和边界与领域文档及 Design 一致；关键代码符合项目规则、Clean Code、Java/Spring 质量检查和最简单可行原则；测试代码能够覆盖计划中的新增分支，并且没有实现耦合、同义反复、横向切片或无必要 mock；命令、路径和报告位置真实。
+测试断言业务结果、状态变化或完整边界请求，不以调用次数/顺序为主要成功标准。边界外 Repository、Gateway、Service、远程客户端、时钟等可以替换；被测规则使用真实对象。JUnit 5、Mockito、AssertJ 写法遵循 `tdd` 和最佳实践，并兼容仓库实际依赖版本。
 
-运行：
+强制 UT-only：不得提议新增或扩展集成、契约、端到端、Spring slice、`@SpringBootTest`、`@WebMvcTest`、`@DataJpaTest`、Testcontainers、嵌入式数据库或本地基础设施测试。SQL、配置、文档和机械修改使用确定性验证，不制造 UT。用户批准 Plan 即确认测试边界，Execution 不逐项再问。
+
+### 7. 定义基线、最终验证与覆盖率
+
+Execution 基线只包含可控的受影响模块编译、相关现有 UT、必要快速静态检查和将修改的测试入口，不默认全仓或外部环境检查。
+
+最终验证默认包含受影响模块编译、本次全部新/改 UT、直接相关回归 UT、快速静态检查和适用覆盖率。优先继承仓库覆盖率政策；无政策时，可由 UT 覆盖的新增或实质修改 Java 行为默认行 90%、分支 80%。修改既有行为以针对性 UT 证明；工具不能统计修改行时不虚构百分比。覆盖率不得驱动非 UT、弱断言或无价值测试。
+
+列出 Pretty 外未验证范围和严格声明限制；外部资源不可用不形成 TASK 依赖或完成门禁。
+
+### 8. 自审、校验并请求 Review
+
+确认五章、连续 TASK、追溯落点、三类事实、风险选择性代码、垂直 UT 切片、真实命令、覆盖率政策与声明限制一致；无占位、个人路径或上游越权。运行：
 
 ```bash
 python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
   docs/pretty/<topic> --through plan
 ```
 
-修正所有机械或语义问题后再交付。
-
-### 7. 请求一次 Review 并停止
-
-告知用户 Plan 路径、任务数量、关键代码 Review 结论、测试边界、覆盖率合同和校验结果，请求一次人工 Review，然后停止。用户这次 Review 同时确认 Plan 中显式列出的测试边界；不得开始实施、创建 Issue、提交或推送代码。
+告知路径、TASK 数量、关键 CR 结论、UT 边界、覆盖率政策和校验结果，请求一次用户 Review，然后停止。用户批准 Plan 后才可进入 Execution。
 
 ## 红线
 
-- 只有文件名却没有源码，仍生成貌似完整的代码。
-- 把 Plan 写成只有意图、没有可 Review 代码的任务清单。
-- 用全仓覆盖率掩盖新增代码覆盖不足，或要求无关遗留代码补测。
-- 为提高指标扩大排除、弱化断言或增加无业务价值测试。
-- 在 Plan 中改变需求、设计或加入无关重构。
-- Plan 完成后自动进入执行阶段。
+- 不用文件名或 Design 示例冒充已核实源码。
+- 不退化为完整候选补丁或只有意图的任务清单。
+- 不按技术层横向切分 TASK。
+- 不在 Plan 中写测试、执行 RED/GREEN 或改变上游合同。
+- 不新增或扩展非 UT 测试。
+- 不创建代码附件、前置 CR 结论、执行交接或任务流程图。

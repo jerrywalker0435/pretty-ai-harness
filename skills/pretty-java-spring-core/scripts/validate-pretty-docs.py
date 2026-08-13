@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 import re
 import sys
-from typing import Dict, Iterable, List, Sequence, Set
+from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 
 STAGES = ("prd", "design", "plan", "execution")
@@ -23,28 +23,27 @@ REQUIRED_HEADINGS = {
     ),
     "design": (
         "输入与范围",
+        "设计摘要",
         "现状与约束",
         "方案与权衡",
         "详细设计",
-        "测试策略",
-        "Java/Spring 质量审查",
+        "验证策略",
         "风险与回退",
     ),
     "plan": (
         "输入与范围",
-        "变更概览",
+        "实施摘要",
+        "代码事实与约束",
         "实施任务",
-        "测试与增量覆盖率",
-        "最终验证",
-        "执行交接",
+        "测试与验证",
     ),
     "execution": (
         "输入与基线",
-        "任务结果",
-        "测试与覆盖率结果",
-        "代码质量 Review",
-        "偏差与遗留问题",
-        "最终结论",
+        "执行摘要",
+        "任务证据",
+        "测试与验证结果",
+        "偏差与未验证范围",
+        "最终审计与结论",
     ),
 }
 ID_PATTERN = re.compile(r"\b(REQ|AC|DEC|TASK)-(\d{3,})\b")
@@ -52,6 +51,64 @@ DEFINITION_PATTERN = re.compile(
     r"^#{3,6}\s+((?:REQ|AC|DEC|TASK)-\d{3,})\b", re.MULTILINE
 )
 PLACEHOLDER_PATTERN = re.compile(r"\b(?:TODO|TBD|FIXME)\b|待定|占位", re.IGNORECASE)
+PERSONAL_PATH_PATTERN = re.compile(
+    r"(?:/Users/[^/\s`]+|/home/[^/\s`]+|[A-Za-z]:\\Users\\[^\\\s`]+)"
+)
+PLAN_REQUIRED_MARKERS = (
+    "已核实代码事实",
+    "上游约束",
+    "拟议实现",
+)
+PLAN_TASK_REQUIRED_MARKERS = (
+    "追溯落点",
+    "目标行为或风险闭环",
+    "已核实代码事实",
+    "继承约束",
+    "拟议变更",
+    "真实任务依赖",
+    "验证入口",
+    "完成证据",
+)
+PLAN_SLICE_MARKERS = (
+    "UT 边界",
+    "独立预期值",
+    "mock/fake/stub 边界",
+    "预期 RED 原因",
+    "最小 GREEN 条件",
+)
+EXECUTION_REQUIRED_MARKERS = (
+    "工作区归因",
+    "Plan 基线",
+    "实际声明范围",
+    "Pretty 外未验证范围",
+    "自动审计",
+)
+EXECUTION_TASK_REQUIRED_MARKERS = (
+    "状态",
+    "实际变更",
+    "任务级完成证据",
+    "实质偏差",
+)
+BASELINE_STOP_MARKERS = (
+    "工作区归因",
+    "Plan 基线",
+    "停止：基线失败",
+    "恢复条件",
+    "Pretty 外未验证范围",
+)
+DESIGN_DEC_REQUIRED_MARKERS = (
+    "驱动因素与相关 `REQ`",
+    "候选或决定性证据",
+    "采用方案及理由",
+    "后果",
+    "重新评估条件",
+)
+NON_UT_TEST_CODE_PATTERN = re.compile(
+    r"^\s*(?:@(SpringBootTest|WebMvcTest|DataJpaTest)\b|"
+    r"import\s+org\.testcontainers\.|"
+    r"(?:new\s+)?(?:PostgreSQLContainer|MySQLContainer|GenericContainer)\s*[<(])",
+    re.MULTILINE,
+)
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -67,11 +124,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def heading_titles(text: str) -> Set[str]:
-    return {
+def heading_titles(text: str) -> List[str]:
+    return [
         match.group(1).strip()
         for match in re.finditer(r"^##\s+(.+?)\s*$", text, re.MULTILINE)
-    }
+    ]
 
 
 def definitions(text: str) -> List[str]:
@@ -84,6 +141,54 @@ def references(text: str, prefix: str) -> Set[str]:
         for kind, number in ID_PATTERN.findall(text)
         if kind == prefix
     }
+
+
+def definition_blocks(text: str, prefix: str) -> List[Tuple[str, str]]:
+    pattern = re.compile(rf"^###\s+({prefix}-\d{{3,}})\b", re.MULTILINE)
+    matches = list(pattern.finditer(text))
+    blocks = []
+    for index, match in enumerate(matches):
+        next_definition = (
+            matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        )
+        next_h2 = re.search(r"^##\s+", text[match.end() :], re.MULTILINE)
+        end = next_definition
+        if next_h2:
+            end = min(end, match.end() + next_h2.start())
+        blocks.append((match.group(1), text[match.start() : end]))
+    return blocks
+
+
+def add_sequence_errors(errors: List[str], stage: str, defined_ids: List[str]) -> None:
+    by_prefix: Dict[str, List[str]] = {}
+    for item in defined_ids:
+        by_prefix.setdefault(item.split("-", 1)[0], []).append(item)
+    for prefix, items in by_prefix.items():
+        expected = [f"{prefix}-{index:03d}" for index in range(1, len(items) + 1)]
+        if items != expected:
+            errors.append(
+                f"{stage}.md {prefix} definitions must be continuous from {prefix}-001"
+            )
+
+
+def add_required_marker_errors(
+    errors: List[str], stage: str, text: str, required: Iterable[str]
+) -> None:
+    for marker in required:
+        if marker not in text:
+            errors.append(f"{stage}.md is missing required field: {marker}")
+
+
+def add_block_marker_errors(
+    errors: List[str],
+    stage: str,
+    blocks: Iterable[Tuple[str, str]],
+    required: Iterable[str],
+) -> None:
+    for identifier, block in blocks:
+        for marker in required:
+            if marker not in block:
+                errors.append(f"{stage}.md {identifier} is missing required field: {marker}")
 
 
 def add_unknown_reference_errors(
@@ -118,12 +223,9 @@ def selected_stages(topic_dir: Path, through: str) -> List[str]:
     return selected
 
 
-def validate(topic_dir: Path, through: str = None) -> List[str]:
-    errors: List[str] = []
-    stages = selected_stages(topic_dir, through)
-    if not stages:
-        return [f"no Pretty documents found in {topic_dir}"]
-
+def read_documents(
+    topic_dir: Path, stages: Iterable[str], errors: List[str]
+) -> Tuple[Dict[str, str], Dict[str, Set[str]]]:
     documents: Dict[str, str] = {}
     stage_definitions: Dict[str, Set[str]] = {}
     for stage in stages:
@@ -136,66 +238,152 @@ def validate(topic_dir: Path, through: str = None) -> List[str]:
         if PLACEHOLDER_PATTERN.search(text):
             errors.append(f"{stage}.md contains a placeholder")
 
+        if PERSONAL_PATH_PATTERN.search(text):
+            errors.append(f"{stage}.md contains a personal absolute path")
+
         headings = heading_titles(text)
-        for heading in REQUIRED_HEADINGS[stage]:
-            if heading not in headings:
-                errors.append(f"{stage}.md is missing heading: {heading}")
+        if headings != list(REQUIRED_HEADINGS[stage]):
+            errors.append(
+                f"{stage}.md H2 headings must exactly match the fixed stage order"
+            )
 
         defined_ids = definitions(text)
         for duplicate, count in Counter(defined_ids).items():
             if count > 1:
                 errors.append(f"{stage}.md defines {duplicate} more than once")
+        add_sequence_errors(errors, stage, defined_ids)
         stage_definitions[stage] = set(defined_ids)
+    return documents, stage_definitions
 
-    if "prd" in documents:
-        reqs = {item for item in stage_definitions["prd"] if item.startswith("REQ-")}
-        acceptance = {item for item in stage_definitions["prd"] if item.startswith("AC-")}
-        if not reqs:
-            errors.append("prd.md must define at least one REQ ID")
-        if not acceptance:
-            errors.append("prd.md must define at least one AC ID")
-        add_unknown_reference_errors(errors, "prd", documents["prd"], "REQ", reqs)
+
+def validate_prd(
+    documents: Dict[str, str],
+    definitions_by_stage: Dict[str, Set[str]],
+    errors: List[str],
+) -> Tuple[Set[str], Set[str]]:
+    if "prd" not in documents:
+        return set(), set()
+    reqs = {item for item in definitions_by_stage["prd"] if item.startswith("REQ-")}
+    acceptance = {
+        item for item in definitions_by_stage["prd"] if item.startswith("AC-")
+    }
+    if not reqs:
+        errors.append("prd.md must define at least one REQ ID")
+    if not acceptance:
+        errors.append("prd.md must define at least one AC ID")
+    add_unknown_reference_errors(errors, "prd", documents["prd"], "REQ", reqs)
+    return reqs, acceptance
+
+
+def validate_design(
+    documents: Dict[str, str],
+    definitions_by_stage: Dict[str, Set[str]],
+    reqs: Set[str],
+    acceptance: Set[str],
+    errors: List[str],
+) -> Set[str]:
+    if "design" not in documents:
+        return set()
+    decisions = {
+        item for item in definitions_by_stage["design"] if item.startswith("DEC-")
+    }
+    design = documents["design"]
+    add_unknown_reference_errors(errors, "design", design, "REQ", reqs)
+    add_unknown_reference_errors(errors, "design", design, "AC", acceptance)
+    add_missing_reference_errors(errors, "design", design, reqs)
+    add_missing_reference_errors(errors, "design", design, acceptance)
+    if decisions:
+        add_block_marker_errors(
+            errors,
+            "design",
+            definition_blocks(design, "DEC"),
+            DESIGN_DEC_REQUIRED_MARKERS,
+        )
+    return decisions
+
+
+def validate_plan(
+    documents: Dict[str, str],
+    definitions_by_stage: Dict[str, Set[str]],
+    upstream_ids: Iterable[Tuple[str, Set[str]]],
+    errors: List[str],
+) -> Set[str]:
+    if "plan" not in documents:
+        return set()
+    plan = documents["plan"]
+    tasks = {item for item in definitions_by_stage["plan"] if item.startswith("TASK-")}
+    if not tasks:
+        errors.append("plan.md must define at least one TASK ID")
+    for prefix, known in upstream_ids:
+        add_unknown_reference_errors(errors, "plan", plan, prefix, known)
+        add_missing_reference_errors(errors, "plan", plan, known)
+    add_required_marker_errors(errors, "plan", plan, PLAN_REQUIRED_MARKERS)
+    add_block_marker_errors(
+        errors,
+        "plan",
+        definition_blocks(plan, "TASK"),
+        PLAN_TASK_REQUIRED_MARKERS,
+    )
+    if "行为切片" in plan:
+        add_required_marker_errors(errors, "plan", plan, PLAN_SLICE_MARKERS)
+    for marker in ("行阈值", "分支阈值"):
+        if marker not in plan:
+            errors.append(f"plan.md is missing coverage policy field: {marker}")
+    if NON_UT_TEST_CODE_PATTERN.search(plan):
+        errors.append("plan.md proposes non-UT test code")
+    return tasks
+
+
+def validate_execution(
+    documents: Dict[str, str],
+    definitions_by_stage: Dict[str, Set[str]],
+    tasks: Set[str],
+    errors: List[str],
+) -> None:
+    if "execution" not in documents:
+        return
+    execution = documents["execution"]
+    if "停止：基线失败" in execution:
+        add_required_marker_errors(errors, "execution", execution, BASELINE_STOP_MARKERS)
     else:
-        reqs = set()
-        acceptance = set()
-
-    if "design" in documents:
-        decisions = {
-            item for item in stage_definitions["design"] if item.startswith("DEC-")
-        }
-        if not decisions:
-            errors.append("design.md must define at least one DEC ID")
-        add_unknown_reference_errors(errors, "design", documents["design"], "REQ", reqs)
-        add_unknown_reference_errors(errors, "design", documents["design"], "AC", acceptance)
-        add_missing_reference_errors(errors, "design", documents["design"], reqs)
-        add_missing_reference_errors(errors, "design", documents["design"], acceptance)
-    else:
-        decisions = set()
-
-    if "plan" in documents:
-        tasks = {item for item in stage_definitions["plan"] if item.startswith("TASK-")}
-        if not tasks:
-            errors.append("plan.md must define at least one TASK ID")
-        for prefix, known in (("REQ", reqs), ("AC", acceptance), ("DEC", decisions)):
-            add_unknown_reference_errors(errors, "plan", documents["plan"], prefix, known)
-            add_missing_reference_errors(errors, "plan", documents["plan"], known)
-        if not re.search(r"新增代码行覆盖率阈值[：:]\s*90%", documents["plan"]):
-            errors.append("plan.md must set new-code line coverage threshold to 90%")
-        if not re.search(r"新增代码分支覆盖率阈值[：:]\s*80%", documents["plan"]):
-            errors.append("plan.md must set new-code branch coverage threshold to 80%")
-    else:
-        tasks = set()
-
-    if "execution" in documents:
         execution_tasks = {
             item
-            for item in stage_definitions["execution"]
+            for item in definitions_by_stage["execution"]
             if item.startswith("TASK-")
         }
         for unknown in sorted(execution_tasks - tasks):
             errors.append(f"execution.md references unknown {unknown}")
         for missing in sorted(tasks - execution_tasks):
             errors.append(f"execution.md does not report {missing}")
+        add_required_marker_errors(errors, "execution", execution, EXECUTION_REQUIRED_MARKERS)
+        add_block_marker_errors(
+            errors,
+            "execution",
+            definition_blocks(execution, "TASK"),
+            EXECUTION_TASK_REQUIRED_MARKERS,
+        )
+    if NON_UT_TEST_CODE_PATTERN.search(execution):
+        errors.append("execution.md records non-UT test code creation")
+
+
+def validate(topic_dir: Path, through: str = None) -> List[str]:
+    errors: List[str] = []
+    stages = selected_stages(topic_dir, through)
+    if not stages:
+        return [f"no Pretty documents found in {topic_dir}"]
+
+    documents, definitions_by_stage = read_documents(topic_dir, stages, errors)
+    reqs, acceptance = validate_prd(documents, definitions_by_stage, errors)
+    decisions = validate_design(
+        documents, definitions_by_stage, reqs, acceptance, errors
+    )
+    tasks = validate_plan(
+        documents,
+        definitions_by_stage,
+        (("REQ", reqs), ("AC", acceptance), ("DEC", decisions)),
+        errors,
+    )
+    validate_execution(documents, definitions_by_stage, tasks, errors)
 
     return errors
 

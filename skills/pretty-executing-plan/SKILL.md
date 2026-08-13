@@ -1,21 +1,21 @@
 ---
 name: pretty-executing-plan
-description: Use when a reviewed Pretty plan.md for a Java/Spring feature, bug fix, or refactor is ready to implement or resume in the target repository.
+description: Use when an approved Pretty plan.md for a Java/Spring feature, bug fix, or refactor is ready to implement or resume in the target repository.
 ---
 
 # 执行 Java/Spring Plan
 
 ## 目标
 
-按已 Review 的 Plan 实施代码，通过分类式 TDD、新增代码覆盖率、代码质量和新鲜验证门禁，并产出简洁的 Execution 文档供人 Review。默认在当前工作区保留未提交差异。
+按已批准 Plan 实施代码，以可控基线、逐切片 TDD、受影响范围验证和自动审计证明过程与结果。Execution 是增量维护的证据账本；完成后直接交付，不增加人工审批或 Git 动作。
 
-**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Execution 模板和 Java/Spring 质量检查。本 Skill 是执行阶段的唯一流程控制器。
+**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Execution 模板和 Java/Spring 质量检查。本 Skill 是本阶段唯一流程控制器。
 
 ## 工作流
 
-### 1. 校验输入与工作区
+### 1. 校验完整输入
 
-宣布使用 `pretty-executing-plan`。读取同一主题下已由用户 Review 的完整文档链：
+宣布使用 `pretty-executing-plan`。读取同一标准目录下已批准的：
 
 ```text
 docs/pretty/<topic>/prd.md
@@ -23,109 +23,106 @@ docs/pretty/<topic>/design.md
 docs/pretty/<topic>/plan.md
 ```
 
-同时按共享合同读取领域上下文：根目录存在 `CONTEXT-MAP.md` 时先定位本次涉及的上下文并读取其 `CONTEXT.md`，否则读取根目录已有的 `CONTEXT.md`。Executing 只消费并检查既有领域模型，不调用 `domain-modeling`，也不得更新 `CONTEXT.md`、`CONTEXT-MAP.md` 或 ADR；文件不存在时不默认创建。
+读取共享合同要求的领域上下文。Execution 只消费并核对，不调用 `domain-modeling`，不得更新 `CONTEXT.md`、`CONTEXT-MAP.md` 或 ADR。运行校验器至 Plan；合同缺失、矛盾或不可执行时返回最早受影响阶段，不在 Execution 中改写上游。
 
-运行共享校验器至 Plan；缺失、矛盾或不可执行时返回最早受影响阶段，不在执行中改写 Plan：
+### 2. 采集归因并运行可控基线
 
-```bash
-python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
-  docs/pretty/<topic> --through plan
-```
+在临时目录采集执行开始 HEAD、staged、unstaged、untracked 范围和必要 diff。保留用户原改动，不 stash、reset、rebase 或覆盖。无重叠时可在非洁净工作区继续；同一位置无法安全区分且有覆盖风险时停止。临时基线不进仓库。
 
-执行前检查仓库规则、`git status`、相关 diff 和 Plan 涉及文件。保留用户已有改动；无重叠时可以在非洁净工作区继续，存在无法安全区分的重叠时停止并说明。不得自动 stash、reset、rebase 或覆盖用户内容。
+尚未创建或修改 `execution.md` 时运行 Plan 指定基线。基线只包含受影响模块编译、相关现有 UT、必要快速静态检查和将修改的测试入口。任一基线命令失败，Execution 强制停止：
 
-记录仅用于增量覆盖率的执行开始 HEAD，运行 Plan 指定的基线编译和相关测试。会妨碍可靠验证的基线失败必须先解决；不得把历史失败算成本次成功。
+- 不开始 TDD；
+- 不修改生产代码；
+- 不自动把基线失败纳入本次修复；
+- 创建最小 `execution.md`，记录命令、退出码、摘要和恢复条件。
 
-使用共享模板创建或更新唯一报告：
+外部数据库、服务、凭证或 Reviewer 不进入可控基线，缺失不算基线失败。基线全绿后立即使用共享模板创建或更新：
 
 ```text
 docs/pretty/<topic>/execution.md
 ```
 
-恢复执行时同时核对 Plan、实际 diff、测试输出和报告，从第一个未闭环任务继续；不只信任报告文字。
+恢复时核对上游、真实 diff、测试输出和证据账本，从首个未闭环 TASK 继续，不只相信文档文字。
 
-### 2. 按任务类型执行
+### 3. 逐行为切片执行
 
-依 Plan 顺序实施全部 `TASK`，并把实际文件、命令、结果和偏差写入 Execution。用户要求执行整个 Plan 后，不在任务间增加 Review 或确认。
+Plan 已获用户批准，显式测试边界无需逐项再问。重新核验关键代码事实：等价源码漂移采用真实相对路径/symbol 并记录；改变 Plan 合同返回 Plan，改变 `DEC` 返回 Design，改变业务结果返回 PRD。
 
-- Plan 已经用户 Review，表示其中显式测试边界已确认；执行时不再逐项询问。Plan 中完整测试和生产代码是可执行提案，不要求逐字复制；不改变测试边界、行为、独立预期值、覆盖范围、公共签名、职责和错误/事务语义的命名、fixture、控制流或辅助方法可以等价调整并记录。
-- **新增或改变行为、Bug 修复：** **REQUIRED SUB-SKILL：** 使用 `tdd`。按垂直切片每次只落地一个可观察行为的测试，运行并确认 RED 因目标行为缺失而失败；只写当前切片的最小生产代码，运行 GREEN 后再进入下一测试。测试义务针对行为，不要求直接测试每个新增方法。
-- **修改遗留行为：** 同样执行 RED→GREEN，并加入针对本次变化的回归边界测试；不要求顺便治理无关历史代码。
-- **重构：** 只有存在明确整理目标时才执行；一旦执行，**REQUIRED SUB-SKILL：** 使用 `refactor`，小步保持行为并在每步后立即复验。重构仅限当前行为切片为通过质量门禁所需的局部整理；无关遗留整理或新增范围返回 Plan。独立行为保持型重构先取得通过的特征/回归测试基线，不使用 `tdd`、不制造 RED；使用 `refactor` 不授权自动 commit 或其他 Git 操作。
-- **非行为任务：** 只有能证明不改变生产行为的文档、格式、生成物或机械修改才归入此类；运行 Plan 中与风险匹配的等价验证，不制造 RED/GREEN 记录。
+新增/改变行为或 Bug 修复时，**REQUIRED SUB-SKILL：** 使用 `tdd`。每个切片严格执行：
 
-紧急期限、已投入成本或负责人要求均不构成 TDD 或质量门禁豁免。
-
-缺少测试基础设施时，先建立并验证 Plan 已批准的最小测试环境；准备或环境失败不算 RED。Java 新类型或公共签名缺失造成的预期编译失败可以作为初始编译 RED，但补齐最小可编译外壳后仍须取得目标行为缺失的行为 RED；语法、import、配置、依赖或环境错误均不是 TDD 证据。
-
-测试首次通过时，先判断断言无效、目标行为已完整存在或只缺少部分行为，不伪造 RED；把测试命令、断言有效性检查、现有实现证据和分流结论作为诊断证据写入 Execution。可以在已确认测试边界和合同内修正无效测试，或为仍缺失的行为取得 RED；行为已完整存在则不制造生产差异并记录证据；必须改变测试边界、预期、覆盖范围或任务合同时返回 Plan。已确认测试边界内且上游合同能唯一决定的遗漏边界条件可直接补测试并记录；改变需求返回 PRD，改变领域设计、所有权或事务边界返回 Design。
-
-测试聚焦业务结果和外部契约，独立预期值不得由实现反推或复制生产算法。领域对象和业务逻辑使用真实对象；mock、stub 或 fake 只放在数据库、消息、远程 API、文件系统、时间和随机性等外部边界，并以业务结果或完整契约为主要断言，不默认 mock 自有 Service 或 Repository。
-
-Plan 和上游语义清楚时，错误实现（包括误导性命名、职责或包归属错误）在本阶段直接修正。机械路径或等价命令变化且不改变设计、范围和验收时可采用真实值并记录。若修正要求改变需求、`REQ/AC` 或外部行为，停止并返回 PRD；若要求改变领域设计、不变量、边界、所有权或 `DEC`，返回 Design；若上游仍有效但实施计划的任务、测试或覆盖率口径缺失、矛盾或不可执行，返回 Plan。不得通过改写上游文档来迁就当前实现。
-
-### 3. 完成任务级与整体验证
-
-每个行为闭环在 Execution 中记录 RED 命令、非零退出码、预期和实际失败摘要，以及 GREEN 命令、退出码 0 和通过结果；实际使用 `refactor` 时再记录整理目标、变更与重构复验。每个任务结束后运行 Plan 指定的受影响测试，全部任务完成后运行受影响模块和仓库最终命令。失败属于 Plan 范围且不改变设计时直接修复并复验；不得降低断言、跳过测试或扩大排除来刷绿。
-
-执行开始时保存基线，例如：
-
-```bash
-pretty_execution_start_head=$(git rev-parse HEAD)
+```text
+[一个 UT] -> [确认正确 RED] -> [当前切片最小 GREEN]
+  -> [检查明确整理目标]
+       +-- 确需整理 --> [使用 refactor，小步复验]
+  -> [更新 TASK 证据]
 ```
 
-按 Plan 的实际项目路径生成 JaCoCo XML，并检查新增生产代码：
+- 每次只落地一个 UT；RED 必须因目标行为缺失而失败，不得是语法、依赖、环境或测试基础设施错误。
+- 只写当前切片最小生产实现，不先批量写测试或生产代码。
+- GREEN 后只有存在明确整理目标时，**REQUIRED SUB-SKILL：** 使用 `refactor`；无目标时不记录形式化“不触发”。
+- 独立行为保持重构先取得通过基线，使用 `refactor` 小步复验，不制造 RED。
+- 非行为任务运行 Plan 中确定性等价验证，不制造 RED/GREEN。
 
-```bash
-<pretty-java-spring-core-dir>/scripts/run-coverage.sh --project-dir <repo-root>
-python3 <pretty-java-spring-core-dir>/scripts/check-new-code-coverage.py \
-  --repo <repo-root> --base "$pretty_execution_start_head" \
-  --report <jacoco.xml> --file <plan-owned-production-file> \
-  --line-threshold 90 --branch-threshold 80
-```
+强制只能创建或扩展 UT：不启动 Spring，不访问真实/嵌入式基础设施；禁止新增或扩展集成、契约、端到端、Spring slice、Testcontainers 或本地基础设施测试。使用真实被测规则，边界接口可 mock/fake/stub；主要断言业务结果、状态或完整边界请求。
 
-把运行器返回的每个实际报告路径传给检查器，并为每个 Plan 拥有的生产文件重复 `--file`；这样无关的既有工作区差异不会污染分母。新增生产代码行覆盖率必须至少 `90%`、分支覆盖率至少 `80%`；未触碰历史代码不进入分母，也不要求补测。报告记录实际分子/分母、未覆盖位置和命令退出结果。覆盖不足时补充有意义的业务测试并重跑。
+### 4. 处理 RED 首次通过、漏测和偏差
 
-### 4. 执行一次最终独立 Review
+UT 首次通过时立即停止切片，不伪造 RED。检查断言有效性、现有实现和用户原改动：
 
-全部任务和首轮整体门禁通过后，只执行一次最终独立 Review，不做逐任务或逐单元 Review：
+- 行为完整存在：记录 `已满足（无生产差异）`，运行回归 UT；
+- 部分存在：只为缺失行为取得真实 RED；
+- 断言无效：在已批准边界内修正并重新取得 RED；
+- 必须改变入口、预期、范围或 TASK：返回 Plan。
 
-1. 由未参与实现的 Reviewer 读取 PRD、Design、Plan、包含 staged 与 untracked 文件的完整最终差异、相关源码和测试，不向其泄露实现者的质量结论。
-2. Reviewer 对生产代码使用 `clean-code-guard`，对完整 Java 变更使用 `java-code-review`，同时按 `tdd` 检查测试是否通过已确认边界观察行为、预期值是否独立、是否存在实现耦合、同义反复、横向切片或无必要 mock，并核对需求/设计符合性、领域语言、不变量、所有权与边界一致性、Spring 边界、内聚耦合、异常、事务、并发和性能风险。Review 不重新表演已有 TDD 历史。
-3. 已确认测试边界内的遗漏可新增测试并执行真实 RED→GREEN；修复所有阻塞发现并重跑受影响测试和覆盖率，由同一 Reviewer 确认发现关闭，视为同一次 Review 闭环。
+同一稳定入口、行为和预期下遗漏的输入或错误分支，可直接补 UT，执行真实 RED/GREEN 并记录偏差。改变测试层级/入口、预期或新增验收语义，返回 Plan、Design 或 PRD。
 
-没有独立 Reviewer 能力时标记阻塞；实现者自审不能替代该门禁。Plan 明确要求的其他 Java/OOD/SOLID 专项检查按实际差异执行，不重复无关 Skill。
+只记录实质偏差：文件/symbol、TASK/切片、测试边界/命令、有意义等价实现、未实施/必要新增内容和外部未验证范围；不记录格式、import 或局部变量。
 
-### 5. 最终验证与报告
+每个 TASK 增量记录结果、实际相对路径与 symbol、切片 RED/GREEN/实际重构证据、实质偏差和任务完成证据。保留命令、退出码、预期/实际失败摘要和通过摘要，不复制完整日志。
 
-Review 修正完成后，**REQUIRED SUB-SKILL：** 使用 `superpowers:verification-before-completion`，重新运行并亲自读取：
+### 5. 完成受影响范围验证
 
-- Plan 的最终测试、编译和仓库检查；
-- JaCoCo 报告生成及新增代码覆盖率检查；
-- 共享文档校验器。
+全部 TASK 完成后运行：受影响模块编译、本次全部新/改 UT、直接相关回归 UT、快速静态检查和适用覆盖率。真实 diff 扩大影响范围时补跑新增范围；不默认全仓或已有非 UT 测试。
 
-更新 Execution 的所有 `TASK` 结果、实际覆盖率、质量发现与修正、偏差和最终结论，然后运行：
+覆盖率优先使用仓库政策；无政策时按 Plan 默认门禁。工具只机械统计新增可执行行和分支；修改既有行为以针对性 UT 证明。不得降低断言、增加非 UT、扩大排除或创建无价值测试刷数字。
+
+只能声明实际运行的“受影响范围通过”。真实数据库、服务、基础设施语义、部署、人工联调和独立 Reviewer 未执行时写入“未验证范围”，不阻塞完成，也不得被称为已验证。
+
+### 6. 执行自动审计闭环
+
+最终验证通过后，当前 Agent 对一个稳定最终版本自动审计。独立 Agent/Reviewer 是可选增强，不可用不阻塞。审计读取最终 diff、上游链、Execution 和真实命令证据，核对 TASK 归属、`REQ/AC/DEC/Plan`、RED/GREEN、基线、编译、UT、覆盖率、偏差、声明、代码质量、安全、异常、事务和兼容风险。
+
+有生产代码差异时使用 `clean-code-guard`；有 Java 生产代码差异时再使用 `java-code-review`。专项能力按真实风险触发。无生产代码差异时只核对任务、证据与声明。
+
+自动审计只检查，不直接修改：
+
+- 行为错误返回对应 TDD 切片；
+- 行为保持结构问题返回切片，使用 `refactor`；
+- 超出合同返回 Plan、Design 或 PRD。
+
+修正、复验后审计新的稳定最终版本。审计一次通过且没有影响验证的变化，不重复同一审计或命令。
+
+### 7. 核对新鲜证据并交付
+
+自动审计闭环后，**REQUIRED SUB-SKILL：** 使用 `superpowers:verification-before-completion` 核对证据新鲜度；不机械运行第三轮相同命令，审计后发生相关变化时只重跑受影响范围。
+
+写入“最终审计与结论”，用“发现 -> 证据 -> 影响 -> 修正/处置 -> 复验”记录实质发现；无发现时写真实核对范围和依据。运行：
 
 ```bash
 python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
   docs/pretty/<topic> --through execution
 ```
 
-只有最新命令全部成功、Plan 的每项任务与验收标准均闭环、独立 Review 无未解决阻塞时，才能写“完成并等待人工 Review”；否则如实写明阻塞。
+最终状态只能是：`完成`、`停止：<原因>`、`返回 Plan / Design / PRD：<原因>`。多 TASK 中途停止时保留已完成证据，当前任务停止，后续任务未执行，不能声称“部分完成”。
 
-### 6. 请求一次人工 Review 并停止
-
-告知用户代码差异、Execution 路径、测试与覆盖率结果、独立 Review 结论和未解决事项，请求一次人工 Review，然后停止。保持实现和报告为未提交差异；不创建 worktree，不自动执行 `git add`、`commit`、`push`、merge 或创建 MR。
+告知用户真实代码差异、Execution 路径、受影响范围验证、自动审计和未验证范围，然后停止。不请求批准 Execution，不自动 `git add`、commit、push、创建 MR、合并或发布。
 
 ## 红线
 
-- 修改代码前不读 Plan，或执行中静默改变 Plan。
-- 执行中调用 `domain-modeling`，或更新 `CONTEXT.md`、`CONTEXT-MAP.md`、ADR 来迁就实现。
-- 为非行为任务制造 RED，或把事后测试写成 TDD。
-- 批量写完测试后再统一实现，或从拟议生产代码反推测试答案。
-- 为了制造 RED 改写真实场景、弱化断言或引入无关失败。
-- 只看覆盖率百分比，不审查断言和业务边界。
-- 用全仓历史覆盖率掩盖新增代码不足。
-- 用实现者自审代替最终独立 Reviewer。
-- 未运行新鲜最终命令就声称完成。
-- 自动提交、推送或改动用户无关文件。
+- 不在基线失败后继续 TDD 或修改生产代码。
+- 不伪造 RED，不把事后测试称为 TDD。
+- 不创建或扩展非 UT 测试。
+- 不把外部能力缺失或独立 Reviewer 缺失设为阻塞。
+- 不在自动审计动作中直接修改代码。
+- 不用覆盖率替代行为与断言质量。
+- 不夸大验证范围或自动执行 Git/发布动作。
