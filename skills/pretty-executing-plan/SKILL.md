@@ -7,7 +7,7 @@ description: Use when an approved Pretty plan.md for a Java/Spring feature, bug 
 
 ## 目标
 
-按已批准 Plan 实施代码，以可控基线、逐切片 TDD、受影响范围验证和自动审计证明过程与结果。Execution 是增量维护的证据账本；完成后直接交付，不增加人工审批或 Git 动作。
+按已批准 Plan 实施代码，以可控基线、逐用例 TDD、受影响范围验证和自动审计证明过程与结果。Execution 是增量维护的证据账本；完成后直接交付，不增加人工审批或 Git 动作。
 
 **REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Execution 模板和 Java/Spring 质量检查。本 Skill 是本阶段唯一流程控制器。
 

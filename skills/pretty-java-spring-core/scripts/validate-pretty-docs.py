@@ -22,20 +22,18 @@ REQUIRED_HEADINGS = {
         "约束与未决问题",
     ),
     "design": (
-        "输入与范围",
-        "设计摘要",
-        "现状与约束",
-        "方案与权衡",
-        "详细设计",
-        "验证策略",
-        "风险与回退",
+        "设计结论",
+        "方案全景",
+        "关键设计与权衡",
+        "设计边界",
+        "验证与风险",
     ),
     "plan": (
-        "输入与范围",
-        "实施摘要",
-        "代码事实与约束",
+        "实施结论",
         "实施任务",
+        "文件变更总览",
         "测试与验证",
+        "共享约束和代码事实",
     ),
     "execution": (
         "输入与基线",
@@ -47,35 +45,23 @@ REQUIRED_HEADINGS = {
     ),
 }
 ID_PATTERN = re.compile(r"\b(REQ|AC|DEC|TASK)-(\d{3,})\b")
-DEFINITION_PATTERN = re.compile(
+HEADING_DEFINITION_PATTERN = re.compile(
     r"^#{3,6}\s+((?:REQ|AC|DEC|TASK)-\d{3,})\b", re.MULTILINE
+)
+DESIGN_DECISION_PATTERN = re.compile(
+    r"(?:^|[；;])\s*决策：\s*`?(DEC-\d{3,})`?", re.MULTILINE
+)
+PLAN_TASK_HEADING_PATTERN = re.compile(
+    r"^###\s+.+?[（(](TASK-\d{3,})[)）]\s*$", re.MULTILINE
 )
 PLACEHOLDER_PATTERN = re.compile(r"\b(?:TODO|TBD|FIXME)\b|待定|占位", re.IGNORECASE)
 PERSONAL_PATH_PATTERN = re.compile(
-    r"(?:/Users/[^/\s`]+|/home/[^/\s`]+|[A-Za-z]:\\Users\\[^\\\s`]+)"
+    r"(?:/Users/[^/\s`]+|/home/[^/\s`]+|~/[^\s`]+|[A-Za-z]:\\Users\\[^\\\s`]+)"
 )
-PLAN_REQUIRED_MARKERS = (
-    "已核实代码事实",
-    "上游约束",
-    "拟议实现",
-)
-PLAN_TASK_REQUIRED_MARKERS = (
-    "追溯落点",
-    "目标行为或风险闭环",
-    "已核实代码事实",
-    "继承约束",
-    "拟议变更",
-    "真实任务依赖",
-    "验证入口",
-    "完成证据",
-)
-PLAN_SLICE_MARKERS = (
-    "UT 边界",
-    "独立预期值",
-    "mock/fake/stub 边界",
-    "预期 RED 原因",
-    "最小 GREEN 条件",
-)
+PLAN_PRODUCTION_CODE_HEADING = "#### 核心生产代码"
+PLAN_TEST_CODE_HEADING = "#### 核心测试代码"
+PLAN_MECHANICAL_CHANGE_HEADING = "#### 完整机械变更"
+JAVA_FENCE_PATTERN = re.compile(r"```java\s*\n.+?\n```", re.DOTALL)
 EXECUTION_REQUIRED_MARKERS = (
     "工作区归因",
     "Plan 基线",
@@ -95,13 +81,6 @@ BASELINE_STOP_MARKERS = (
     "停止：基线失败",
     "恢复条件",
     "Pretty 外未验证范围",
-)
-DESIGN_DEC_REQUIRED_MARKERS = (
-    "驱动因素与相关 `REQ`",
-    "候选或决定性证据",
-    "采用方案及理由",
-    "后果",
-    "重新评估条件",
 )
 NON_UT_TEST_CODE_PATTERN = re.compile(
     r"^\s*(?:@(SpringBootTest|WebMvcTest|DataJpaTest)\b|"
@@ -131,8 +110,12 @@ def heading_titles(text: str) -> List[str]:
     ]
 
 
-def definitions(text: str) -> List[str]:
-    return DEFINITION_PATTERN.findall(text)
+def definitions(stage: str, text: str) -> List[str]:
+    if stage == "design":
+        return DESIGN_DECISION_PATTERN.findall(text)
+    if stage == "plan":
+        return PLAN_TASK_HEADING_PATTERN.findall(text)
+    return HEADING_DEFINITION_PATTERN.findall(text)
 
 
 def references(text: str, prefix: str) -> Set[str]:
@@ -157,6 +140,28 @@ def definition_blocks(text: str, prefix: str) -> List[Tuple[str, str]]:
             end = min(end, match.end() + next_h2.start())
         blocks.append((match.group(1), text[match.start() : end]))
     return blocks
+
+
+def plan_task_blocks(text: str) -> List[Tuple[str, str]]:
+    matches = list(PLAN_TASK_HEADING_PATTERN.finditer(text))
+    blocks: List[Tuple[str, str]] = []
+    for index, match in enumerate(matches):
+        next_task = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        next_h2 = re.search(r"^##\s+", text[match.end() :], re.MULTILINE)
+        end = next_task
+        if next_h2:
+            end = min(end, match.end() + next_h2.start())
+        blocks.append((match.group(1), text[match.start() : end]))
+    return blocks
+
+
+def subsection(text: str, heading: str) -> str:
+    start_match = re.search(rf"^{re.escape(heading)}\s*$", text, re.MULTILINE)
+    if not start_match:
+        return ""
+    remainder = text[start_match.end() :]
+    next_heading = re.search(r"^#{2,4}\s+", remainder, re.MULTILINE)
+    return remainder[: next_heading.start()] if next_heading else remainder
 
 
 def add_sequence_errors(errors: List[str], stage: str, defined_ids: List[str]) -> None:
@@ -247,7 +252,7 @@ def read_documents(
                 f"{stage}.md H2 headings must exactly match the fixed stage order"
             )
 
-        defined_ids = definitions(text)
+        defined_ids = definitions(stage, text)
         for duplicate, count in Counter(defined_ids).items():
             if count > 1:
                 errors.append(f"{stage}.md defines {duplicate} more than once")
@@ -292,13 +297,10 @@ def validate_design(
     add_unknown_reference_errors(errors, "design", design, "AC", acceptance)
     add_missing_reference_errors(errors, "design", design, reqs)
     add_missing_reference_errors(errors, "design", design, acceptance)
-    if decisions:
-        add_block_marker_errors(
-            errors,
-            "design",
-            definition_blocks(design, "DEC"),
-            DESIGN_DEC_REQUIRED_MARKERS,
-        )
+    if re.search(r"^\s*[-*]\s*覆盖需求\s*[：:]", design, re.MULTILINE):
+        errors.append("design.md must not contain a 覆盖需求 list")
+    if re.search(r"^#{2,6}\s+(?:REQ|AC|DEC)-\d{3,}\b", design, re.MULTILINE):
+        errors.append("design.md must keep REQ/AC/DEC IDs out of headings")
     return decisions
 
 
@@ -317,15 +319,31 @@ def validate_plan(
     for prefix, known in upstream_ids:
         add_unknown_reference_errors(errors, "plan", plan, prefix, known)
         add_missing_reference_errors(errors, "plan", plan, known)
-    add_required_marker_errors(errors, "plan", plan, PLAN_REQUIRED_MARKERS)
-    add_block_marker_errors(
-        errors,
-        "plan",
-        definition_blocks(plan, "TASK"),
-        PLAN_TASK_REQUIRED_MARKERS,
-    )
-    if "行为切片" in plan:
-        add_required_marker_errors(errors, "plan", plan, PLAN_SLICE_MARKERS)
+    for task, block in plan_task_blocks(plan):
+        if "| 完整仓库相对路径 | symbol | 修改目的 |" not in block:
+            errors.append(f"plan.md {task} is missing a file change table")
+        production = subsection(block, PLAN_PRODUCTION_CODE_HEADING)
+        tests = subsection(block, PLAN_TEST_CODE_HEADING)
+        mechanical = subsection(block, PLAN_MECHANICAL_CHANGE_HEADING)
+        has_pair = bool(production and tests)
+        has_mechanical = bool(mechanical)
+        if not has_pair and not has_mechanical:
+            errors.append(
+                f"plan.md {task} must contain both 核心生产代码 and 核心测试代码, "
+                "or a 完整机械变更"
+            )
+        if bool(production) != bool(tests):
+            missing = "核心测试代码" if production else "核心生产代码"
+            errors.append(f"plan.md {task} is missing required paired section: {missing}")
+        if has_pair:
+            if not JAVA_FENCE_PATTERN.search(production):
+                errors.append(f"plan.md {task} 核心生产代码 must contain Java code")
+            if not JAVA_FENCE_PATTERN.search(tests):
+                errors.append(f"plan.md {task} 核心测试代码 must contain Java code")
+        if "> 追溯：" not in block:
+            errors.append(f"plan.md {task} is missing a tail traceability note")
+    if re.search(r"^###\s+TASK-\d{3,}\b", plan, re.MULTILINE):
+        errors.append("plan.md TASK IDs must appear after readable task titles")
     for marker in ("行阈值", "分支阈值"):
         if marker not in plan:
             errors.append(f"plan.md is missing coverage policy field: {marker}")
