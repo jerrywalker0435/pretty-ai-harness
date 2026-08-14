@@ -3,13 +3,13 @@ name: pretty-writing-prd
 description: Use when creating, revising, or reviewing a Pretty prd.md for a Java/Spring feature, bug fix, or behavior-preserving refactor before technical design.
 ---
 
-# 编写 Java/Spring PRD
+# 编写 PRD
 
 ## 目标
 
 把用户目标、业务规则和仓库事实整理成可由产品、研发和测试共同确认的 PRD，或只读判断现有 PRD 是否足以进入 Design。PRD 只锁定外部可观察结果，不选择技术实现。
 
-**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同与 PRD 模板。本 Skill 是本阶段唯一流程控制器。
+加载当前阶段模板[assets/prd.md](assets/prd.md)
 
 ## 工作流
 
@@ -42,23 +42,15 @@ docs/pretty/<topic>/prd.md
 
 ### 4. 编写 PRD
 
-使用共享模板并替换全部占位内容：
-
-- `REQ-001` 起连续编号，每条只表达一个外部行为或业务规则。
-- `AC-001` 起连续编号，每条关联 `REQ` 并写成可观察结果。
+-，每条只表达一个外部行为或业务规则。
 - 覆盖主流程、重要边界、失败、状态、时序、重复、并发和兼容语义。
 - 不写类、方法、模块职责、schema、事务、设计模式、完整代码或实施任务。
 
-简单需求用短场景列表。出现多个真实角色/系统触点、状态分支、多步骤、失败隔离、幂等、并发或异步结果，或仅靠 `REQ/AC` 难以理解时，生成 3–6 个具象业务故事；每个故事关联已有 `REQ/AC`，不新增 `US`。故事只是解释视图，`REQ/AC` 是唯一需求合同。
+简单需求用短场景列表。出现多个真实角色/系统触点、状态分支、多步骤、失败隔离、幂等、并发或异步结果，，生成 3–6 个具象业务故事；故事只是解释视图，`REQ/AC` 是唯一需求合同。
 
 ### 5. 自审、校验并请求 Review
 
 确认问题、目标、场景、`REQ/AC`、领域语言及成功/失败边界一致，没有实现泄漏或占位内容。运行：
-
-```bash
-python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
-  docs/pretty/<topic> --through prd
-```
 
 告知路径、需求和验收数量、领域文档变更与校验结果，请求一次用户 Review，然后停止。不得自动进入 Design。
 

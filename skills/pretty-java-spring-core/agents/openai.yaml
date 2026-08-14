@@ -1,6 +1,0 @@
-interface:
-  display_name: "Pretty Java/Spring Core"
-  short_description: "提供 Pretty 四阶段共享合同、UT 规则和验证工具"
-  default_prompt: "Use $pretty-java-spring-core to validate a Pretty Java/Spring document chain."
-policy:
-  allow_implicit_invocation: false

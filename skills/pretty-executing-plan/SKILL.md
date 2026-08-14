@@ -9,7 +9,7 @@ description: Use when an approved Pretty plan.md for a Java/Spring feature, bug 
 
 按已批准 Plan 实施代码，以可控基线、逐用例 TDD、受影响范围验证和自动审计证明过程与结果。Execution 是增量维护的证据账本；完成后直接交付，不增加人工审批或 Git 动作。
 
-**REQUIRED SUB-SKILL：** 完整读取并使用 `pretty-java-spring-core` 的共享合同、Execution 模板和 Java/Spring 质量检查。本 Skill 是本阶段唯一流程控制器。
+加载当前阶段模板[assets/design.md](assets/design.md)
 
 ## 工作流
 
@@ -126,3 +126,5 @@ python3 <pretty-java-spring-core-dir>/scripts/validate-pretty-docs.py \
 - 不在自动审计动作中直接修改代码。
 - 不用覆盖率替代行为与断言质量。
 - 不夸大验证范围或自动执行 Git/发布动作。
+- - 不自动执行 `git add`、`commit`、`push`、merge、创建 MR 或发布。
+

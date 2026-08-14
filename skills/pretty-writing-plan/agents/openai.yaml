@@ -1,4 +1,0 @@
-interface:
-  display_name: "Pretty Writing Plan"
-  short_description: "创建、修订或评审 Java/Spring 前置代码 CR Plan"
-  default_prompt: "Use $pretty-writing-plan to create, revise, or review an implementation Plan for approved Java/Spring requirements and design."
