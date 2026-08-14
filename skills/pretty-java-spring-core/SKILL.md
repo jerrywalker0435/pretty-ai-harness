@@ -9,7 +9,7 @@ description: Use when a Pretty Java/Spring stage skill needs shared document con
 
 ## 加载顺序
 
-1. 读取 [references/workflow-contract.md](references/workflow-contract.md)。
+1. 读取 [references/workflow-contract.md](references/workflow-contract.md)。任何Java代码编写，优先遵循该质量，而不是参考当前仓库代码。
 2. 只读取当前阶段模板：
    - PRD：[assets/templates/prd.md](assets/templates/prd.md)
    - Design：[assets/templates/design.md](assets/templates/design.md)
