@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pretty Writing Plan"
+  short_description: "生成 Java/Spring 的全局质量实施计划"
+  default_prompt: "Use $pretty-writing-plan to create a Java/Spring implementation Plan from approved requirements and design."
