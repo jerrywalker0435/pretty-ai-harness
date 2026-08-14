@@ -35,16 +35,16 @@ PRD 与 Design 先调查用户意图、仓库、协议、领域文档、配置�
 
 按实际问题读取最小的专项 Skill，把判断直接落实到当前阶段内容或代码：
 
-| 阶段 | 实际问题 | 可用 Skill |
-| --- | --- | --- |
+| 阶段                      | 实际问题 | 可用 Skill |
+|---------------------------| --- | --- |
 | Design / Plan / Execution | 对象职责、协作、封装、聚合或继承变化 | `121-java-object-oriented-design` |
-| Design / Plan | 值对象、泛型、类型层次或金额类型 | `122-java-type-design` |
+| Design / Plan / Execution | 值对象、泛型、类型层次或金额类型 | `122-java-type-design` |
 | Design / Plan / Execution | 服务职责、端口、依赖方向或扩展点 | `solid-principles` |
-| Design / Plan | 模块接口、seam 或 adapter 需要设计 | `codebase-design` |
-| Design / Plan | 存在明确的构造、替换、通知或适配变化轴 | `design-patterns` |
-| Execution | 行为保持整理 | `refactor` |
-| Plan / Execution | 编写或修改生产代码 | `clean-code-guard` |
-| Execution | Java 代码出现异常、并发、资源、性能或 API 兼容问题 | `java-code-review` |
+| Design / Plan / Execution | 模块接口、seam 或 adapter 需要设计 | `codebase-design` |
+| Design / Plan / Execution | 存在明确的构造、替换、通知或适配变化轴 | `design-patterns` |
+| Execution                 | 行为保持整理 | `refactor` |
+| Plan / Execution          | 编写或修改生产代码 | `clean-code-guard` |
+| Execution                 | Java 代码出现异常、并发、资源、性能或 API 兼容问题 | `java-code-review` |
 
 ## Git 边界
 
