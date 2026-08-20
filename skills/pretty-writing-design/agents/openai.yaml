@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Writing Design"
-  short_description: "创建、修订或评审 Java/Spring 技术设计合同"
-  default_prompt: "Use $pretty-writing-design to create, revise, or review a Java/Spring Design from an approved PRD."
+  short_description: "对齐技术边界、契约与风险的 Design"
+  default_prompt: "Use $pretty-writing-design to create or revise a technical Design from the current PRD."
