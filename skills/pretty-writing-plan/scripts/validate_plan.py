@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the standalone pretty-writing-plan document contract."""
+"""Validate the current, read-only pretty-writing-plan document contract."""
 
 from __future__ import annotations
 
@@ -7,199 +7,574 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 
-REQUIRED_SECTIONS = (
-    "## 实施结论",
-    "## 实施任务",
-    "## 文件变更总览",
-    "## 测试与验证",
-    "## 共享约束和代码事实",
-)
+TASKS_SECTION = "## 实施任务"
+CHAIN_SECTION = "## 变更链路"
+TOP_LEVEL_SECTIONS = {CHAIN_SECTION, TASKS_SECTION}
 TASK_PATTERN = re.compile(r"^###\s+.+[（(]TASK-(\d{3})[）)]\s*$", re.MULTILINE)
+TOP_LEVEL_PATTERN = re.compile(r"^##\s+.+$", re.MULTILINE)
+TITLE_PATTERN = re.compile(r"^#\s+.+\s+Implementation Plan\s*$", re.MULTILINE)
+LOGIC_TABLE_PATTERN = re.compile(
+    r"^\|\s*仓库相对路径\s*\|\s*symbol\s*\|\s*修改目的\s*\|\s*$",
+    re.MULTILINE,
+)
+STRUCTURAL_TABLE_PATTERN = re.compile(
+    r"^\|\s*仓库相对路径\s*\|\s*(?:目标|symbol)\s*\|\s*修改目的\s*\|\s*$",
+    re.MULTILINE,
+)
+CHAIN_TABLE_PATTERN = re.compile(
+    r"^\|\s*顺序/分支\s*\|\s*上游\s*\|\s*下游\s*\|"
+    r"\s*跨边界数据与转换\s*\|\s*规则/数据归属\s*\|"
+    r"\s*失败/副作用边界\s*\|\s*TASK\s*\|\s*$",
+    re.MULTILINE,
+)
 PERSONAL_ABSOLUTE_PATH = re.compile(
     r"(?:^|[\s`(])/(?:Users|home|private/(?:tmp|var))/|\b[A-Z]:\\"
 )
 PLACEHOLDER = re.compile(
-    r"<(?:主题|module|目的|真实[^>]*|一句[^>]*|2–3 句[^>]*|path|command|test-command|"
-    r"repo-root|skill-dir|[^>\n]*\.\.\.[^>\n]*)>"
+    r"<(?:主题|单模块[^>]*|领域结果[^>]*|声明或结构变更结果[^>]*|目的|仓库相对路径|"
+    r"可观察[^>]*|展示[^>]*|仅在依赖[^>]*|"
+    r"完整[^>]*|真实[^>]*|一句[^>]*|2–3 句[^>]*|"
+    r"module|path|command|"
+    r"test-command|repo-root|skill-dir|[^>\n]*\.\.\.[^>\n]*)>",
+    re.IGNORECASE,
 )
 FORBIDDEN_WORDS = re.compile(r"\b(?:TODO|TBD|FIXME)\b", re.IGNORECASE)
 TRACE_ID = re.compile(r"\b(?:REQ|AC|DEC)-\d+\b")
 EXTERNAL_DEPENDENCY = re.compile(
-    r"REQUIRED\s+SUB-SKILL|pretty-java-spring-core|\bsuperpowers:[a-z0-9-]+",
+    r"REQUIRED\s+SUB-SKILL|\$?(?:codebase-design|121-java-object-oriented-design|"
+    r"122-java-type-design|solid-principles|design-patterns|clean-code|"
+    r"superpowers:writing-plans|clean-code-guard|java-code-review|springboot-tdd)",
     re.IGNORECASE,
 )
+GENERIC_EXTERNAL_SKILL = re.compile(
+    r"(?<![\w$])\$[a-z][a-z0-9-]*(?::[a-z0-9-]+)?\b",
+    re.IGNORECASE,
+)
+DEPRECATED_PLAN_PROSE = re.compile(
+    r"(?:\bTDD\b|\bRED\b\s*(?:→|->)|\bGREEN\b\s*(?:→|->)|"
+    r"\bREFACTOR\b\s*(?:→|->)|覆盖率(?:目标)?|验证(?:命令|目标)|"
+    r"完成证据|执行结果|执行交接|(?:交给|移交给)\s*Execution|"
+    r"Execution\s*(?:阶段|负责|执行)|(?:\./)?mvnw?\s+[^`\n]{0,80}\b(?:test|verify)\b|"
+    r"(?:\./)?gradlew?\s+[^`\n]{0,80}\b(?:test|check)\b|"
+    r"\b(?:pytest|npm\s+test|pnpm\s+test|yarn\s+test)\b)",
+    re.IGNORECASE,
+)
+H1_PATTERN = re.compile(r"^#(?!#)\s+.+$", re.MULTILINE)
+DEPRECATED_HEADER_FIELD = re.compile(
+    r"^\s*\*\*(?:Goal|Architecture|Tech Stack):\*\*",
+    re.IGNORECASE | re.MULTILINE,
+)
+DEPRECATED_PLAN_STRUCTURE = re.compile(
+    r"^(?:"
+    r"\s*#{2,6}\s+(?:实施结论|文件变更总览|测试与验证|共享约束和代码事实|"
+    r"质量审查|TDD\s*与验证设计|完成证据|验证命令|执行结果)\s*"
+    r"|\s*\*\*(?:完成证据|验证命令|覆盖率(?:目标)?|执行结果|状态)[：:]\*\*"
+    r"|\s*[-*+]\s+\[[ xX]\]"
+    r"|\s*(?:\*\*)?(?:RED|GREEN|REFACTOR)(?:\*\*)?\s*(?:[：:]|→|->)"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
+)
+SILENT_NULL_TERNARY = re.compile(r"==\s*null\s*\?\s*null\s*:")
+OR_ELSE_NULL = re.compile(r"\.orElse\s*\(\s*null\s*\)")
+BROAD_CATCH_FALLBACK = re.compile(
+    r"catch\s*\(\s*(?:Exception|RuntimeException|Throwable)\b[^)]*\)\s*\{"
+    r"(?:(?!\}).){0,800}\breturn\s+(?:null|"
+    r"Collections\.empty(?:List|Set|Map)\s*\(\)|"
+    r"(?:List|Set|Map)\.of\s*\(\))\s*;",
+    re.IGNORECASE | re.DOTALL,
+)
+JAVA_VARARGS = re.compile(
+    r"\b[\w$]+(?:\s*<[^>\n]+>)?(?:\s*\[\])?\s*\.\.\.\s*[\w$]+"
+)
+FENCE_PATTERN = re.compile(r"^[ \t]*([`~])\1{2,}")
+TABLE_SEPARATOR_PATTERN = re.compile(
+    r"^\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|$"
+)
+
+
+class FencedBlock(NamedTuple):
+    start: int
+    content_start: int
+    content_end: int
+    end: int
+    language: str
 
 
 def line_number(text: str, index: int) -> int:
     return text.count("\n", 0, max(index, 0)) + 1
 
 
-def check_standard_path(plan_path: Path, errors: list[str]) -> None:
+def match_error(
+    text: str, pattern: re.Pattern[str], message: str
+) -> str | None:
+    match = pattern.search(text)
+    if not match:
+        return None
+    return (
+        f"content: {message} at line {line_number(text, match.start())}: "
+        f"{match.group(0)!r}"
+    )
+
+
+def fence_marker(line: str) -> tuple[str, int] | None:
+    match = FENCE_PATTERN.match(line)
+    if not match:
+        return None
+    marker_character = match.group(1)
+    return marker_character, match.group(0).count(marker_character)
+
+
+def fenced_blocks(text: str) -> tuple[list[FencedBlock], list[int]]:
+    blocks: list[FencedBlock] = []
+    unclosed_starts: list[int] = []
+    active: tuple[str, int, int, int, str] | None = None
+    offset = 0
+
+    for line in text.splitlines(keepends=True):
+        marker = fence_marker(line)
+        line_start = offset
+        line_end = offset + len(line)
+        if active is None and marker:
+            marker_match = FENCE_PATTERN.match(line)
+            assert marker_match is not None
+            language = line[marker_match.end() :].strip().split(maxsplit=1)
+            active = (
+                marker[0],
+                marker[1],
+                line_start,
+                line_end,
+                language[0].lower() if language else "",
+            )
+        elif (
+            active is not None
+            and marker
+            and marker[0] == active[0]
+            and marker[1] >= active[1]
+        ):
+            blocks.append(
+                FencedBlock(
+                    start=active[2],
+                    content_start=active[3],
+                    content_end=line_start,
+                    end=line_end,
+                    language=active[4],
+                )
+            )
+            active = None
+        offset = line_end
+
+    if active is not None:
+        unclosed_starts.append(active[2])
+    return blocks, unclosed_starts
+
+
+def blank_non_newline_characters(line: str) -> str:
+    return re.sub(r"[^\r\n]", " ", line)
+
+
+def mask_fenced_blocks(text: str) -> str:
+    blocks, unclosed_starts = fenced_blocks(text)
+    spans = [(block.start, block.end) for block in blocks]
+    spans.extend((start, len(text)) for start in unclosed_starts)
+    masked = list(text)
+    for start, end in spans:
+        for index in range(start, end):
+            if masked[index] not in "\r\n":
+                masked[index] = " "
+    return "".join(masked)
+
+
+def fence_errors(text: str) -> list[str]:
+    _, unclosed_starts = fenced_blocks(text)
+    return [
+        f"structure: unclosed fenced code block at line {line_number(text, start)}"
+        for start in unclosed_starts
+    ]
+
+
+def top_level_matches(text: str) -> list[re.Match[str]]:
+    return list(TOP_LEVEL_PATTERN.finditer(mask_fenced_blocks(text)))
+
+
+def table_cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return None
+    return [cell.strip() for cell in re.split(r"(?<!\\)\|", stripped[1:-1])]
+
+
+def table_rows_after_header(
+    text: str, header_pattern: re.Pattern[str]
+) -> list[list[str]]:
+    structural_text = mask_fenced_blocks(text)
+    header = header_pattern.search(structural_text)
+    if not header:
+        return []
+    header_cells = table_cells(header.group(0))
+    if header_cells is None:
+        return []
+
+    following_lines = [
+        line.strip()
+        for line in structural_text[header.end() :].splitlines()
+        if line.strip()
+    ]
+    if not following_lines or TABLE_SEPARATOR_PATTERN.fullmatch(following_lines[0]) is None:
+        return []
+
+    rows: list[list[str]] = []
+    for line in following_lines[1:]:
+        cells = table_cells(line)
+        if cells is None:
+            break
+        if TABLE_SEPARATOR_PATTERN.fullmatch(line):
+            continue
+        if len(cells) != len(header_cells) or any(not cell for cell in cells):
+            return []
+        rows.append(cells)
+    return rows
+
+
+def table_has_data_row(text: str, header_pattern: re.Pattern[str]) -> bool:
+    return bool(table_rows_after_header(text, header_pattern))
+
+
+def standard_path_errors(plan_path: Path) -> list[str]:
     parts = plan_path.resolve().parts
-    if len(parts) < 4 or parts[-1] != "plan.md" or parts[-3] != "pretty":
-        errors.append("path: expected docs/pretty/<topic>/plan.md")
-        return
+    if len(parts) < 4 or tuple(parts[-4:-2]) != ("docs", "pretty") or parts[-1] != "plan.md":
+        return ["path: expected docs/pretty/<topic>/plan.md"]
 
     topic = parts[-2]
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", topic):
-        errors.append(
-            f"path: topic '{topic}' must use lowercase kebab-case"
+        return [f"path: topic '{topic}' must use lowercase kebab-case"]
+    return []
+
+
+def section_ranges(text: str) -> dict[str, tuple[int, int]]:
+    matches = top_level_matches(text)
+    ranges: dict[str, tuple[int, int]] = {}
+    for index, match in enumerate(matches):
+        heading = match.group(0).strip()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        ranges.setdefault(heading, (match.start(), end))
+    return ranges
+
+
+def top_level_section_counts(text: str) -> dict[str, int]:
+    section_counts: dict[str, int] = {}
+    for match in top_level_matches(text):
+        heading = match.group(0).strip()
+        section_counts[heading] = section_counts.get(heading, 0) + 1
+    return section_counts
+
+
+def top_level_section_errors(text: str) -> list[str]:
+    errors: list[str] = []
+    for heading, count in top_level_section_counts(text).items():
+        if heading not in TOP_LEVEL_SECTIONS:
+            errors.append(f"structure: unsupported top-level section '{heading[3:]}'")
+        if count > 1:
+            errors.append(f"structure: duplicate top-level section '{heading[3:]}'")
+    return errors
+
+
+def chain_errors(text: str, sections: dict[str, tuple[int, int]]) -> list[str]:
+    if CHAIN_SECTION not in sections or TASKS_SECTION not in sections:
+        return []
+
+    errors: list[str] = []
+    if sections[CHAIN_SECTION][0] > sections[TASKS_SECTION][0]:
+        errors.append("structure: 变更链路 must precede 实施任务")
+    chain_start, chain_end = sections[CHAIN_SECTION]
+    chain_text = mask_fenced_blocks(text[chain_start:chain_end])
+    if "→" not in chain_text:
+        errors.append("structure: 变更链路 lacks an arrow summary")
+    if not table_has_data_row(chain_text, CHAIN_TABLE_PATTERN):
+        errors.append("structure: 变更链路 lacks a complete relation table")
+    return errors
+
+
+def structure_errors(text: str) -> list[str]:
+    errors = fence_errors(text)
+    errors.extend(top_level_section_errors(text))
+    structural_text = mask_fenced_blocks(text)
+    title_matches = list(TITLE_PATTERN.finditer(structural_text))
+    if not title_matches:
+        errors.append("header: expected '# <topic> Implementation Plan'")
+    else:
+        first_content_line = next(
+            (line.strip() for line in structural_text.splitlines() if line.strip()),
+            "",
         )
-
-    docs_index = None
-    for index, part in enumerate(parts[:-3]):
-        if part == "docs":
-            docs_index = index
-    if docs_index is None or tuple(parts[docs_index : docs_index + 2]) != (
-        "docs",
-        "pretty",
-    ):
-        errors.append("path: expected a docs/pretty directory")
-
-
-def check_required_sections(text: str, errors: list[str]) -> None:
-    positions = []
-    for section in REQUIRED_SECTIONS:
-        index = text.find(section)
-        if index < 0:
-            errors.append(f"structure: missing section '{section[3:]}'")
-        else:
-            positions.append((index, section))
-
-    if len(positions) == len(REQUIRED_SECTIONS):
-        actual = [section for _, section in sorted(positions)]
-        if actual != list(REQUIRED_SECTIONS):
+        if not TITLE_PATTERN.fullmatch(first_content_line):
+            errors.append("header: title must be the first non-empty line")
+        if len(title_matches) != 1:
             errors.append(
-                "structure: fixed sections must appear in the order "
-                "实施结论 → 实施任务 → 文件变更总览 → 测试与验证 → 共享约束和代码事实"
+                "header: expected exactly one Implementation Plan title"
             )
-
-    for field in ("**Goal:**", "**Architecture:**", "**Tech Stack:**"):
-        if field not in text:
-            errors.append(f"header: missing '{field}'")
-
-    conclusion_start = text.find("## 实施结论")
-    task_start = text.find("## 实施任务")
-    if conclusion_start >= 0 and task_start > conclusion_start:
-        conclusion = text[conclusion_start:task_start]
-        if "### 链路级分析" not in conclusion:
+        first_section = min(
+            (match.start() for match in top_level_matches(text)),
+            default=len(text),
+        )
+        if text[title_matches[0].end() : first_section].strip():
             errors.append(
-                "structure: 实施结论 must contain '链路级分析' "
-                "(write 不适用 with a reason for a single-module plan)"
+                "structure: unexpected content between title and first section"
             )
+    for heading in H1_PATTERN.finditer(structural_text):
+        if not TITLE_PATTERN.fullmatch(heading.group(0).strip()):
+            errors.append(
+                "structure: unsupported level-one heading "
+                f"at line {line_number(text, heading.start())}: "
+                f"{heading.group(0)!r}"
+            )
+            break
+    sections = section_ranges(text)
+    if TASKS_SECTION not in sections:
+        errors.append("structure: missing section '实施任务'")
+    else:
+        task_start, task_end = sections[TASKS_SECTION]
+        for match in TASK_PATTERN.finditer(structural_text):
+            if not task_start <= match.start() < task_end:
+                errors.append(
+                    "structure: TASK heading outside '实施任务' at line "
+                    f"{line_number(text, match.start())}"
+                )
+                break
+    errors.extend(chain_errors(text, sections))
+    return errors
 
 
-def check_forbidden_content(text: str, errors: list[str]) -> None:
-    checks = (
+def forbidden_content_errors(text: str) -> list[str]:
+    structural_text = mask_fenced_blocks(text)
+    prose_checks = (
+        (EXTERNAL_DEPENDENCY, "external skill dependency"),
+        (GENERIC_EXTERNAL_SKILL, "external skill dependency"),
+        (DEPRECATED_HEADER_FIELD, "deprecated header field"),
+        (DEPRECATED_PLAN_STRUCTURE, "deprecated plan structure"),
+        (DEPRECATED_PLAN_PROSE, "deprecated plan prose"),
+    )
+    whole_document_checks = (
         (FORBIDDEN_WORDS, "placeholder or TODO marker"),
         (TRACE_ID, "REQ/AC/DEC trace identifier"),
-        (EXTERNAL_DEPENDENCY, "external skill dependency"),
         (PERSONAL_ABSOLUTE_PATH, "personal absolute path"),
         (PLACEHOLDER, "unresolved placeholder"),
+        (SILENT_NULL_TERNARY, "silent null propagation"),
+        (OR_ELSE_NULL, "orElse(null) fallback"),
+        (
+            BROAD_CATCH_FALLBACK,
+            "broad catch returns an empty/success fallback",
+        ),
     )
-    for pattern, label in checks:
-        match = pattern.search(text)
-        if match:
-            errors.append(
-                f"content: {label} at line {line_number(text, match.start())}: "
-                f"{match.group(0)!r}"
-            )
+    errors = [
+        error
+        for pattern, label in prose_checks
+        if (error := match_error(structural_text, pattern, label)) is not None
+    ]
+    errors.extend(
+        error
+        for pattern, label in whole_document_checks
+        if (error := match_error(text, pattern, label)) is not None
+    )
 
     # An ellipsis in prose or a code block can hide unplanned implementation.
     # Java varargs are allowed when the line is an actual method signature.
     for index, line in enumerate(text.splitlines(), start=1):
         if "..." not in line:
             continue
-        if re.search(r"\b\w+\.\.\.\s+\w+", line) and "```" not in line:
+        if JAVA_VARARGS.search(line) and "```" not in line:
             continue
         errors.append(f"content: ellipsis at line {index}")
         break
+    return errors
 
 
 def task_ranges(text: str) -> list[tuple[int, int, int]]:
-    matches = list(TASK_PATTERN.finditer(text))
+    structural_text = mask_fenced_blocks(text)
+    matches = list(TASK_PATTERN.finditer(structural_text))
     ranges: list[tuple[int, int, int]] = []
     for index, match in enumerate(matches):
         end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-        next_section = text.find("\n## ", match.end())
+        next_section = structural_text.find("\n## ", match.end())
         if next_section >= 0:
             end = min(end, next_section)
         ranges.append((int(match.group(1)), match.start(), end))
     return ranges
 
 
-def check_tasks(text: str, errors: list[str]) -> int:
-    ranges = task_ranges(text)
-    if not ranges:
-        errors.append("tasks: no TASK heading matching (TASK-001) was found")
-        return 0
+def task_section(text: str) -> str | None:
+    sections = section_ranges(text)
+    task_bounds = sections.get(TASKS_SECTION)
+    if task_bounds is None:
+        return None
+    start, end = task_bounds
+    return text[start:end]
 
-    expected = list(range(1, len(ranges) + 1))
-    actual = [task_id for task_id, _, _ in ranges]
-    if actual != expected:
+
+def task_identity_errors(task_ranges_found: list[tuple[int, int, int]]) -> list[str]:
+    actual = [task_id for task_id, _, _ in task_ranges_found]
+    expected = list(range(1, len(task_ranges_found) + 1))
+    if actual == expected:
+        return []
+    return [f"tasks: TASK ids must be continuous from TASK-001; found {actual}"]
+
+
+def heading_match(text: str, heading: str) -> re.Match[str] | None:
+    return re.search(
+        rf"^{re.escape(heading)}[ \t]*$",
+        mask_fenced_blocks(text),
+        re.MULTILINE,
+    )
+
+
+def has_nonempty_fenced_block(
+    text: str, start: int, end: int, language: str | None = None
+) -> bool:
+    blocks, _ = fenced_blocks(text)
+    return any(
+        block.start >= start
+        and block.end <= end
+        and (language is None or block.language == language)
+        and bool(text[block.content_start : block.content_end].strip())
+        for block in blocks
+    )
+
+
+def logic_table_has_production_and_test_paths(segment: str) -> bool:
+    rows = table_rows_after_header(segment, LOGIC_TABLE_PATTERN)
+    if not rows:
+        return False
+    paths_and_symbols = [f"{row[0]} {row[1]}".lower() for row in rows]
+    has_test = any(
+        re.search(r"(?:^|[/._-])tests?(?:[/._-]|$)", value)
+        for value in paths_and_symbols
+    )
+    has_production = any(
+        "src/main/" in value
+        or (
+            value.endswith(".java`")
+            and not re.search(r"(?:^|[/._-])tests?(?:[/._-]|$)", value)
+        )
+        for value in paths_and_symbols
+    )
+    return has_production and has_test
+
+
+def logic_task_errors(segment: str, prefix: str) -> list[str]:
+    errors: list[str] = []
+    production_heading = heading_match(segment, "#### 核心生产代码")
+    tests_heading = heading_match(segment, "#### 核心测试代码")
+    has_production = production_heading is not None
+    has_tests = tests_heading is not None
+    if not has_production:
+        errors.append(f"tasks: {prefix} missing '核心生产代码'")
+    if not has_tests:
+        errors.append(f"tasks: {prefix} missing '核心测试代码'")
+    if not table_has_data_row(segment, LOGIC_TABLE_PATTERN):
+        errors.append(f"tasks: {prefix} lacks a path/symbol table")
+    elif not logic_table_has_production_and_test_paths(segment):
         errors.append(
-            f"tasks: TASK ids must be continuous from TASK-001; found {actual}"
+            f"tasks: {prefix} path/symbol table lacks production or test paths"
         )
 
+    if production_heading is not None:
+        production_end = (
+            tests_heading.start()
+            if tests_heading is not None and tests_heading.start() > production_heading.end()
+            else len(segment)
+        )
+        if not has_nonempty_fenced_block(
+            segment, production_heading.end(), production_end, language="java"
+        ):
+            errors.append(
+                f"tasks: {prefix} production section lacks a nonempty Java code block"
+            )
+    if tests_heading is not None:
+        if not has_nonempty_fenced_block(
+            segment, tests_heading.end(), len(segment), language="java"
+        ):
+            errors.append(
+                f"tasks: {prefix} test section lacks a nonempty Java code block"
+            )
+    return errors
+
+
+def structural_task_errors(segment: str, prefix: str) -> list[str]:
+    content_heading = heading_match(segment, "#### 完整变更内容")
+    if content_heading is None:
+        return [f"tasks: {prefix} structural task lacks '完整变更内容' section"]
+    if not table_has_data_row(segment, STRUCTURAL_TABLE_PATTERN):
+        return [f"tasks: {prefix} lacks a structural path/target table"]
+    if not has_nonempty_fenced_block(
+        segment, content_heading.end(), len(segment)
+    ):
+        return [f"tasks: {prefix} structural task lacks a nonempty code/content block"]
+    return []
+
+
+def task_errors(segment: str, task_id: int) -> list[str]:
+    prefix = f"TASK-{task_id:03d}"
+    structural_segment = mask_fenced_blocks(segment)
+    is_logic = (
+        "#### 核心生产代码" in structural_segment
+        or "#### 核心测试代码" in structural_segment
+    )
+    if is_logic:
+        return logic_task_errors(segment, prefix)
+    if (
+        "#### 完整变更内容" in structural_segment
+        or STRUCTURAL_TABLE_PATTERN.search(structural_segment)
+    ):
+        return structural_task_errors(segment, prefix)
+    return [f"tasks: {prefix} lacks logic code or '完整变更内容' section"]
+
+
+def task_errors_for_plan(text: str) -> tuple[list[str], int]:
+    tasks_text = task_section(text)
+    if tasks_text is None:
+        return [], 0
+    ranges = task_ranges(tasks_text)
+    if not ranges:
+        return [
+            "tasks: no TASK heading inside '实施任务' matching (TASK-001) was found"
+        ], 0
+    errors = task_identity_errors(ranges)
     for task_id, start, end in ranges:
-        segment = text[start:end]
-        prefix = f"TASK-{task_id:03d}"
-        if "- [ ]" not in segment:
-            errors.append(f"tasks: {prefix} has no checkbox step")
+        errors.extend(task_errors(tasks_text[start:end], task_id))
+    return errors, len(ranges)
 
-        is_mechanical = "机械任务" in segment or "完整机械变更" in segment
-        if is_mechanical:
-            if "完整机械变更" not in segment:
-                errors.append(f"tasks: {prefix} mechanical task lacks full change content")
-            if not re.search(r"验证|不变量|静态检查", segment):
-                errors.append(f"tasks: {prefix} mechanical task lacks deterministic verification")
-            continue
 
-        required_headings = (
-            "#### 核心生产代码",
-            "#### 核心测试代码",
-            "#### TDD 与验证设计",
-            "#### 质量审查",
-        )
-        for heading in required_headings:
-            if heading not in segment:
-                errors.append(f"tasks: {prefix} missing '{heading[5:]}'")
+def read_plan_text(plan_path: Path) -> tuple[str | None, list[str]]:
+    try:
+        if not plan_path.exists():
+            return None, [f"file: not found: {plan_path}"]
+        if not plan_path.is_file():
+            return None, [f"file: not a regular file: {plan_path}"]
+        return plan_path.read_text(encoding="utf-8"), []
+    except UnicodeDecodeError as exc:
+        return None, [f"file: expected UTF-8 text: {exc}"]
+    except OSError as exc:
+        return None, [f"file: could not read {plan_path}: {exc}"]
 
-        production_start = segment.find("#### 核心生产代码")
-        test_start = segment.find("#### 核心测试代码")
-        quality_start = segment.find("#### 质量审查")
-        if production_start >= 0 and test_start > production_start:
-            production = segment[production_start:test_start]
-            if "```java" not in production:
-                errors.append(f"tasks: {prefix} production section lacks a Java code block")
-        if test_start >= 0:
-            test_end = quality_start if quality_start > test_start else len(segment)
-            tests = segment[test_start:test_end]
-            if "```java" not in tests:
-                errors.append(f"tasks: {prefix} test section lacks a Java code block")
 
-        if not re.search(r"\bRED\b", segment) or not re.search(r"\bGREEN\b", segment):
-            errors.append(f"tasks: {prefix} must describe both RED and GREEN")
+def validation_result(plan_path: Path) -> tuple[list[str], int]:
+    text, file_errors = read_plan_text(plan_path)
+    if text is None:
+        return file_errors, 0
+
+    errors: list[str] = []
+    errors.extend(standard_path_errors(plan_path))
+    errors.extend(structure_errors(text))
+    errors.extend(forbidden_content_errors(text))
+    task_validation_errors, task_count = task_errors_for_plan(text)
+    errors.extend(task_validation_errors)
+    return errors, task_count
 
 
 def validate_plan(plan_path: Path) -> list[str]:
-    errors: list[str] = []
-    if not plan_path.exists():
-        return [f"file: not found: {plan_path}"]
-    if not plan_path.is_file():
-        return [f"file: not a regular file: {plan_path}"]
-
-    try:
-        text = plan_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        return [f"file: expected UTF-8 text: {exc}"]
-
-    check_standard_path(plan_path, errors)
-    check_required_sections(text, errors)
-    check_forbidden_content(text, errors)
-    check_tasks(text, errors)
+    errors, _ = validation_result(plan_path)
     return errors
 
 
@@ -210,14 +585,13 @@ def main() -> int:
     parser.add_argument("plan", type=Path, help="Plan path to validate")
     args = parser.parse_args()
 
-    errors = validate_plan(args.plan)
+    errors, task_count = validation_result(args.plan)
     if errors:
         print("Plan validation failed:")
         for error in errors:
             print(f"- {error}")
         return 1
 
-    task_count = len(task_ranges(args.plan.read_text(encoding="utf-8")))
     print(f"Plan is valid: {args.plan} ({task_count} task(s))")
     return 0
 
