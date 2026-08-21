@@ -86,13 +86,13 @@ Design 把当前 PRD 和真实仓库事实转化为供上下游与技术团队�
 | 值对象、泛型、类型层次或 primitive obsession | `122-java-type-design` |
 | 已证明存在真实构造/替换/通知/适配变化轴 | `design-patterns` |
 
-`domain-modeling` 不可用时停止；其他专项路由不可用时由本 Skill 的 Design Contract Gate 兜底，不形成额外硬依赖。路由 Skill 只提供顾问意见，主 Agent 负责裁决并写入最终 Design。
+`domain-modeling` 不可用时停止；其他专项路由不可用时由本 Skill 的内部执行规则兜底，不形成额外硬依赖。路由 Skill 只提供顾问意见，主 Agent 负责裁决并写入最终 Design。
 
 复杂 Design 可按需启用 1～2 个只读子 Agent 做入口遗漏、链路风险或设计挑战；简单单模块 Design 不启用。子 Agent 不写 `design.md`、`CONTEXT*` 或 ADR，领域建模工作不得委托给普通子 Agent。主 Agent 负责整合、调用 `domain-modeling`、写入和最终验证，子 Agent 输出不是最终证据。
 
 ### 6. 编写技术合同
 
-严格使用五个主章节：设计结论、方案全景、关键设计与权衡、设计边界、验证与风险。简单设计可以很短。不要增加“覆盖需求”清单；Design 不重复搬运 PRD 的 REQ/AC，也不新增替代性追溯章节。只有在某个技术选择需要背景时，才就近引用相关 PRD 或仓库事实。
+严格使用五个主章节：设计结论、方案全景、关键设计与权衡、设计边界、验证与风险。简单设计可以很短。不要增加“覆盖需求”清单；Design 不重复搬运 PRD 的 REQ/AC，也不新增替代性追溯章节。只有在某个技术选择需要背景时，才就近引用相关 PRD 或仓库事实。Skill 的工作流标题、内部检查清单和执行说明不属于 Design 输出；Design 中不得出现 `Design Contract Gate` 等内部流程章节。
 
 #### 表达形式和权威性
 
@@ -105,6 +105,18 @@ Design 把当前 PRD 和真实仓库事实转化为供上下游与技术团队�
 - 简单线性关系或少量约束：短文本、列表或 ASCII。
 
 图表表达流程、状态或关系；普通文字解释理由、限制、代价和重新评估条件。表达能力不足时补充另一种形式，不让单张图承担它无法表达的字段或异常合同。
+
+#### Mermaid 与 IntelliJ IDEA 兼容性
+
+Design 中的 Mermaid 默认以 IntelliJ IDEA Markdown Preview 为消费端之一，使用保守、可移植的 Mermaid 子集：
+
+- 必须使用独立 fenced block，语言标签精确写成小写 `mermaid`；第一行使用 `flowchart`、`sequenceDiagram`、`stateDiagram-v2`、`classDiagram` 或 `erDiagram`；
+- 节点 ID 使用 ASCII 字母、数字和下划线，中文或包含标点的显示文本放入双引号标签，例如 `A["创建工单"]`；
+- 一个 fenced block 只表达一张图，不嵌套 Markdown、HTML、代码围栏或外部资源引用；
+- 不使用 Font Awesome 图标、`%%{ ... }%%` 主题/初始化指令、外部脚本、`click` 交互、class diagram namespace/cardinality 扩展，以及 sequence diagram 的 actor 创建/销毁语法；需要这些表现力时改用普通文字、表格或导出图片；
+- 不为了美化增加主题、CSS、复杂 HTML 或非必要的 Mermaid 扩展；图的权威信息仍必须能由正文、表格或边界合同核查。
+
+生成后先运行本 Skill 的 `validate_design.py`，再在 IDEA 的 Preview 中复核。校验器只能检查图块结构和图类型，不能替代 IDEA 插件的实际渲染；渲染失败时按“安装插件 → 缩减到兼容子集 → 使用 Mermaid CLI/图片兜底”的顺序处理。
 
 #### 技术流程图
 
@@ -150,9 +162,9 @@ Design 把当前 PRD 和真实仓库事实转化为供上下游与技术团队�
 
 除上述非功能设计外，只要相关，还必须明确状态迁移、成功/失败结果、异常传播、超时、重试、降级、幂等、防重、顺序、事务、一致性、回滚、补偿和恢复。
 
-### 7. Design Contract Gate
+### 7. 内部执行规则
 
-质量路由之外，定稿前必须通过本地 Design Contract Gate：
+质量路由之外，定稿前在内部检查以下条件；本节标题、清单和说明、结论不得复制到 Design：
 
 - 全仓入口发现和受影响链路完整，关键结论有足够证据；
 - 模块职责、依赖方向、领域/契约所有者和技术承接方明确；
@@ -163,7 +175,7 @@ Design 把当前 PRD 和真实仓库事实转化为供上下游与技术团队�
 - 未为完整性制造多余模式、接口、抽象、兼容层或图形；
 - Design 不改变 PRD 的外部结果，也不提前写 Plan 的逐文件任务、完整代码或测试实现。
 
-这是 Design 合同校验，不是代码质量自评。Gate 不通过就修订或澄清，不把问题推给 Plan。
+这是 Design 合同校验，不是代码质量自评。内部检查不通过就修订或澄清，不把问题推给 Plan。
 
 ### 8. 验证、自审和交付
 
@@ -174,7 +186,7 @@ Design 把当前 PRD 和真实仓库事实转化为供上下游与技术团队�
 - 指出适合的单元、集成、契约或运行环境验证边界；
 - 记录无法验证的范围、原因、风险和缓解方式。
 
-自审 Design 的合同一致性、领域文档/ADR 结果、图形与表格、未知项、越界实现和质量 Gate。然后运行：
+自审 Design 的合同一致性、领域文档/ADR 结果、图形与表格、未知项、内部检查。Design 成稿后运行校验器；仅在修复实际校验问题后复跑，校验器自身规则修正另行处理。然后运行：
 
 ```bash
 python3 <pretty-writing-design>/scripts/validate_design.py \
