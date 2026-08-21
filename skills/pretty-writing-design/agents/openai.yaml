@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Writing Design"
-  short_description: "对齐技术边界、契约与风险的 Design"
+  short_description: "为 Java/Spring Design 明确外部边界、契约、运行时语义与风险"
   default_prompt: "Use $pretty-writing-design to create or revise a technical Design from the current PRD."
