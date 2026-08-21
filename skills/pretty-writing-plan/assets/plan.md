@@ -1,16 +1,19 @@
 # <主题> Implementation Plan
 
+编排级别：<轻量或完整>
+判定依据：<写明未命中复杂任务触发条件，或列出命中的具体风险>
+
 ## 变更链路
 
-<单模块且无跨边界时删除本节；否则删除本行并保留箭头摘要和关系表。>
+<保留完整受影响链路；不得以“单模块”省略入口、caller、callee、Adapter、持久化或外部边界。>
 
 ### 主路径
 
 `path/to/Caller#method` → `path/to/Module#method` → `path/to/Adapter#method` → `external boundary`
 
-| 顺序/分支 | 上游 | 下游 | 跨边界数据与转换 | 规则/数据归属 | 失败/副作用边界 | TASK |
-| --- | --- | --- | --- | --- | --- | --- |
-| 1 | `...` | `...` | `...` | `...` | `...` | `TASK-001` |
+| 顺序/分支 | 上游 | 下游 | 跨边界数据与转换 | 规则/数据归属 | 失败/副作用边界 | 关键证据 | TASK |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `path/to/Caller#method` | `path/to/Module#method` | `Request → Domain` | `Module` | `ExceptionHandler` 终止并记录 | `path/to/Caller.java`、`path/to/ModuleTest.java` | `TASK-001` |
 
 ## 实施任务
 

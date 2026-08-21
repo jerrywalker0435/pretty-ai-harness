@@ -27,9 +27,11 @@ STRUCTURAL_TABLE_PATTERN = re.compile(
 CHAIN_TABLE_PATTERN = re.compile(
     r"^\|\s*顺序/分支\s*\|\s*上游\s*\|\s*下游\s*\|"
     r"\s*跨边界数据与转换\s*\|\s*规则/数据归属\s*\|"
-    r"\s*失败/副作用边界\s*\|\s*TASK\s*\|\s*$",
+    r"\s*失败/副作用边界\s*\|\s*关键证据\s*\|\s*TASK\s*\|\s*$",
     re.MULTILINE,
 )
+ORCHESTRATION_LEVEL_LINE = re.compile(r"编排级别：(?:轻量|完整)")
+ORCHESTRATION_BASIS_LINE = re.compile(r"判定依据：\S.*")
 PERSONAL_ABSOLUTE_PATH = re.compile(
     r"(?:^|[\s`(])/(?:Users|home|private/(?:tmp|var))/|\b[A-Z]:\\"
 )
@@ -282,11 +284,11 @@ def top_level_section_errors(text: str) -> list[str]:
 
 
 def chain_errors(text: str, sections: dict[str, tuple[int, int]]) -> list[str]:
-    if CHAIN_SECTION not in sections or TASKS_SECTION not in sections:
+    if CHAIN_SECTION not in sections:
         return []
 
     errors: list[str] = []
-    if sections[CHAIN_SECTION][0] > sections[TASKS_SECTION][0]:
+    if TASKS_SECTION in sections and sections[CHAIN_SECTION][0] > sections[TASKS_SECTION][0]:
         errors.append("structure: 变更链路 must precede 实施任务")
     chain_start, chain_end = sections[CHAIN_SECTION]
     chain_text = mask_fenced_blocks(text[chain_start:chain_end])
@@ -294,6 +296,26 @@ def chain_errors(text: str, sections: dict[str, tuple[int, int]]) -> list[str]:
         errors.append("structure: 变更链路 lacks an arrow summary")
     if not table_has_data_row(chain_text, CHAIN_TABLE_PATTERN):
         errors.append("structure: 变更链路 lacks a complete relation table")
+    return errors
+
+
+def orchestration_metadata_errors(
+    text: str, title_end: int, first_section: int
+) -> list[str]:
+    metadata_lines = [
+        line.strip()
+        for line in text[title_end:first_section].splitlines()
+        if line.strip()
+    ]
+    if len(metadata_lines) != 2:
+        return [
+            "header: expected exactly two metadata lines: 编排级别 and 判定依据"
+        ]
+    errors: list[str] = []
+    if ORCHESTRATION_LEVEL_LINE.fullmatch(metadata_lines[0]) is None:
+        errors.append("header: first metadata line must declare 编排级别：轻量 or 完整")
+    if ORCHESTRATION_BASIS_LINE.fullmatch(metadata_lines[1]) is None:
+        errors.append("header: second metadata line must declare a non-empty 判定依据")
     return errors
 
 
@@ -319,10 +341,11 @@ def structure_errors(text: str) -> list[str]:
             (match.start() for match in top_level_matches(text)),
             default=len(text),
         )
-        if text[title_matches[0].end() : first_section].strip():
-            errors.append(
-                "structure: unexpected content between title and first section"
+        errors.extend(
+            orchestration_metadata_errors(
+                text, title_matches[0].end(), first_section
             )
+        )
     for heading in H1_PATTERN.finditer(structural_text):
         if not TITLE_PATTERN.fullmatch(heading.group(0).strip()):
             errors.append(
@@ -332,6 +355,8 @@ def structure_errors(text: str) -> list[str]:
             )
             break
     sections = section_ranges(text)
+    if CHAIN_SECTION not in sections:
+        errors.append("structure: missing section '变更链路'")
     if TASKS_SECTION not in sections:
         errors.append("structure: missing section '实施任务'")
     else:

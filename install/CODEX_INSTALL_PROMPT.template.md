@@ -1,11 +1,11 @@
 # 安装最新 Pretty Skills
 
-请使用 `npx skills@1.5.22` 安装下面 5 个 Pretty Skills 及其 12 个实际依赖，共 17 个 Skill。仓库 URL 不附加 Git ref，以获取远程默认分支 HEAD 的最新版本。
+请使用 `npx skills@1.5.22` 安装下面 4 个 Pretty Skills 及其 12 个实际依赖，共 16 个 Skill。仓库 URL 不附加 Git ref，以获取远程默认分支 HEAD 的最新版本。
 
 <!-- SOURCE_CATALOG_START -->
 | 仓库 | Skills |
 |---|---|
-| `git@gitlab-inner.haidilao.com:zhangy114/pretty-ai-harness.git` | `pretty-java-spring-core`、`pretty-writing-prd`、`pretty-writing-design`、`pretty-writing-plan`、`pretty-executing-plan` |
+| `git@gitlab-inner.haidilao.com:zhangy114/pretty-ai-harness.git` | `pretty-writing-prd`、`pretty-writing-design`、`pretty-writing-plan`、`pretty-executing-plan` |
 | `https://github.com/mattpocock/skills.git` | `domain-modeling`、`grilling`、`codebase-design`、`tdd` |
 | `https://github.com/jabrena/cursor-rules-java.git` | `121-java-object-oriented-design`、`122-java-type-design` |
 | `https://github.com/florianbuetow/claude-code.git` | `solid-principles` |
@@ -27,7 +27,7 @@
 
 展示默认值不等于获得同意。只有用户明确选择 1 或 2 才继续；空回复、含糊回复、取消或未回复时停止，不得获取任何仓库，也不得写入任何文件。
 
-检查所选目录中的 17 个同名路径，文件、目录或符号链接都算已存在。只要存在任意同名项，列出名称并询问：“是否更新全部 17 个 Skill 到最新版本？”只有明确同意才继续，否则停止且不修改。
+检查所选目录中的 16 个同名路径，文件、目录或符号链接都算已存在。只要存在任意同名项，列出名称并询问：“是否更新全部 16 个 Skill 到最新版本？”只有明确同意才继续，否则停止且不修改。
 
 ## 2. 安装最新版本
 
@@ -49,7 +49,7 @@ npx skills@1.5.22 add <repository-url> --global --agent universal --copy --full-
 
 ## 3. 验证
 
-检查全部 17 个目录均存在 `SKILL.md`，且 frontmatter 的 `name` 与目录名一致。再运行与所选范围对应的命令：
+检查全部 16 个目录均存在 `SKILL.md`，且 frontmatter 的 `name` 与目录名一致。再运行与所选范围对应的命令：
 
 ```text
 # 当前目录
@@ -59,4 +59,4 @@ npx skills@1.5.22 list --agent universal --json
 npx skills@1.5.22 list --global --agent universal --json
 ```
 
-最终报告安装范围、绝对目标目录、成功和失败名称。只有 17 个 Skill 全部验证通过才报告成功；若 Codex 未立即识别新版本，建议重启 Codex 一次。
+最终报告安装范围、绝对目标目录、成功和失败名称。只有 16 个 Skill 全部验证通过才报告成功；若 Codex 未立即识别新版本，建议重启 Codex 一次。
