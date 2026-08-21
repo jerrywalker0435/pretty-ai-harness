@@ -13,25 +13,28 @@ from typing import NamedTuple
 TASKS_SECTION = "## 实施任务"
 CHAIN_SECTION = "## 变更链路"
 TOP_LEVEL_SECTIONS = {CHAIN_SECTION, TASKS_SECTION}
-TASK_PATTERN = re.compile(r"^###\s+.+[（(]TASK-(\d{3})[）)]\s*$", re.MULTILINE)
+TASK_PATTERN = re.compile(r"^###\s+TASK-(\d{3})[：:][ \t]*.+$", re.MULTILINE)
 TOP_LEVEL_PATTERN = re.compile(r"^##\s+.+$", re.MULTILINE)
 TITLE_PATTERN = re.compile(r"^#\s+.+\s+Implementation Plan\s*$", re.MULTILINE)
-LOGIC_TABLE_PATTERN = re.compile(
-    r"^\|\s*仓库相对路径\s*\|\s*symbol\s*\|\s*修改目的\s*\|\s*$",
+MERMAID_START_PATTERN = re.compile(
+    r"^(?:flowchart|sequenceDiagram|stateDiagram-v2)\b", re.IGNORECASE
+)
+FILES_HEADING = re.compile(r"^\*\*Files:\*\*[ \t]*$", re.MULTILINE)
+FILE_ENTRY = re.compile(
+    r"^\s*[-*+]\s+(Create|Modify|Test|Delete):\s+`([^`\n]+)`\s*$",
     re.MULTILINE,
 )
-STRUCTURAL_TABLE_PATTERN = re.compile(
-    r"^\|\s*仓库相对路径\s*\|\s*(?:目标|symbol)\s*\|\s*修改目的\s*\|\s*$",
+LABEL_PATTERN = re.compile(r"^(约束|修改|测试|依赖)：[ \t]*$", re.MULTILINE)
+DEPRECATED_METADATA = re.compile(
+    r"^(?:编排级别|判定依据)：", re.MULTILINE
+)
+DEPRECATED_PATH_TABLE = re.compile(
+    r"^\|\s*仓库相对路径\s*\|\s*(?:symbol|目标)\s*\|\s*修改目的\s*\|\s*$",
     re.MULTILINE,
 )
-CHAIN_TABLE_PATTERN = re.compile(
-    r"^\|\s*顺序/分支\s*\|\s*上游\s*\|\s*下游\s*\|"
-    r"\s*跨边界数据与转换\s*\|\s*规则/数据归属\s*\|"
-    r"\s*失败/副作用边界\s*\|\s*关键证据\s*\|\s*TASK\s*\|\s*$",
-    re.MULTILINE,
+DEPRECATED_CHAIN_TABLE = re.compile(
+    r"^\|\s*顺序/分支\s*\|", re.MULTILINE
 )
-ORCHESTRATION_LEVEL_LINE = re.compile(r"编排级别：(?:轻量|完整)")
-ORCHESTRATION_BASIS_LINE = re.compile(r"判定依据：\S.*")
 PERSONAL_ABSOLUTE_PATH = re.compile(
     r"(?:^|[\s`(])/(?:Users|home|private/(?:tmp|var))/|\b[A-Z]:\\"
 )
@@ -72,7 +75,8 @@ DEPRECATED_HEADER_FIELD = re.compile(
 DEPRECATED_PLAN_STRUCTURE = re.compile(
     r"^(?:"
     r"\s*#{2,6}\s+(?:实施结论|文件变更总览|测试与验证|共享约束和代码事实|"
-    r"质量审查|TDD\s*与验证设计|完成证据|验证命令|执行结果)\s*"
+    r"质量审查|TDD\s*与验证设计|完成证据|验证命令|执行结果|"
+    r"核心生产代码|核心测试代码|完整变更内容)\s*"
     r"|\s*\*\*(?:完成证据|验证命令|覆盖率(?:目标)?|执行结果|状态)[：:]\*\*"
     r"|\s*[-*+]\s+\[[ xX]\]"
     r"|\s*(?:\*\*)?(?:RED|GREEN|REFACTOR)(?:\*\*)?\s*(?:[：:]|→|->)"
@@ -92,9 +96,6 @@ JAVA_VARARGS = re.compile(
     r"\b[\w$]+(?:\s*<[^>\n]+>)?(?:\s*\[\])?\s*\.\.\.\s*[\w$]+"
 )
 FENCE_PATTERN = re.compile(r"^[ \t]*([`~])\1{2,}")
-TABLE_SEPARATOR_PATTERN = re.compile(
-    r"^\|\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|$"
-)
 
 
 class FencedBlock(NamedTuple):
@@ -201,49 +202,6 @@ def top_level_matches(text: str) -> list[re.Match[str]]:
     return list(TOP_LEVEL_PATTERN.finditer(mask_fenced_blocks(text)))
 
 
-def table_cells(line: str) -> list[str] | None:
-    stripped = line.strip()
-    if not stripped.startswith("|") or not stripped.endswith("|"):
-        return None
-    return [cell.strip() for cell in re.split(r"(?<!\\)\|", stripped[1:-1])]
-
-
-def table_rows_after_header(
-    text: str, header_pattern: re.Pattern[str]
-) -> list[list[str]]:
-    structural_text = mask_fenced_blocks(text)
-    header = header_pattern.search(structural_text)
-    if not header:
-        return []
-    header_cells = table_cells(header.group(0))
-    if header_cells is None:
-        return []
-
-    following_lines = [
-        line.strip()
-        for line in structural_text[header.end() :].splitlines()
-        if line.strip()
-    ]
-    if not following_lines or TABLE_SEPARATOR_PATTERN.fullmatch(following_lines[0]) is None:
-        return []
-
-    rows: list[list[str]] = []
-    for line in following_lines[1:]:
-        cells = table_cells(line)
-        if cells is None:
-            break
-        if TABLE_SEPARATOR_PATTERN.fullmatch(line):
-            continue
-        if len(cells) != len(header_cells) or any(not cell for cell in cells):
-            return []
-        rows.append(cells)
-    return rows
-
-
-def table_has_data_row(text: str, header_pattern: re.Pattern[str]) -> bool:
-    return bool(table_rows_after_header(text, header_pattern))
-
-
 def standard_path_errors(plan_path: Path) -> list[str]:
     parts = plan_path.resolve().parts
     if len(parts) < 4 or tuple(parts[-4:-2]) != ("docs", "pretty") or parts[-1] != "plan.md":
@@ -291,31 +249,26 @@ def chain_errors(text: str, sections: dict[str, tuple[int, int]]) -> list[str]:
     if TASKS_SECTION in sections and sections[CHAIN_SECTION][0] > sections[TASKS_SECTION][0]:
         errors.append("structure: 变更链路 must precede 实施任务")
     chain_start, chain_end = sections[CHAIN_SECTION]
-    chain_text = mask_fenced_blocks(text[chain_start:chain_end])
-    if "→" not in chain_text:
-        errors.append("structure: 变更链路 lacks an arrow summary")
-    if not table_has_data_row(chain_text, CHAIN_TABLE_PATTERN):
-        errors.append("structure: 变更链路 lacks a complete relation table")
-    return errors
-
-
-def orchestration_metadata_errors(
-    text: str, title_end: int, first_section: int
-) -> list[str]:
-    metadata_lines = [
-        line.strip()
-        for line in text[title_end:first_section].splitlines()
-        if line.strip()
+    mermaid_blocks = [
+        block
+        for block in fenced_blocks(text)[0]
+        if block.start >= chain_start
+        and block.end <= chain_end
+        and block.language == "mermaid"
     ]
-    if len(metadata_lines) != 2:
-        return [
-            "header: expected exactly two metadata lines: 编排级别 and 判定依据"
+    if not mermaid_blocks:
+        errors.append("structure: 变更链路 must contain a Mermaid diagram")
+    for block in mermaid_blocks:
+        lines = [
+            line.strip()
+            for line in text[block.content_start : block.content_end].splitlines()
+            if line.strip()
         ]
-    errors: list[str] = []
-    if ORCHESTRATION_LEVEL_LINE.fullmatch(metadata_lines[0]) is None:
-        errors.append("header: first metadata line must declare 编排级别：轻量 or 完整")
-    if ORCHESTRATION_BASIS_LINE.fullmatch(metadata_lines[1]) is None:
-        errors.append("header: second metadata line must declare a non-empty 判定依据")
+        if not lines or MERMAID_START_PATTERN.match(lines[0]) is None:
+            errors.append(
+                "structure: 变更链路 Mermaid diagram must start with flowchart, "
+                "sequenceDiagram, or stateDiagram-v2"
+            )
     return errors
 
 
@@ -337,15 +290,6 @@ def structure_errors(text: str) -> list[str]:
             errors.append(
                 "header: expected exactly one Implementation Plan title"
             )
-        first_section = min(
-            (match.start() for match in top_level_matches(text)),
-            default=len(text),
-        )
-        errors.extend(
-            orchestration_metadata_errors(
-                text, title_matches[0].end(), first_section
-            )
-        )
     for heading in H1_PATTERN.finditer(structural_text):
         if not TITLE_PATTERN.fullmatch(heading.group(0).strip()):
             errors.append(
@@ -355,8 +299,6 @@ def structure_errors(text: str) -> list[str]:
             )
             break
     sections = section_ranges(text)
-    if CHAIN_SECTION not in sections:
-        errors.append("structure: missing section '变更链路'")
     if TASKS_SECTION not in sections:
         errors.append("structure: missing section '实施任务'")
     else:
@@ -378,6 +320,9 @@ def forbidden_content_errors(text: str) -> list[str]:
         (EXTERNAL_DEPENDENCY, "external skill dependency"),
         (GENERIC_EXTERNAL_SKILL, "external skill dependency"),
         (DEPRECATED_HEADER_FIELD, "deprecated header field"),
+        (DEPRECATED_METADATA, "deprecated orchestration metadata"),
+        (DEPRECATED_PATH_TABLE, "deprecated path/symbol table"),
+        (DEPRECATED_CHAIN_TABLE, "deprecated chain relation table"),
         (DEPRECATED_PLAN_STRUCTURE, "deprecated plan structure"),
         (DEPRECATED_PLAN_PROSE, "deprecated plan prose"),
     )
@@ -446,14 +391,6 @@ def task_identity_errors(task_ranges_found: list[tuple[int, int, int]]) -> list[
     return [f"tasks: TASK ids must be continuous from TASK-001; found {actual}"]
 
 
-def heading_match(text: str, heading: str) -> re.Match[str] | None:
-    return re.search(
-        rf"^{re.escape(heading)}[ \t]*$",
-        mask_fenced_blocks(text),
-        re.MULTILINE,
-    )
-
-
 def has_nonempty_fenced_block(
     text: str, start: int, end: int, language: str | None = None
 ) -> bool:
@@ -467,93 +404,103 @@ def has_nonempty_fenced_block(
     )
 
 
-def logic_table_has_production_and_test_paths(segment: str) -> bool:
-    rows = table_rows_after_header(segment, LOGIC_TABLE_PATTERN)
-    if not rows:
-        return False
-    paths_and_symbols = [f"{row[0]} {row[1]}".lower() for row in rows]
-    has_test = any(
-        re.search(r"(?:^|[/._-])tests?(?:[/._-]|$)", value)
-        for value in paths_and_symbols
-    )
-    has_production = any(
-        "src/main/" in value
-        or (
-            value.endswith(".java`")
-            and not re.search(r"(?:^|[/._-])tests?(?:[/._-]|$)", value)
-        )
-        for value in paths_and_symbols
-    )
-    return has_production and has_test
+def file_entries(segment: str) -> list[tuple[str, str]]:
+    structural_segment = mask_fenced_blocks(segment)
+    return FILE_ENTRY.findall(structural_segment)
+
+
+def label_match(segment: str, label: str) -> re.Match[str] | None:
+    return re.search(rf"^{re.escape(label)}：[ \t]*$", mask_fenced_blocks(segment), re.MULTILINE)
+
+
+def next_label_position(segment: str, start: int) -> int:
+    match = LABEL_PATTERN.search(mask_fenced_blocks(segment)[start:])
+    return start + match.start() if match else len(segment)
+
+
+def files_errors(segment: str, prefix: str) -> tuple[list[str], list[tuple[str, str]]]:
+    errors: list[str] = []
+    structural_segment = mask_fenced_blocks(segment)
+    files_heading = FILES_HEADING.search(structural_segment)
+    if files_heading is None:
+        return [f"tasks: {prefix} missing '**Files:**'"], []
+    entries = file_entries(segment)
+    if not entries:
+        errors.append(f"tasks: {prefix} has no Create/Modify/Test/Delete file entry")
+    files_end = next_label_position(segment, files_heading.end())
+    if not any(
+        match.start() >= files_heading.end() and match.start() < files_end
+        for match in FILE_ENTRY.finditer(structural_segment)
+    ):
+        errors.append(f"tasks: {prefix} '**Files:**' has no file entry")
+    return errors, entries
+
+
+def constraint_order_error(segment: str, prefix: str) -> list[str]:
+    structural_segment = mask_fenced_blocks(segment)
+    constraint = label_match(segment, "约束")
+    files = FILES_HEADING.search(structural_segment)
+    if constraint is not None and files is not None and constraint.start() > files.start():
+        return [f"tasks: {prefix} 约束 must precede **Files:**"]
+    return []
 
 
 def logic_task_errors(segment: str, prefix: str) -> list[str]:
-    errors: list[str] = []
-    production_heading = heading_match(segment, "#### 核心生产代码")
-    tests_heading = heading_match(segment, "#### 核心测试代码")
-    has_production = production_heading is not None
-    has_tests = tests_heading is not None
-    if not has_production:
-        errors.append(f"tasks: {prefix} missing '核心生产代码'")
-    if not has_tests:
-        errors.append(f"tasks: {prefix} missing '核心测试代码'")
-    if not table_has_data_row(segment, LOGIC_TABLE_PATTERN):
-        errors.append(f"tasks: {prefix} lacks a path/symbol table")
-    elif not logic_table_has_production_and_test_paths(segment):
-        errors.append(
-            f"tasks: {prefix} path/symbol table lacks production or test paths"
-        )
+    errors, entries = files_errors(segment, prefix)
+    errors.extend(constraint_order_error(segment, prefix))
+    has_production_file = any(
+        operation in {"Create", "Modify"}
+        and not re.search(r"(?:^|[/._-])tests?(?:[/._-]|$)", path, re.IGNORECASE)
+        for operation, path in entries
+    )
+    has_test_file = any(
+        operation == "Test"
+        or re.search(r"(?:^|[/._-])tests?(?:[/._-]|$)", path, re.IGNORECASE)
+        for operation, path in entries
+    )
+    if not has_production_file:
+        errors.append(f"tasks: {prefix} Files lacks a production Create/Modify path")
+    if not has_test_file:
+        errors.append(f"tasks: {prefix} Files lacks a Test path")
 
-    if production_heading is not None:
-        production_end = (
-            tests_heading.start()
-            if tests_heading is not None and tests_heading.start() > production_heading.end()
-            else len(segment)
-        )
+    modification = label_match(segment, "修改")
+    tests = label_match(segment, "测试")
+    if modification is None:
+        errors.append(f"tasks: {prefix} missing '修改：'")
+    if tests is None:
+        errors.append(f"tasks: {prefix} missing '测试：'")
+    if modification is not None:
+        modification_end = next_label_position(segment, modification.end())
         if not has_nonempty_fenced_block(
-            segment, production_heading.end(), production_end, language="java"
+            segment, modification.end(), modification_end, language="java"
         ):
-            errors.append(
-                f"tasks: {prefix} production section lacks a nonempty Java code block"
-            )
-    if tests_heading is not None:
-        if not has_nonempty_fenced_block(
-            segment, tests_heading.end(), len(segment), language="java"
-        ):
-            errors.append(
-                f"tasks: {prefix} test section lacks a nonempty Java code block"
-            )
+            errors.append(f"tasks: {prefix} 修改 lacks a nonempty Java code block")
+    if tests is not None:
+        tests_end = next_label_position(segment, tests.end())
+        if not has_nonempty_fenced_block(segment, tests.end(), tests_end, language="java"):
+            errors.append(f"tasks: {prefix} 测试 lacks a nonempty Java code block")
     return errors
 
 
 def structural_task_errors(segment: str, prefix: str) -> list[str]:
-    content_heading = heading_match(segment, "#### 完整变更内容")
-    if content_heading is None:
-        return [f"tasks: {prefix} structural task lacks '完整变更内容' section"]
-    if not table_has_data_row(segment, STRUCTURAL_TABLE_PATTERN):
-        return [f"tasks: {prefix} lacks a structural path/target table"]
-    if not has_nonempty_fenced_block(
-        segment, content_heading.end(), len(segment)
-    ):
-        return [f"tasks: {prefix} structural task lacks a nonempty code/content block"]
-    return []
+    errors, entries = files_errors(segment, prefix)
+    errors.extend(constraint_order_error(segment, prefix))
+    if not any(operation in {"Create", "Modify", "Delete"} for operation, _ in entries):
+        errors.append(f"tasks: {prefix} Files lacks a Create/Modify/Delete path")
+    modification = label_match(segment, "修改")
+    if modification is None:
+        errors.append(f"tasks: {prefix} missing '修改：'")
+    elif not has_nonempty_fenced_block(segment, modification.end(), len(segment)):
+        errors.append(f"tasks: {prefix} 修改 lacks a nonempty code/content block")
+    return errors
 
 
 def task_errors(segment: str, task_id: int) -> list[str]:
     prefix = f"TASK-{task_id:03d}"
     structural_segment = mask_fenced_blocks(segment)
-    is_logic = (
-        "#### 核心生产代码" in structural_segment
-        or "#### 核心测试代码" in structural_segment
-    )
-    if is_logic:
+    if "测试：" in structural_segment:
         return logic_task_errors(segment, prefix)
-    if (
-        "#### 完整变更内容" in structural_segment
-        or STRUCTURAL_TABLE_PATTERN.search(structural_segment)
-    ):
-        return structural_task_errors(segment, prefix)
-    return [f"tasks: {prefix} lacks logic code or '完整变更内容' section"]
+    return structural_task_errors(segment, prefix)
 
 
 def task_errors_for_plan(text: str) -> tuple[list[str], int]:
@@ -563,7 +510,7 @@ def task_errors_for_plan(text: str) -> tuple[list[str], int]:
     ranges = task_ranges(tasks_text)
     if not ranges:
         return [
-            "tasks: no TASK heading inside '实施任务' matching (TASK-001) was found"
+            "tasks: no TASK heading inside '实施任务' matching '### TASK-001：...' was found"
         ], 0
     errors = task_identity_errors(ranges)
     for task_id, start, end in ranges:

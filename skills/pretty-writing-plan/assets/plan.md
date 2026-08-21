@@ -1,55 +1,48 @@
 # <主题> Implementation Plan
 
-编排级别：<轻量或完整>
-判定依据：<写明未命中复杂任务触发条件，或列出命中的具体风险>
-
 ## 变更链路
 
-<保留完整受影响链路；不得以“单模块”省略入口、caller、callee、Adapter、持久化或外部边界。>
+```mermaid
+flowchart TD
+  A["入口"] --> B["受影响模块"]
+  B --> C["外部边界或持久化"]
+```
 
-### 主路径
-
-`path/to/Caller#method` → `path/to/Module#method` → `path/to/Adapter#method` → `external boundary`
-
-| 顺序/分支 | 上游 | 下游 | 跨边界数据与转换 | 规则/数据归属 | 失败/副作用边界 | 关键证据 | TASK |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `path/to/Caller#method` | `path/to/Module#method` | `Request → Domain` | `Module` | `ExceptionHandler` 终止并记录 | `path/to/Caller.java`、`path/to/ModuleTest.java` | `TASK-001` |
+<仅在调用关系、交互顺序或状态迁移值得可视化时保留本节；简单任务可以省略。按需使用 flowchart、sequenceDiagram 或 stateDiagram-v2。>
 
 ## 实施任务
 
-### <领域结果或独立风险>（TASK-001）
+### TASK-001：<领域结果或独立风险>
 
-<可观察结果、不可改变合同和必要实现限制。>
+约束：
+- <只有存在不可改变的边界时才填写。>
 
-| 仓库相对路径 | symbol | 修改目的 |
-| --- | --- | --- |
-| `module/src/main/java/...` | `ExampleModule#publish` | <目的> |
-| `module/src/test/java/...` | `ExampleModuleTest` | <目的> |
+**Files:**
+- Modify: `module/src/main/java/...`
+- Test: `module/src/test/java/...`
 
-#### 核心生产代码
-
-```java
-<完整展示所有受影响 symbol 的签名、依赖、返回值、异常和关键分支。>
-```
-
-#### 核心测试代码
+修改：
 
 ```java
-<展示 public 行为入口、真实输入/fixture、边界替身和业务结果断言。>
+<展示受影响的完整生产 symbol。>
 ```
 
-**依赖：** <仅在依赖关系不等于 TASK 编号顺序时填写>
+测试：
 
-### <声明或结构变更结果>（TASK-002）
+```java
+<展示公共行为入口、真实输入、必要边界替身和业务结果断言。>
+```
 
-<可观察结构不变量、受影响路径和不可改变限制。>
+依赖：
+- <仅在依赖关系确实影响任务顺序时填写。>
 
-| 仓库相对路径 | 目标 | 修改目的 |
-| --- | --- | --- |
-| `db/migration/...sql` | `table.column` | <目的> |
+### TASK-002：<声明或结构变更结果>
 
-#### 完整变更内容
+**Files:**
+- Modify: `db/migration/...sql`
+
+修改：
 
 ```sql
-<完整 DDL 或其他声明/结构变更内容。>
+<完整 DDL 或其他声明性变更内容。>
 ```

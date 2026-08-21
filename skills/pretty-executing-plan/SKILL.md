@@ -7,7 +7,7 @@ description: Use when the user invokes Pretty Execution to implement or resume a
 
 Execution 将当前工作区最新的 Plan 转成代码、测试和可追溯证据。用户使用本 Skill 即视为批准执行该主题，不追加审批轮次。Execution 不负责重新定义需求、设计或 Plan，也不自动执行提交、推送、合并、部署或发布。
 
-先加载同目录的 [assets/execution.md](assets/execution.md) 作为报告模板。首次修改生产代码前加载 [references/quality-contract-gates.md](references/quality-contract-gates.md) 和 [references/quality-principles.md](references/quality-principles.md)，并使用本 Skill 提供的脚本：
+先加载同目录的 [assets/execution.md](assets/execution.md) 作为报告模板。首次修改生产代码前加载 [references/quality-contract-gates.md](references/quality-contract-gates.md) 和 [../pretty-common/references/quality-principles.md](../pretty-common/references/quality-principles.md)，然后使用本 Skill 提供的脚本：
 
 - [scripts/validate_execution.py](scripts/validate_execution.py)：校验报告结构和完成证据；
 - [scripts/verify_incremental_coverage.py](scripts/verify_incremental_coverage.py)：独立计算增量覆盖率。
@@ -18,7 +18,7 @@ Execution 将当前工作区最新的 Plan 转成代码、测试和可追溯证�
 
 Plan 缺失、重复或无法确认有效版本时停止。用户负责执行期间的文档稳定性；不做文档版本指纹或变更检测，读取到的始终是当前工作区最新内容。Execution 不修改 PRD、Design、Plan 或 ADR。
 
-首次生产代码编辑前按 `references/quality-contract-gates.md` 完成契约 Gate 和质量路由 Gate。发现需求、设计或 Plan 的冲突/歧义时，立即返回对应阶段，不自行猜测。代码实现时按 `references/quality-principles.md` 检查实际增量代码、调用链、测试和证据。
+首次生产代码编辑前按 `references/quality-contract-gates.md` 完成契约 Gate 和质量路由 Gate。发现需求、设计或 Plan 的冲突/歧义时，立即返回对应阶段，不自行猜测。代码实现时按共享质量基线检查实际增量代码、调用链、测试和证据。
 
 ## 2. 增量范围和基线
 
@@ -63,9 +63,9 @@ Superpowers 仅是可选调度引擎，不是硬依赖，也不能带入自动 G
 
 ## 5. 质量路由和 Quality Gate
 
-首次生产代码编辑前完成质量路由，完成前不得生成或修改生产代码。只按真实增量风险选择最小、不重叠的 Skill 集合；不要批量加载所有质量 Skill。质量路由、契约 Gate、降级和返回条件以 `references/quality-contract-gates.md` 为准。
+首次生产代码编辑前完整读取共享质量基线，并根据真实增量风险完成精确质量路由；完成前不得生成或修改生产代码。只选择最小、不重叠且实际适用的 Skill 集合，不批量加载所有质量 Skill。命中的原则必须转成真实实现中的职责、签名、异常合同、类型、测试行为、配置/Schema 或任务切分，不能只写在报告里。质量路由、契约 Gate、降级和返回条件以 `references/quality-contract-gates.md` 为准。
 
-每个 TASK 完成时按 `references/quality-principles.md` 复核当前 diff，执行参考文件规定的收尾审查和专项审查，立即修复契约内的问题；全部 TASK 完成后做一次跨 TASK 组合检查。质量原则检查对象是真实生产代码和测试，不是质量自评。
+每个 TASK 完成时，按共享质量基线和该 TASK 命中的专项路由复核当前 diff、调用链、测试及配置/Schema 证据；实现或复核中发现新风险时增量补充最小路由。只执行适用的收尾审查和专项审查，不要求统一调用 `clean-code-guard`。发现契约或质量阻断项时立即修复并重跑受影响验证；全部 TASK 完成后做一次跨 TASK 组合检查。任何共享基线或命中路由的阻断项未修复，最终状态不能是“完成”。质量原则检查对象是真实生产代码和测试，不是质量自评。
 
 ## 6. 增量覆盖率和独立验证
 
@@ -111,7 +111,7 @@ python3 <pretty-executing-plan>/scripts/verify_incremental_coverage.py \
 持续更新 Plan 同目录的 `execution.md`。报告是简要、可恢复的结果账本，只保留：
 
 - 执行依据 `Plan`、起始 HEAD、工作区归因、执行模式和基线结论；
-- 每个 TASK 的中文状态、实际文件/symbol、行为结果、质量路由、验证摘要和实质偏差；
+- 每个 TASK 的中文状态、实际文件/symbol、命中的质量原则与专项路由、实际落实、验证摘要和实质偏差；
 - 最终契约/质量 Gate、覆盖率实际范围、质量 findings 处置和未验证范围；
 - 恢复点和最终状态。
 
