@@ -7,7 +7,7 @@ description: Use when creating, revising, or reviewing a Java/Spring implementat
 
 本 Skill 把已批准的 PRD、Design 和真实仓库事实整理成供人审查实现质量的 `plan.md`；AI Agent 是第二读者和后续执行者。它是 Plan 的唯一编排者和最终作者；`../pretty-common/references/quality-principles.md` 是每次创建或修订都必须应用的共同质量基线，外部质量 Skill 只按事实精确路由，并将命中的原则转成代码设计约束。质量原则不作为独立评分、报告或生成后的补救审查，最终只体现在受影响链路、约束、生产代码和测试代码中。
 
-**硬规则：先确认合同，完成全仓广度盘点；每次必读并应用本地质量基线；再按事实精确路由专项 Skill，设计并深读完整受影响链路；命中的原则必须直接约束代码提案，发现新风险时增量路由并重写。全仓盘点用于发现入口、消费者和注册点，不等于全仓重构或逐文件深读。只让一个类变干净、却让整条链路继续重复，不算完成。**
+**硬规则：先确认合同并完成全仓广度盘点；应用共享质量基线，按事实精确路由专项 Skill，设计并深读完整受影响链路；命中的原则必须直接约束代码提案，发现新风险时增量路由并重写。全仓盘点用于发现入口、消费者和注册点，不等于全仓重构或逐文件深读。只让一个类变干净、却让整条链路继续重复，不算完成。**
 
 ## 目标与边界
 
@@ -92,7 +92,7 @@ description: Use when creating, revising, or reviewing a Java/Spring implementat
 | 逻辑行为、测试 seam、行为断言或边界替身 | `$tdd` | 优先测试设计约束；不把 TDD 流程复制到 Plan |
 | 多 TASK、跨模块或迁移型 Plan 的草稿骨架 | `$superpowers:writing-plans` | 草稿生成，不得直接交付 |
 
-每次先完整应用 `../pretty-common/references/quality-principles.md`，再只选最小非重叠专项集合，通常为一个主路由加一个专项路由，不为“覆盖全面”批量加载。`$121-java-object-oriented-design` 与 `$solid-principles` 二选一；`$design-patterns` 只在已证明变化轴时加载；`$clean-code` 只在具体命名/方法结构风险已被事实证实时加载，不能代替共同质量基线；逻辑实现型 TASK 优先使用 `$tdd`，仅在 `$tdd` 不可用时读取 `references/test-design.md`。命中 Skill 的原则必须在生成代码前转成类职责、方法签名、异常合同、数据类型、测试行为或任务拆分；新风险在后续深读中出现时增量路由，不预加载。
+路由表只定义专项选择；共享质量基线始终适用，再只选最小非重叠专项集合，通常为一个主路由加一个专项路由，不为“覆盖全面”批量加载。`$121-java-object-oriented-design` 与 `$solid-principles` 二选一；`$design-patterns` 只在已证明变化轴时加载；`$clean-code` 只在具体命名/方法结构风险已被事实证实时加载，不能代替共同质量基线；逻辑实现型 TASK 优先使用 `$tdd`，仅在 `$tdd` 不可用时读取 `references/test-design.md`。命中 Skill 的原则必须在生成代码前转成类职责、方法签名、异常合同、数据类型、测试行为或任务拆分；新风险在后续深读中出现时增量路由，不预加载。
 
 调用 `$superpowers:writing-plans` 时只吸收其文件职责、任务切分、完整代码/无占位符和类型一致性草稿。本 Skill 中用户已确认的输出合同显式覆盖它的默认路径、Goal/Architecture/Tech Stack 头部、checkbox、TDD 步骤、验证命令、commit 步骤和执行交接。主 Agent 必须依本 Skill 模板重组草稿，再执行合同事实逐项反查和校验；不得把外部 Skill 的“必须”字段复制到最终 Plan。
 
@@ -112,7 +112,7 @@ description: Use when creating, revising, or reviewing a Java/Spring implementat
 
 ## 质量与契约约束
 
-创建或修订时必须完整读取 `../pretty-common/references/quality-principles.md`。该文件是 Plan 代码设计与生成质量原则的共同基线；本节不重复抄写规则，也不生成质量评分或独立检查报告。质量路由的作用是在代码提案形成前决定应遵守哪些原则，而不是在代码生成后给出一个脱离修改的结论。
+本节只规定共享质量原则如何落实到 Plan，不重复抄写基线、路由表或生成独立检查报告。质量路由的作用是在代码提案形成前决定应遵守哪些原则，而不是在代码生成后给出一个脱离修改的结论。
 
 主 Agent 必须把适用原则落实到受影响图、生产代码、测试代码和限制条件中，至少处理：受影响链路、边界契约与失败语义、查询与命令职责分离、参数只作为输入、规则唯一归属、依赖方向、日志所有权、类型/Schema/协议一致性、兼容边界和全局重复。命中的专项 Skill 不能只读取不采纳；其结论必须改变或确认具体的类职责、方法、类型、异常、测试或任务切分。机械校验器只负责结构和高确定性问题，不能替代原则驱动的代码设计；不能从局部代码推断的链路、所有权、迁移或合同事实必须写入就近的图或 TASK，不能用空泛结论或另一个重复报告代替。
 

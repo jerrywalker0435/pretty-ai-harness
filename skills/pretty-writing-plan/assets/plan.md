@@ -36,7 +36,7 @@ flowchart TD
 依赖：
 - <仅在依赖关系确实影响任务顺序时填写。>
 
-### TASK-002：<声明或结构变更结果>
+### TASK-002：<另一个独立领域结果>
 
 **Files:**
 - Modify: `db/migration/...sql`

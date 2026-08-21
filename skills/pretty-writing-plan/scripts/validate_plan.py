@@ -92,6 +92,7 @@ BROAD_CATCH_FALLBACK = re.compile(
     r"(?:List|Set|Map)\.of\s*\(\))\s*;",
     re.IGNORECASE | re.DOTALL,
 )
+JAVA_CONTINUE = re.compile(r"\bcontinue\s*;")
 JAVA_VARARGS = re.compile(
     r"\b[\w$]+(?:\s*<[^>\n]+>)?(?:\s*\[\])?\s*\.\.\.\s*[\w$]+"
 )
@@ -200,6 +201,20 @@ def fence_errors(text: str) -> list[str]:
 
 def top_level_matches(text: str) -> list[re.Match[str]]:
     return list(TOP_LEVEL_PATTERN.finditer(mask_fenced_blocks(text)))
+
+
+def java_continue_errors(text: str) -> list[str]:
+    """Reject continue statements in Java code proposed by a Plan."""
+    for block in fenced_blocks(text)[0]:
+        if block.language == "java":
+            block_text = text[block.content_start : block.content_end]
+            match = JAVA_CONTINUE.search(block_text)
+            if match is not None:
+                position = block.content_start + match.start()
+                return [
+                    f"content: Java code must not use continue at line {line_number(text, position)}"
+                ]
+    return []
 
 
 def standard_path_errors(plan_path: Path) -> list[str]:
@@ -348,6 +363,7 @@ def forbidden_content_errors(text: str) -> list[str]:
         for pattern, label in whole_document_checks
         if (error := match_error(text, pattern, label)) is not None
     )
+    errors.extend(java_continue_errors(text))
 
     # An ellipsis in prose or a code block can hide unplanned implementation.
     # Java varargs are allowed when the line is an actual method signature.
