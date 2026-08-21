@@ -687,7 +687,7 @@ Skill 提供能力，阶段合同限制能力，Harness 把能力组织成可以
 
 ### A. 安装什么
 
-当前组合包含 4 个 Pretty 核心 Skill 和 12 个外部依赖，共 16 个。运行事实以各仓库最新的 `SKILL.md` 为准；来源、名称和安装顺序以安装模板为准。
+当前组合包含 4 个 Pretty 核心 Skill 和 12 个外部依赖，共 16 个可注册 Skill。Pretty Harness 另外提供 1 个不注册为 Skill 的共享资源目录 `skills/pretty-common`，供 Plan 和 Execution 共同读取；运行事实以各仓库最新的 `SKILL.md` 及该共享资源为准，来源、名称和安装顺序以安装模板为准。
 
 | 来源仓库 | Skill |
 |---|---|
@@ -700,11 +700,13 @@ Skill 提供能力，阶段合同限制能力，Harness 把能力组织成可以
 | `https://github.com/decebals/claude-code-java.git` | `design-patterns`、`java-code-review` |
 | `https://github.com/obra/superpowers.git` | `verification-before-completion` |
 
+安装 Pretty Harness 仓库时，还必须将 `skills/pretty-common` 复制到目标 `skills` 目录，与四个核心 Skill 同级。它没有 `SKILL.md`，不计入 16 个 Skill，也不应作为独立 Skill 调用。
+
 安装需要 `git`、Node.js/npm/npx，以及访问内部 GitLab 的凭证。命令使用远程仓库默认分支的最新 HEAD，不锁定 tag、branch 或 commit。
 
 ### B. 安装与验证
 
-推荐直接使用仓库提供的 [安装 Prompt](install/CODEX_INSTALL_PROMPT.template.md)。它会让用户选择项目级 `.agents/skills`（推荐）或全局 `$HOME/.agents/skills`，先检查同名 Skill，再在覆盖已有版本前请求确认。
+推荐直接使用仓库提供的 [安装 Prompt](install/CODEX_INSTALL_PROMPT.template.md)。它会让用户选择项目级 `.agents/skills`（推荐）或全局 `$HOME/.agents/skills`，先检查 16 个同名 Skill 和 `pretty-common`，再在覆盖已有版本前请求确认，并完成共享资源复制。
 
 手动安装时，对表中的每个仓库执行同一形式的命令，并按需替换 Skill 名称：
 
@@ -713,7 +715,7 @@ npx skills@1.5.22 add <repository-url> \
   --agent universal --copy --full-depth --yes --skill <name...>
 ```
 
-全局安装增加 `--global`。安装后用 `npx skills@1.5.22 list --agent universal --json`（全局安装则增加 `--global`）核对 16 个 Skill，并确认每个目录都有 `SKILL.md` 且 frontmatter 的 `name` 与目录名一致。新版本未被识别时，重启 Codex。
+全局安装增加 `--global`。安装后用 `npx skills@1.5.22 list --agent universal --json`（全局安装则增加 `--global`）核对 16 个 Skill，并确认每个目录都有 `SKILL.md` 且 frontmatter 的 `name` 与目录名一致；同时确认目标目录存在 `pretty-common/references/quality-principles.md`。新版本未被识别时，重启 Codex。
 
 ### C. 标准使用方式
 
