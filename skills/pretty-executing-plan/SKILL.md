@@ -10,15 +10,16 @@ Execution 将当前工作区最新的 Plan 转成代码、测试和可追溯证�
 先加载同目录的 [assets/execution.md](assets/execution.md) 作为报告模板。首次修改生产代码前加载 [references/quality-contract-gates.md](references/quality-contract-gates.md) 和 [../pretty-common/references/quality-principles.md](../pretty-common/references/quality-principles.md)，然后使用本 Skill 提供的脚本：
 
 - [scripts/validate_execution.py](scripts/validate_execution.py)：校验报告结构和完成证据；
+- [scripts/verify_quality_contract.py](scripts/verify_quality_contract.py)：先校验当前 Plan 代码提案，再对本次真实 Java 增量运行共享 Java 代码质量 Gate；
 - [scripts/verify_incremental_coverage.py](scripts/verify_incremental_coverage.py)：独立计算增量覆盖率。
 
-## 1. 输入和契约 Gate
+## 1. 输入与范围 Gate
 
 在当前主题目录确认唯一有效的 Plan，并将同目录的 `execution.md` 作为结果账本。Plan 是 Execution 的唯一必需输入；报告只写 `执行依据：Plan`，不记录 PRD、Design 或 Plan 路径。PRD、Design 不是例行执行输入，只有发现 Plan 信息不足或契约冲突时才按需查阅。
 
 Plan 缺失、重复或无法确认有效版本时停止。用户负责执行期间的文档稳定性；不做文档版本指纹或变更检测，读取到的始终是当前工作区最新内容。Execution 不修改 PRD、Design、Plan 或 ADR。
 
-首次生产代码编辑前按 `references/quality-contract-gates.md` 完成契约 Gate 和质量路由 Gate。发现需求、设计或 Plan 的冲突/歧义时，立即返回对应阶段，不自行猜测。
+首次生产代码编辑前按 `references/quality-contract-gates.md` 完成输入/范围 Gate 和质量路由 Gate。发现需求、设计或 Plan 的冲突/歧义时，立即返回对应阶段，不自行猜测。
 
 ## 2. 增量范围和基线
 
@@ -26,7 +27,7 @@ Plan 缺失、重复或无法确认有效版本时停止。用户负责执行期
 
 只把本次增量代码纳入质量和覆盖率门禁。未修改的存量问题默认忽略；修改存量文件时，只检查本次改动及必要上下文。
 
-输入和契约 Gate 通过后，首次修改生产代码前运行最小可控基线：受影响模块编译、相关既有 UT、拟修改测试入口和必要的确定性检查。不要默认运行全仓测试、真实数据库、远端服务、部署或人工联调。
+输入与范围 Gate 通过后，首次修改生产代码前运行最小可控基线：受影响模块编译、相关既有 UT、拟修改测试入口和必要的确定性检查。受影响模块编译必须使用仓库实际的 Java 兼容性配置验证 JDK 8 目标；不要用正则扫描源码替代编译验证。不要默认运行全仓测试、真实数据库、远端服务、部署或人工联调。
 
 基线失败时不修改生产代码，不把历史失败归入本次成果；记录命令、退出码、摘要和恢复条件。纯文档、配置、SQL、资源或确定性改名任务使用相应机械检查，不伪造 Java 基线或 RED/GREEN。
 
@@ -35,11 +36,25 @@ Plan 缺失、重复或无法确认有效版本时停止。用户负责执行期
 主 agent 是唯一的契约裁决者、集成者和最终验证者。先按 TASK 及文件/symbol 依赖建立执行图，再决定并行：
 
 - 追溯、调用链扫描、风险和质量审查等只读工作可并行，通常使用 2–3 个子 agent；
+- Writer 与 Reviewer/Repair 只能在候选快照或隔离 worktree 中协作，不能同时写同一工作区；
 - 同一 TASK、共享接口/类/DTO/Mapper、迁移、fixture 或重叠写集必须串行；
 - 文件、symbol、接口和测试资源完全不重叠的 TASK 可在隔离 worktree 中并行；
 - 冲突合并、TASK 集成、最终编译、覆盖率和最终审计由主 agent 串行完成。
 
 并行实现必须使用隔离 worktree，不能共享构建输出、端口、数据库 schema、临时目录，worker 不写主工作区的 `execution.md`。没有隔离环境时退回串行。子 agent 的完成消息不是最终证据；主 agent 必须检查真实 diff 并重新验证。
+
+### Writer–Reviewer/Repair 闭环
+
+有生产代码增量的 TASK 按以下闭环推进；纯文档、配置、SQL、资源或确定性改名任务不启动代码 Writer，只执行适用的机械检查：
+
+1. Writer 在隔离 worktree 或候选快照中实现当前 TASK，不直接写主工作区的 `execution.md`。
+2. 候选 Diff 生成后先运行共享 Java 代码质量 Gate；确定性违规必须先修复，不能交给报告或最终审计掩盖。
+3. 按真实风险把候选 Diff 和已命中的质量路由交给 Reviewer/Repair。Reviewer 先复核共享基线、Plan 代码提案与约束、调用链和实际 Diff；发现局部质量违规时可直接在该隔离候选中修复。
+4. Reviewer/Repair 不得改变 PRD、Design、Plan、外部结果、架构边界、测试边界或任务范围；发现这类问题必须返回对应阶段。
+5. Reviewer 的每次修改都必须重新运行共享 Java 代码质量 Gate、受影响编译和相关测试；修复前的证据不能沿用。
+6. 只有候选 Diff 通过适用审查和验证后，主 agent 才能集成；集成后仍需检查真实 Diff，并串行完成跨 TASK 组合检查和最终验证。
+
+独立 TASK 可以流水线并行：一个 TASK 进入 Reviewer/Repair 时，另一个无重叠 TASK 可以由 Writer 实现；共享文件、公共 symbol 或无法隔离构建环境时退回串行。低风险 TASK 可由主 agent 完成同等审查，不为形式额外启动 Reviewer。
 
 Superpowers 仅是可选调度引擎，不是硬依赖，也不能带入自动 Git、MR、部署或发布动作。Superpowers 或子 agent 不可用时，主 agent 仍按本 Skill 完成执行。
 
@@ -63,9 +78,19 @@ Superpowers 仅是可选调度引擎，不是硬依赖，也不能带入自动 G
 
 ## 5. 质量路由和 Quality Gate
 
-首次生产代码编辑前完整读取共享质量基线，并根据真实增量风险完成精确质量路由；完成前不得生成或修改生产代码。只选择最小、不重叠且实际适用的 Skill 集合，不批量加载所有质量 Skill。命中的原则必须转成真实实现中的职责、签名、异常合同、类型、测试行为、配置/Schema 或任务切分，不能只写在报告里。质量路由、契约 Gate、降级和返回条件以 `references/quality-contract-gates.md` 为准。
+首次生产代码编辑前完整读取共享质量基线，并根据真实增量风险完成精确质量路由；在读取和路由完成前不得生成或修改生产代码。只选择最小、不重叠且实际适用的 Skill 集合，不批量加载所有质量 Skill。命中的原则必须转成真实实现中的职责、签名、异常语义、类型、测试行为、配置/Schema 或任务切分，不能只写在报告里。质量路由、输入/范围 Gate、降级和返回条件以 `references/quality-contract-gates.md` 为准。
 
-每个 TASK 完成时按 `references/quality-contract-gates.md` 复核共享质量基线、命中路由和实际 diff；实现或复核中发现新风险时增量路由，阻断项必须修复并重跑受影响验证。全部 TASK 完成后做一次跨 TASK 组合检查；任何未修复的共享基线或命中路由阻断项都不能进入“完成”。质量原则检查对象是真实生产代码和测试，不是质量自评。
+共享 Java 代码质量 Gate 是所有包含 Java 增量的 TASK 的快速阻断层，必须在 Writer 或 Reviewer/Repair 每次修改后运行；它复用 `pretty-common/scripts/quality_contract_gate.py`，阻断 `continue`、通配符 import、生产字段注入、空 `catch`、未声明可空返回、空值传播三元、宽泛 fallback、通用结果码形状、单方法超过两个常规 logger 调用、显式分支重复日志和单方法超过一个连续注释块，并对长方法、参数过多及嵌套/多个三元输出 warning。简单三元表达式允许。命令/查询方法只有在 Execution 根据真实调用链生成临时方法清单时才附加机械检查，不从 Plan 的重复字段推导。warning 不改变退出码；error 退出码非 `0` 时先修复，不得进入“完成”。命令示例：
+
+```bash
+python3 <pretty-executing-plan>/scripts/verify_quality_contract.py \
+  --repo . --base <execution-start-head> --plan docs/pretty/<topic>/plan.md \
+  [--method-manifest /tmp/<run>/java-methods.json]
+```
+
+若使用工作区归因的 changed-line manifest，将 `--base` 替换为 `--changed-manifest /tmp/<run>/changed-lines.json`。`--method-manifest` 只存放 Execution 临时确认的命令/查询方法分类，不写入 Plan；格式为 `{"commands":{"publish":false},"queries":["find"]}`。该扫描器只负责高确定性规则；职责、边界、重复、依赖方向等语义问题仍由命中的 Reviewer/Repair 路由审查。
+
+每个 TASK 完成时按 `references/quality-contract-gates.md` 复核共享质量基线、Plan 代码提案与约束、命中路由和实际 diff；实现或复核中发现新风险时增量路由，阻断项必须修复并重跑受影响验证。全部 TASK 完成后做一次跨 TASK 组合检查；任何未修复的共享基线、Plan 范围偏差或命中路由阻断项都不能进入“完成”。质量原则检查对象是真实生产代码和测试，不是质量自评。
 
 ## 6. 增量覆盖率和独立验证
 
@@ -99,7 +124,7 @@ python3 <pretty-executing-plan>/scripts/verify_incremental_coverage.py \
 
 ## 7. 失败、范围扩展和恢复
 
-- 实现、测试或局部质量问题：主 agent 修复并重跑受影响验证；
+- 实现、测试或局部质量问题：Reviewer/Repair 或主 agent 修复并重跑受影响验证；
 - 环境、权限、依赖下载、数据库或外部服务问题：停止并记录恢复条件；
 - 无法可靠归因或反复没有进展：停止，不盲目重试；
 - 需要改变上游合同：返回 PRD、Design 或 Plan。
@@ -112,7 +137,8 @@ python3 <pretty-executing-plan>/scripts/verify_incremental_coverage.py \
 
 - 执行依据 `Plan`、起始 HEAD、工作区归因、执行模式和基线结论；
 - 每个 TASK 的中文状态、实际文件/symbol、命中的质量原则与专项路由、实际落实、验证摘要和实质偏差；
-- 最终契约/质量 Gate、覆盖率实际范围、质量 findings 处置和未验证范围；
+- Writer、Reviewer/Repair、共享 Java 代码质量 Gate 及修复轮次的短结果；
+- 最终范围/质量 Gate、覆盖率实际范围、质量 findings 处置和未验证范围；
 - 恢复点和最终状态。
 
 不复制完整终端日志、重复命令或每个 RED/GREEN 的长输出；失败和偏差保留命令、退出码及足以归因的短摘要，完整日志放仓库外临时目录。最终报告不得残留 `TODO`、`TBD`、`待验证`、`待审计` 或 `执行中`。
@@ -133,4 +159,5 @@ python3 <pretty-executing-plan>/scripts/verify_incremental_coverage.py \
 - 不把 UT 说成真实数据库、远端服务、部署或人工联调验证；
 - 不为了覆盖率降低断言、扩大排除或新增无价值测试；
 - 不在同一工作区并行写重叠文件；
+- 不集成未经过 Reviewer/Repair（或主 agent 等价审查）及共享 Java 代码质量 Gate 的候选 Diff；
 - 不自动执行 Git、发布或外部环境动作。

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the current, read-only pretty-writing-plan document contract."""
+"""Validate the current Plan document and its complete code proposals."""
 
 from __future__ import annotations
 
@@ -8,6 +8,20 @@ import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
+
+
+COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
+if str(COMMON_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPTS))
+
+try:
+    from quality_contract_gate import (  # type: ignore[import-not-found]
+        scan_java_source,
+    )
+except ImportError as error:  # pragma: no cover - installation failure path
+    QUALITY_GATE_IMPORT_ERROR = error
+else:
+    QUALITY_GATE_IMPORT_ERROR = None
 
 
 TASKS_SECTION = "## 实施任务"
@@ -28,6 +42,7 @@ LABEL_PATTERN = re.compile(r"^(约束|修改|测试|依赖)：[ \t]*$", re.MULTI
 DEPRECATED_METADATA = re.compile(
     r"^(?:编排级别|判定依据)：", re.MULTILINE
 )
+DEPRECATED_CONTRACT_SECTION = re.compile(r"^契约：[ \t]*$", re.MULTILINE)
 DEPRECATED_PATH_TABLE = re.compile(
     r"^\|\s*仓库相对路径\s*\|\s*(?:symbol|目标)\s*\|\s*修改目的\s*\|\s*$",
     re.MULTILINE,
@@ -83,16 +98,6 @@ DEPRECATED_PLAN_STRUCTURE = re.compile(
     r")",
     re.IGNORECASE | re.MULTILINE,
 )
-SILENT_NULL_TERNARY = re.compile(r"==\s*null\s*\?\s*null\s*:")
-OR_ELSE_NULL = re.compile(r"\.orElse\s*\(\s*null\s*\)")
-BROAD_CATCH_FALLBACK = re.compile(
-    r"catch\s*\(\s*(?:Exception|RuntimeException|Throwable)\b[^)]*\)\s*\{"
-    r"(?:(?!\}).){0,800}\breturn\s+(?:null|"
-    r"Collections\.empty(?:List|Set|Map)\s*\(\)|"
-    r"(?:List|Set|Map)\.of\s*\(\))\s*;",
-    re.IGNORECASE | re.DOTALL,
-)
-JAVA_CONTINUE = re.compile(r"\bcontinue\s*;")
 JAVA_VARARGS = re.compile(
     r"\b[\w$]+(?:\s*<[^>\n]+>)?(?:\s*\[\])?\s*\.\.\.\s*[\w$]+"
 )
@@ -203,18 +208,48 @@ def top_level_matches(text: str) -> list[re.Match[str]]:
     return list(TOP_LEVEL_PATTERN.finditer(mask_fenced_blocks(text)))
 
 
-def java_continue_errors(text: str) -> list[str]:
-    """Reject continue statements in Java code proposed by a Plan."""
+def is_test_proposal(text: str, block_start: int) -> bool:
+    """Keep fixture/helper nulls out of the business-method null gate."""
+    before_block = text[:block_start]
+    return before_block.rfind("测试：") > before_block.rfind("修改：")
+
+
+def _shared_java_messages(text: str, severity: str) -> list[str]:
+    """Format shared Java findings of one severity for the Plan report."""
+    if QUALITY_GATE_IMPORT_ERROR is not None:
+        return [
+            "quality: shared Java quality scanner is unavailable; install "
+            "pretty-common/scripts/quality_contract_gate.py"
+        ]
+
+    errors: list[str] = []
     for block in fenced_blocks(text)[0]:
-        if block.language == "java":
-            block_text = text[block.content_start : block.content_end]
-            match = JAVA_CONTINUE.search(block_text)
-            if match is not None:
-                position = block.content_start + match.start()
-                return [
-                    f"content: Java code must not use continue at line {line_number(text, position)}"
-                ]
-    return []
+        if block.language != "java":
+            continue
+        block_text = text[block.content_start : block.content_end]
+        findings = scan_java_source(
+            block_text,
+            source_name="Plan Java code proposal",
+            check_return_null=not is_test_proposal(text, block.start),
+            check_field_injection=not is_test_proposal(text, block.start),
+        )
+        offset = line_number(text, block.content_start) - 1
+        errors.extend(
+            f"content: {finding.code} at line {finding.line + offset}: {finding.message}"
+            for finding in findings
+            if finding.severity == severity
+        )
+    return errors
+
+
+def shared_java_errors(text: str) -> list[str]:
+    """Apply shared blocking checks to every Java proposal block."""
+    return _shared_java_messages(text, "error")
+
+
+def shared_java_warnings(text: str) -> list[str]:
+    """Return advisory findings without failing Plan validation."""
+    return _shared_java_messages(text, "warning")
 
 
 def standard_path_errors(plan_path: Path) -> list[str]:
@@ -336,6 +371,7 @@ def forbidden_content_errors(text: str) -> list[str]:
         (GENERIC_EXTERNAL_SKILL, "external skill dependency"),
         (DEPRECATED_HEADER_FIELD, "deprecated header field"),
         (DEPRECATED_METADATA, "deprecated orchestration metadata"),
+        (DEPRECATED_CONTRACT_SECTION, "deprecated structured contract section"),
         (DEPRECATED_PATH_TABLE, "deprecated path/symbol table"),
         (DEPRECATED_CHAIN_TABLE, "deprecated chain relation table"),
         (DEPRECATED_PLAN_STRUCTURE, "deprecated plan structure"),
@@ -346,12 +382,6 @@ def forbidden_content_errors(text: str) -> list[str]:
         (TRACE_ID, "REQ/AC/DEC trace identifier"),
         (PERSONAL_ABSOLUTE_PATH, "personal absolute path"),
         (PLACEHOLDER, "unresolved placeholder"),
-        (SILENT_NULL_TERNARY, "silent null propagation"),
-        (OR_ELSE_NULL, "orElse(null) fallback"),
-        (
-            BROAD_CATCH_FALLBACK,
-            "broad catch returns an empty/success fallback",
-        ),
     )
     errors = [
         error
@@ -363,7 +393,7 @@ def forbidden_content_errors(text: str) -> list[str]:
         for pattern, label in whole_document_checks
         if (error := match_error(text, pattern, label)) is not None
     )
-    errors.extend(java_continue_errors(text))
+    errors.extend(shared_java_errors(text))
 
     # An ellipsis in prose or a code block can hide unplanned implementation.
     # Java varargs are allowed when the line is an actual method signature.
@@ -566,6 +596,13 @@ def validate_plan(plan_path: Path) -> list[str]:
     return errors
 
 
+def plan_warnings(plan_path: Path) -> list[str]:
+    text, file_errors = read_plan_text(plan_path)
+    if text is None or file_errors:
+        return []
+    return shared_java_warnings(text)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Validate docs/pretty/<topic>/plan.md for pretty-writing-plan."
@@ -580,6 +617,8 @@ def main() -> int:
             print(f"- {error}")
         return 1
 
+    for warning in plan_warnings(args.plan):
+        print(f"Plan validation warning: - {warning}")
     print(f"Plan is valid: {args.plan} ({task_count} task(s))")
     return 0
 

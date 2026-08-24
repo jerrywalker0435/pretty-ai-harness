@@ -22,4 +22,4 @@ Pretty AI Harness 提供 4 个 Java/Spring 研发流程 Skills。安装 Prompt �
 npx skills@1.5.22 add . --list --full-depth
 ```
 
-另外确认所选目标目录存在 `pretty-common/references/quality-principles.md`。
+另外确认所选目标目录存在 `pretty-common/references/quality-principles.md` 和 `pretty-common/scripts/quality_contract_gate.py`；后者是 Plan/Execution 共用的高确定性 Java 代码质量扫描器。

@@ -187,7 +187,7 @@ Design 至少需要满足：
 - 任务之间的依赖、垂直切片和不可改变的实现限制；
 - 哪些声明性变更必须完整给出，哪些代码级变更必须精确到稳定符号。
 
-这里的“可验证”是指计划中的代码和测试提案可以被人工审查、与仓库事实对照，并能交给 Execution 落地。TDD 的 RED/GREEN、验证命令、覆盖率和执行结果属于实施阶段，不在 Plan 中预先伪造。
+这里的“可验证”是指计划中的完整代码和测试提案先通过高确定性扫描，再由命中风险路由的 Reviewer/Repair 审查并修复，之后才能被人工审查、与仓库事实对照并交给 Execution 落地。TDD 的 RED/GREEN、验证命令、覆盖率和执行结果属于实施阶段，不在 Plan 中预先伪造。
 
 #### 4.2 为什么计划需要仓库证据
 
@@ -206,7 +206,7 @@ Plan 完成不等于“任务都列出来了”，而是：
 - 每个行为变更都拆成可审查的垂直切片，并给出完整的生产代码与核心测试代码提案；
 - 文件、符号、调用链和契约准确，任务不会把架构决策重新推给执行者；
 - 声明性变更、失败语义、边界替身和测试观察面清楚；
-- 计划通过结构校验和语义 Gate，并获得用户明确批准；
+- 完整代码提案通过结构校验、共享 Java 代码质量扫描和命中路由的 Reviewer/Repair，并获得用户明确批准；
 - 用户批准这份计划作为实施合同。
 
 计划阶段形成第三份合同：Execution 可以在合同范围内落地等价实现并修复实现问题，但不能现场发明新的架构、测试边界或验收标准。
@@ -410,10 +410,11 @@ Harness 将“应该检查”变成“必须通过”：
 - 编译和测试；
 - 覆盖率阈值；
 - 静态检查；
+- 共享质量基线驱动的 Java 代码质量扫描；
 - 代码质量和架构审查；
 - 完成前的验证。
 
-门禁失败后必须修复并重新运行，不能把发现仅记录在报告中就视为闭环。
+门禁失败后必须修复并重新运行，不能把发现仅记录在报告中就视为闭环。生产代码可以由 Writer 在隔离候选中实现、由 Reviewer/Repair 修复局部质量问题，再由主 Agent 集成；任何修复都必须重新扫描、编译和测试。
 
 #### 9.6 证据、权限和失败路由
 
@@ -524,7 +525,7 @@ Plan 不写已经发生的 RED、GREEN、命令输出、覆盖率结果或完成
 
 Execution 是四个核心阶段中唯一直接改变生产代码的阶段。它读取当前工作区最新 Plan，先确认工作区状态和基线，再按批准的任务实施。行为任务用测试驱动小步闭环；文档、配置等非行为任务使用与风险相称的等价验证。
 
-Execution 的完成结论不能只写“测试通过”。读者需要看到实际差异、相关测试、编译或其他验证、覆盖率和质量检查，以及哪些内容仍无法验证。报告的价值不是增加过程记录，而是区分历史问题与本次问题，并让完成结论可以被复核。
+Execution 的完成结论不能只写“测试通过”。读者需要看到实际差异、相关测试、编译或其他验证、覆盖率、共享 Java 代码质量扫描和质量审查，以及哪些内容仍无法验证。生产代码允许在隔离候选中由 Writer 实现、由 Reviewer/Repair 修复局部质量问题，但最终仍由主 Agent 检查真实 Diff 并串行集成；报告的价值不是增加过程记录，而是区分历史问题与本次问题，并让完成结论可以被复核。
 
 Execution 可以修复批准范围内的实现缺陷和验证失败，但不应静默改变需求、架构、测试边界或任务范围。提交、推送、创建 MR、合并、部署和发布也不由“执行计划”自动授权。
 
@@ -687,7 +688,7 @@ Skill 提供能力，阶段合同限制能力，Harness 把能力组织成可以
 
 ### A. 安装什么
 
-当前组合包含 4 个 Pretty 核心 Skill 和 12 个外部依赖，共 16 个可注册 Skill。Pretty Harness 另外提供 1 个不注册为 Skill 的共享资源目录 `skills/pretty-common`，供 Plan 和 Execution 共同读取；运行事实以各仓库最新的 `SKILL.md` 及该共享资源为准，来源、名称和安装顺序以安装模板为准。
+当前组合包含 4 个 Pretty 核心 Skill 和 12 个外部依赖，共 16 个可注册 Skill。Pretty Harness 另外提供 1 个不注册为 Skill 的共享资源目录 `skills/pretty-common`，供 Plan 和 Execution 共同读取质量基线和 Java 代码质量扫描器；运行事实以各仓库最新的 `SKILL.md` 及该共享资源为准，来源、名称和安装顺序以安装模板为准。
 
 | 来源仓库 | Skill |
 |---|---|
@@ -700,7 +701,7 @@ Skill 提供能力，阶段合同限制能力，Harness 把能力组织成可以
 | `https://github.com/decebals/claude-code-java.git` | `design-patterns`、`java-code-review` |
 | `https://github.com/obra/superpowers.git` | `verification-before-completion` |
 
-安装 Pretty Harness 仓库时，还必须将 `skills/pretty-common` 复制到目标 `skills` 目录，与四个核心 Skill 同级。它没有 `SKILL.md`，不计入 16 个 Skill，也不应作为独立 Skill 调用。
+安装 Pretty Harness 仓库时，还必须将 `skills/pretty-common` 复制到目标 `skills` 目录，与四个核心 Skill 同级。它没有 `SKILL.md`，不计入 16 个 Skill，也不应作为独立 Skill 调用；其中的 `references/quality-principles.md` 是共同基线，`scripts/quality_contract_gate.py` 是两阶段共用的高确定性 Java 代码质量扫描器。
 
 安装需要 `git`、Node.js/npm/npx，以及访问内部 GitLab 的凭证。命令使用远程仓库默认分支的最新 HEAD，不锁定 tag、branch 或 commit。
 
@@ -715,7 +716,7 @@ npx skills@1.5.22 add <repository-url> \
   --agent universal --copy --full-depth --yes --skill <name...>
 ```
 
-全局安装增加 `--global`。安装后用 `npx skills@1.5.22 list --agent universal --json`（全局安装则增加 `--global`）核对 16 个 Skill，并确认每个目录都有 `SKILL.md` 且 frontmatter 的 `name` 与目录名一致；同时确认目标目录存在 `pretty-common/references/quality-principles.md`。新版本未被识别时，重启 Codex。
+全局安装增加 `--global`。安装后用 `npx skills@1.5.22 list --agent universal --json`（全局安装则增加 `--global`）核对 16 个 Skill，并确认每个目录都有 `SKILL.md` 且 frontmatter 的 `name` 与目录名一致；同时确认目标目录存在 `pretty-common/references/quality-principles.md` 和 `pretty-common/scripts/quality_contract_gate.py`。新版本未被识别时，重启 Codex。
 
 ### C. 标准使用方式
 

@@ -1,6 +1,6 @@
 # Java 代码与设计质量基线
 
-本文件是 `pretty-writing-plan` 与 `pretty-executing-plan` 共用的代码和设计质量基线。前者将它应用于代码提案，后者将它应用于真实增量代码；各阶段的质量路由、验证、证据和交付规则由各自 Skill 定义。本文件不定义阶段流程、质量评分或执行状态。
+本文件是 `pretty-writing-plan` 与 `pretty-executing-plan` 共用的代码和设计质量基线。前者将它应用于完整代码提案的生成、扫描和语义复核，后者将它应用于真实增量代码；各阶段的质量路由、验证、证据和交付规则由各自 Skill 定义。本文件不定义阶段流程、质量评分或执行状态。
 
 ## 1. 全局设计优先
 
@@ -57,6 +57,7 @@ normalizeText(record == null ? null : record.getTaskPublishId());
 - 相关配置用有领域语义的 `@ConfigurationProperties` 集中绑定，使用类型和 Bean Validation 建立不变量；避免散落的 `@Value` 字符串、`Map<String, Object>` 和调用时解析。
 - 必填配置缺失或非法时在启动/装配边界快速失败，不用空字符串、零或默认端点静默恢复。可选默认值必须安全、语义明确且只定义一次。
 - 配置分支若实际上代表多个业务算法或责任所有者，确认变化轴和 Interface，不用 `mode=1` 之类类型码隐藏设计决策。
+- Java 8 兼容性由项目编译 Gate 负责确认：Maven 使用项目实际的 `source`、`target` 或 `release` 配置，Gradle 使用对应的 Java toolchain/compatibility 配置；不通过正则扫描源码猜测编译兼容性。
 
 ## 4. 正常业务流与异常流分离
 
@@ -67,6 +68,7 @@ normalizeText(record == null ? null : record.getTaskPublishId());
 - 新增或修改的 Java 代码（生产、测试及 Plan 中的代码提案）禁止使用 `continue`；通过正向条件分支、提取方法或拆分循环表达流程，避免跳过逻辑隐藏控制流。
 - 不解析异常消息或数字错误码决定控制流。
 - 只捕获能够恢复或映射的具体异常类型；不 catch `Exception`/`RuntimeException` 只为换名、打日志或返回空集合、默认值、“成功”。映射边界异常时保留原始 cause 和必要上下文，编程缺陷继续传播。
+- 简单三元表达式可以表达清晰的二选一；禁止用三元表达式传播 `null`，避免 `Optional.isPresent()`/`get()` 与 `null` 组合，也将嵌套或同一语句中的多个三元视为可读性风险。共享机械 Gate 只阻断空值传播，后两类输出 warning。
 
 有限且本身是业务事实的状态可以使用 `enum` 或值对象；避免类型码不等于消灭所有状态模型。
 
@@ -79,6 +81,8 @@ normalizeText(record == null ? null : record.getTaskPublishId());
 新增或修改的类、方法、参数和变量必须优先使用领域词汇，表达动作、结果或规则。`execute`、`resolve`、`handle`、`do`、`action`、`deal` 等弱语义名称默认禁止；框架/第三方 Interface 合同或真实领域词汇才可例外。
 
 代码应通过命名、类型和结构表达意图。注释只解释不能从代码推导出的原因、外部约束、兼容性或算法依据；禁止逐行叙述代码、解释显而易见的逻辑，或用注释掩盖长方法、弱命名和复杂职责。代码与注释冲突时，以实现事实为准并修正过时注释。
+
+共享机械 Gate 对新增或修改的方法阻断超过一个连续的行内/块注释；方法外的许可证和公共 API Javadoc 不计入该规则。注释数量是确定性门禁，注释是否真正解释“为什么”仍由语义审查判断。
 
 调查事实时的证据顺序是：
 
@@ -101,6 +105,7 @@ normalizeText(record == null ? null : record.getTaskPublishId());
 - 记录完整异常对象，不只记录 `getMessage()`；禁止凭证、完整载荷和敏感个人数据。
 - `traceId` 等关联信息由 tracing/MDC/消息基础设施传播，不作为领域方法的独立日志参数。
 - 如果字段影响幂等、审计或业务责任，它是领域数据，不得伪装成日志参数；审计要求应使用明确审计事件/记录。
+- 共享机械 Gate 对新增或修改的方法默认最多允许两个常规 logger 调用；显式 `if/else` 或 `switch` 的每个分支都记录日志时阻断。异常终端、审计和边界消费日志仍必须遵守唯一记录所有权，并由语义审查确认必要性。
 
 ## 8. 参数、返回值和值对象
 

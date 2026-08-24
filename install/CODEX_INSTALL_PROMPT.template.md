@@ -18,6 +18,7 @@
 共享资源（不注册为 Skill）：
 
 - `skills/pretty-common/references/quality-principles.md`：`pretty-writing-plan` 与 `pretty-executing-plan` 必须共同读取的质量基线。
+- `skills/pretty-common/scripts/quality_contract_gate.py`：Plan 和 Execution 共用的高确定性 Java 代码质量扫描器。
 - 安装后目标结构必须保持为 `<target-skills-dir>/pretty-common/...`，与四个 Pretty Skill 目录同级；不要把它嵌套进任一 Skill 目录。
 
 ## 1. 确认安装范围
@@ -32,7 +33,7 @@
 
 展示默认值不等于获得同意。只有用户明确选择 1 或 2 才继续；空回复、含糊回复、取消或未回复时停止，不得获取任何仓库，也不得写入任何文件。
 
-检查所选目录中的 16 个同名 Skill 路径和 `<target-skills-dir>/pretty-common/references/quality-principles.md`，文件、目录或符号链接都算已存在。只要存在任意同名项或共享资源，列出名称并询问：“是否更新全部 16 个 Skill 和 pretty-common 共享资源到最新版本？”只有明确同意才继续，否则停止且不修改。
+检查所选目录中的 16 个同名 Skill 路径、`<target-skills-dir>/pretty-common/references/quality-principles.md` 和 `<target-skills-dir>/pretty-common/scripts/quality_contract_gate.py`，文件、目录或符号链接都算已存在。只要存在任意同名项或共享资源，列出名称并询问：“是否更新全部 16 个 Skill 和 pretty-common 共享资源到最新版本？”只有明确同意才继续，否则停止且不修改。
 
 ## 2. 安装最新版本
 
@@ -72,7 +73,7 @@ rm -rf "$PRETTY_TEMP_ROOT"
 
 ## 3. 验证
 
-检查全部 16 个 Skill 目录均存在 `SKILL.md`，且 frontmatter 的 `name` 与目录名一致；另行确认 `<target-skills-dir>/pretty-common/references/quality-principles.md` 存在。再运行与所选范围对应的命令：
+检查全部 16 个 Skill 目录均存在 `SKILL.md`，且 frontmatter 的 `name` 与目录名一致；另行确认 `<target-skills-dir>/pretty-common/references/quality-principles.md` 和 `<target-skills-dir>/pretty-common/scripts/quality_contract_gate.py` 存在。再运行与所选范围对应的命令：
 
 ```text
 # 当前目录
@@ -82,4 +83,4 @@ npx skills@1.5.22 list --agent universal --json
 npx skills@1.5.22 list --global --agent universal --json
 ```
 
-最终报告安装范围、绝对目标目录、16 个 Skill 的成功和失败名称，以及共享资源验证结果。只有 16 个 Skill 和 `pretty-common` 全部验证通过才报告成功；若 Codex 未立即识别新版本，建议重启 Codex 一次。
+最终报告安装范围、绝对目标目录、16 个 Skill 的成功和失败名称，以及共享资源验证结果。只有 16 个 Skill 和 `pretty-common` 的质量基线、Java 代码质量扫描器全部验证通过才报告成功；若 Codex 未立即识别新版本，建议重启 Codex 一次。

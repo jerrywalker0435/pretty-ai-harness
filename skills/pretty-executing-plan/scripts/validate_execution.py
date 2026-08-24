@@ -30,9 +30,26 @@ FINAL_STATUS_PATTERN = re.compile(
     r"^-\s*状态：\s*`?(完成|停止：[^`\n]+|返回(?: PRD| Design| Plan)：[^`\n]+)`?\s*$",
     re.MULTILINE,
 )
+COMPLETE_STATUS_PATTERN = re.compile(
+    r"^-\s*状态：\s*`?完成`?\s*$", re.MULTILINE
+)
 PLACEHOLDER_PATTERN = re.compile(
     r"<[^>\n]+>|\bTODO\b|\bTBD\b|待验证|待审计|执行中|\.\.\.",
     re.IGNORECASE,
+)
+JAVA_QUALITY_GATE_PATTERN = re.compile(
+    r"^\|\s*共享 Java (?:合同|代码质量) Gate\s*\|", re.MULTILINE
+)
+REVIEW_REPAIR_PATTERN = re.compile(
+    r"^-\s*Writer\s*/\s*Reviewer-Repair：", re.MULTILINE
+)
+JAVA_QUALITY_PASS_PATTERN = re.compile(
+    r"^\|\s*共享 Java (?:合同|代码质量) Gate\s*\|[^|]*\|\s*(?:`?0`?|—)\s*\|\s*(?:通过|不适用)\s*\|",
+    re.MULTILINE,
+)
+BLOCKING_GATE_RESULT_PATTERN = re.compile(
+    r"^\|[^\n]*\|\s*(?:失败|未通过|未达标|无法验证)\s*\|\s*$",
+    re.MULTILINE,
 )
 
 
@@ -88,6 +105,21 @@ def _validate_task_coverage(document: str, expected: Iterable[str] | None) -> li
     return [f"Execution 缺少 Plan TASK：{', '.join(missing)}"]
 
 
+def _validate_final_gate_outcome(document: str, allow_in_progress: bool) -> list[str]:
+    if allow_in_progress:
+        return []
+    conclusion = section_body(document, "结论与恢复点")
+    if not COMPLETE_STATUS_PATTERN.search(conclusion):
+        return []
+    final_gate = section_body(document, "最终门禁")
+    errors: list[str] = []
+    if not JAVA_QUALITY_PASS_PATTERN.search(final_gate):
+        errors.append("最终状态为完成时，共享 Java 代码质量 Gate 必须为通过或不适用")
+    if BLOCKING_GATE_RESULT_PATTERN.search(final_gate):
+        errors.append("最终状态为完成时，最终门禁不能保留失败或未通过结果")
+    return errors
+
+
 def validate_execution_document(
     document: str,
     expected_task_ids: Iterable[str] | None = None,
@@ -106,7 +138,13 @@ def validate_execution_document(
         errors.append("执行起点必须记录当前工作区最新 Plan 作为执行依据")
     if LEGACY_INPUT_PATH_PATTERN.search(document):
         errors.append("执行起点不应记录 PRD、Design 或 Plan 路径")
+    final_gate = section_body(document, "最终门禁")
+    if not JAVA_QUALITY_GATE_PATTERN.search(final_gate):
+        errors.append("最终门禁必须记录共享 Java 代码质量 Gate")
+    if not REVIEW_REPAIR_PATTERN.search(document):
+        errors.append("Execution 必须记录 Writer / Reviewer-Repair 闭环结果")
     errors.extend(_validate_final_status(document, allow_in_progress))
+    errors.extend(_validate_final_gate_outcome(document, allow_in_progress))
     errors.extend(_validate_task_coverage(document, expected_task_ids))
     return errors
 
