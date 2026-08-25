@@ -23,7 +23,7 @@
 
 ## QP-03 约定优先
 
-Design 与 Execution 依次遵守用户当前要求、已批准 PRD/Design、Pretty 质量规则、真实仓库既有惯例、AGENTS、Trellis。Design 是 Execution 的唯一规范合同；Preview 只是可选输入资料。真实 API、Schema、依赖版本和运行结果是事实约束，不因排序而改变；既有实现方式只是惯例，不能压过 Pretty 规则。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
+在用户已明确当前任务边界后，规范优先级依次为：已批准 PRD/Design、Pretty 共享质量规则、专项 Skill 的非强制建议、真实仓库既有惯例、AGENTS、Trellis。Design 是 Execution 的唯一规范合同；Preview 只是可选输入资料。风险路由所有权属于 Pretty 共享质量规则内部，只决定由哪个专项 Skill 主审，不改变这套优先级，也不产生第二套冲突排序。真实 API、Schema、依赖版本和运行结果是不可伪造的事实约束，不参与普通排序竞争；既有实现方式是低优先级惯例，不能压过 Pretty 规则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
 
 ## QP-04 正常流与失败流
 
