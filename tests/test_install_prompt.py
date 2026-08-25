@@ -24,6 +24,14 @@ class InstallPromptTest(unittest.TestCase):
         self.assertIn("verification-before-completion", content)
         self.assertIn("保留这些额外 Skill", content)
         self.assertIn("删除这些旧版遗留 Skill", content)
+        self.assertIn("pretty-writing-plan", content)
+        self.assertIn("pretty-executing-plan", content)
+        self.assertIn("这四个目录", content)
+
+    def test_current_distribution_uses_three_pretty_skills(self) -> None:
+        content = PROMPT.read_text(encoding="utf-8")
+        self.assertIn("pretty-writing-prd`、`pretty-writing-design`、`pretty-executing", content)
+        self.assertIn("共 13 个可注册 Skill", content)
 
 
 if __name__ == "__main__":

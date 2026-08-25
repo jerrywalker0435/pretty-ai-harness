@@ -34,7 +34,7 @@ class QualityForwardReplayTest(unittest.TestCase):
     def test_ignores_ordinary_agent_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             log = Path(temporary_directory) / "agent.log"
-            log.write_text("Plan validation failed", encoding="utf-8")
+            log.write_text("Design validation failed", encoding="utf-8")
 
             self.assertIsNone(REPLAY._infrastructure_error(log))
 
@@ -73,8 +73,8 @@ class QualityForwardReplayTest(unittest.TestCase):
             scenario="branch-contract",
             repetition=1,
             workspace="/tmp/replay",
-            plan_agent_exit=0,
-            plan_gate_exit=0,
+            design_agent_exit=0,
+            design_gate_exit=0,
             execution_agent_exit=0,
             execution_gate_exit=0,
             oracle_exit=1,

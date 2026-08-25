@@ -1,6 +1,6 @@
 # Java 代码与设计质量基线
 
-本文件只定义 Plan 代码提案与 Execution 真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，机械规则及阈值以 `../scripts/quality_contract_gate.py` 的规则注册表为准。
+本文件定义 Execution Preview 代码提案与 Apply 真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，机械规则及阈值以 `../scripts/quality_contract_gate.py` 的规则注册表为准。
 
 ## QP-01 完整链路与规则归属
 
@@ -23,7 +23,7 @@
 
 ## QP-03 约定优先
 
-Plan 阶段依次遵守用户当前要求、已批准 PRD/Design、Pretty 质量规则、真实仓库既有惯例、AGENTS、Trellis；Execution 阶段以当前已批准 Plan 取代 PRD/Design。真实 API、Schema、依赖版本和运行结果是事实约束，不因排序而改变；既有实现方式只是惯例，不能压过 Pretty 规则。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
+Design 与 Execution 依次遵守用户当前要求、已批准 PRD/Design、Pretty 质量规则、真实仓库既有惯例、AGENTS、Trellis。Design 是 Execution 的唯一规范合同；Preview 只是可选输入资料。真实 API、Schema、依赖版本和运行结果是事实约束，不因排序而改变；既有实现方式只是惯例，不能压过 Pretty 规则。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
 
 ## QP-04 正常流与失败流
 
@@ -65,7 +65,7 @@ Plan 阶段依次遵守用户当前要求、已批准 PRD/Design、Pretty 质量
 
 ## QP-10 行为测试
 
-测试通过已批准的公共 Seam 观察业务结果、状态、异常或完整边界请求。只替换数据库、网络、时间和随机等系统边界，不 mock 自有内部协作者，不测试 private 方法，不复制实现算法生成期望值，不以调用次数代替主要行为证据。不得禁用、跳过或弱化测试换取通过。表、字段和索引等 DDL 不生成测试或数据库验证；Java 与 DDL 混合变更只测试 Java 可观察行为，并在 Execution 报告中把 DDL 列为未验证范围。
+测试通过 Design 已批准的公共验证入口观察业务结果、状态、异常或完整边界请求。只替换数据库、网络、时间和随机等系统边界，不 mock 自有内部协作者，不测试 private 方法，不复制实现算法生成期望值，不以调用次数代替主要行为证据。不得在 `@Disabled`、`@Ignore`、元注解或条件禁用范围新增业务测试，也不得通过构建参数、过滤器或测试发现配置跳过测试；最终报告必须由新鲜测试报告证明新增/修改测试实际执行。表、字段和索引等 DDL 不生成测试或数据库验证；Java 与 DDL 混合变更只测试 Java 可观察行为，并在 Execution 报告中把 DDL 列为未验证范围。
 
 ## QP-11 AI 生成完整性
 

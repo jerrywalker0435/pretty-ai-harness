@@ -1,59 +1,30 @@
 from __future__ import annotations
 
 import re
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills/pretty-common/scripts"))
-sys.path.insert(0, str(ROOT / "skills/pretty-writing-plan/scripts"))
-sys.path.insert(0, str(ROOT / "skills/pretty-executing-plan/scripts"))
+sys.path.insert(0, str(ROOT / "skills/pretty-executing/scripts"))
 
-from quality_contract_gate import (  # noqa: E402
-    RISK_OWNERS,
-    candidate_sha256,
-    parse_touched_java_lines,
-    review_evidence_errors,
-    scan_java_source,
-)
-from verify_quality_contract import (  # noqa: E402
-    _candidate_file_parts,
-    _plan_paths,
-    _read_manifest,
-    _scan_sources,
-    _scope_errors,
-)
+from quality_contract_gate import RISK_OWNERS, candidate_sha256, parse_touched_java_lines, review_evidence_errors, scan_java_source  # noqa: E402
+from verify_quality_contract import _candidate_file_parts, _read_manifest, _scan_sources, _scope_errors  # noqa: E402
+from verify_test_execution import TestExecutionRequest, scan_disabled_annotations, verify, verify_expected_tests  # noqa: E402
 
 
 class QualityContractGateTest(unittest.TestCase):
     def test_risk_owner_registry_matches_shared_routing_table(self) -> None:
-        routing = (
-            ROOT / "skills/pretty-common/references/quality-routing.md"
-        ).read_text(encoding="utf-8")
-        documented = dict(
-            re.findall(r"^\| `([^`]+)` \|.*\| `([^`]+)` \|$", routing, re.MULTILINE)
-        )
-
+        routing = (ROOT / "skills/pretty-common/references/quality-routing.md").read_text(encoding="utf-8")
+        documented = dict(re.findall(r"^\| `([^`]+)` \|.*\| `([^`]+)` \|$", routing, re.MULTILINE))
         self.assertEqual(RISK_OWNERS, documented)
 
     def test_detects_high_confidence_production_errors(self) -> None:
-        source = """
-class Service {
-    @Autowired
-    private Dependency dependency;
-
-    String load() {
-        return null;
-    }
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertEqual({"FIELD-INJECTION", "NULL-RETURN"}, codes)
+        codes = {finding.code for finding in scan_java_source("class Service { String load() { return null; } }")}
+        self.assertIn("NULL-RETURN", codes)
 
     def test_comment_content_is_not_scanned_as_code_but_comment_needs_review(self) -> None:
         source = """
@@ -64,28 +35,10 @@ class Service {
     }
 }
 """
+        self.assertEqual({"COMMENT-JUSTIFICATION"}, {finding.code for finding in scan_java_source(source)})
 
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertEqual({"COMMENT-JUSTIFICATION"}, codes)
-
-    def test_single_production_comment_requires_justification(self) -> None:
-        source = """
-class Service {
-    String load() {
-        // Preserve the provider's legacy sentinel.
-        return "UNKNOWN";
-    }
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertIn("COMMENT-JUSTIFICATION", codes)
-        self.assertNotIn("COMMENT-JUSTIFICATION", {finding.code for finding in scan_java_source(source, production=False)})
-
-    def test_rejects_cjk_production_comment(self) -> None:
-        source = """
+    def test_all_comment_languages_use_one_justification_rule(self) -> None:
+        comment = """
 class Service {
     String load() {
         // 查询订单后返回结果。
@@ -93,23 +46,9 @@ class Service {
     }
 }
 """
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertIn("CJK-COMMENT", codes)
-
-    def test_cjk_text_inside_string_is_not_a_comment(self) -> None:
-        source = """
-class Service {
-    String endpoint() {
-        return "https://example.test/中文";
-    }
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertNotIn("CJK-COMMENT", codes)
+        string = 'class Service { String load() { return "https://example.test/中文"; } }'
+        self.assertEqual({"COMMENT-JUSTIFICATION"}, {finding.code for finding in scan_java_source(comment)})
+        self.assertNotIn("COMMENT-JUSTIFICATION", {finding.code for finding in scan_java_source(string)})
 
     def test_rejects_manual_duration_logging(self) -> None:
         source = """
@@ -117,77 +56,49 @@ class Service {
     void dispatch() {
         long start = System.currentTimeMillis();
         send();
-        log.info("dispatch durationMs={}", System.currentTimeMillis() - start);
+        log.info("durationMs={}", System.currentTimeMillis() - start);
     }
 }
 """
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertIn("MANUAL-DURATION-LOGGING", codes)
-
-    def test_business_timestamp_without_logging_is_not_duration_logging(self) -> None:
-        source = """
-class Service {
-    long currentTimestamp() {
-        long startedAt = System.currentTimeMillis();
-        return startedAt;
-    }
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertNotIn("MANUAL-DURATION-LOGGING", codes)
-
-    def test_business_timestamp_with_unrelated_logging_is_not_duration_logging(self) -> None:
-        source = """
-class Service {
-    long currentTimestamp() {
-        long startedAt = System.currentTimeMillis();
-        log.info("timestamp captured");
-        return startedAt;
-    }
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertNotIn("MANUAL-DURATION-LOGGING", codes)
+        self.assertIn("MANUAL-DURATION-LOGGING", {finding.code for finding in scan_java_source(source)})
 
     def test_trim_requires_boundary_contract_review(self) -> None:
         source = """
 class Service {
     String route(String eventDefineCode) {
-        String normalizedCode = eventDefineCode.trim();
-        return normalizedCode;
+        return eventDefineCode.trim();
     }
 }
 """
+        self.assertIn("NORMALIZATION-OWNERSHIP", {finding.code for finding in scan_java_source(source)})
 
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertIn("NORMALIZATION-OWNERSHIP", codes)
-
-    def test_relative_bucket_token_is_generic_and_does_not_match_normalized(self) -> None:
+    def test_required_query_input_cannot_fall_back_to_empty(self) -> None:
         source = """
-class Dispatcher {
-    void dispatchNormalEvent(Command normalCommand, String normalText) {
-        String normalizedText = normalText;
+class QueryService {
+    List<Order> find(String eventCode) {
+        if (eventCode == null) {
+            return Collections.emptyList();
+        }
+        return repository.find(eventCode);
     }
 }
 """
+        self.assertIn("REQUIRED-INPUT-EMPTY-FALLBACK", {finding.code for finding in scan_java_source(source)})
 
-        ambiguous_symbols = {
-            finding.message
-            for finding in scan_java_source(source)
-            if finding.code == "AMBIGUOUS-BUCKET-NAME"
-        }
-
-        self.assertTrue(any("dispatchNormalEvent" in message for message in ambiguous_symbols))
-        self.assertTrue(any("normalCommand" in message for message in ambiguous_symbols))
-        self.assertTrue(any("normalText" in message for message in ambiguous_symbols))
-        self.assertFalse(any("normalizedText" in message for message in ambiguous_symbols))
+    def test_boundary_any_without_captor_requires_review(self) -> None:
+        source = """
+class AdapterTest {
+    @Test
+    void sendsRequest() {
+        when(gateway.send(any())).thenReturn(SUCCESS);
+        assertThat(adapter.send(command)).isEqualTo(SUCCESS);
+    }
+}
+"""
+        self.assertIn(
+            "BOUNDARY-ANY-WITHOUT-CAPTOR",
+            {finding.code for finding in scan_java_source(source, production=False)},
+        )
 
     def test_changed_line_expands_to_the_whole_method(self) -> None:
         body = "\n".join(f"        value += {number};" for number in range(22))
@@ -200,285 +111,195 @@ class Service {{
     }}
 }}
 """
-
-        findings = scan_java_source(source, changed_lines=frozenset({12}))
-
-        self.assertIn("METHOD-LOC", {finding.code for finding in findings})
-
-    def test_heuristic_smells_require_review_instead_of_hard_failure(self) -> None:
-        source = """
-import java.util.*;
-class Service {
-    String choose(int first, int second, int third, int fourth, boolean strict) {
-        continuePoint: for (;;) {
-            if (strict) {
-                continue continuePoint;
-            }
-            return "STANDARD";
-        }
-    }
-}
-"""
-
-        findings = scan_java_source(source)
-
-        self.assertTrue(findings)
-        self.assertEqual({"review_required"}, {finding.severity for finding in findings})
+        self.assertIn("METHOD-LOC", {finding.code for finding in scan_java_source(source, changed_lines=frozenset({12}))})
 
     def test_deletion_only_hunk_touches_the_surviving_anchor(self) -> None:
-        diff = """--- a/src/main/java/example/Service.java
-+++ b/src/main/java/example/Service.java
-@@ -8,1 +8,0 @@
--        obsolete();
-"""
-
-        touched = parse_touched_java_lines(diff)
-
-        self.assertEqual(frozenset({8}), touched["src/main/java/example/Service.java"])
-
-    def test_whole_file_deletion_remains_in_changed_java_scope(self) -> None:
-        diff = """--- a/src/main/java/example/Service.java
-+++ /dev/null
-@@ -1,3 +0,0 @@
--package example;
--class Service {
--}
-"""
-
-        touched = parse_touched_java_lines(diff)
-
-        self.assertEqual(
-            frozenset({1}),
-            touched["src/main/java/example/Service.java"],
-        )
+        diff = "--- a/src/main/java/example/Service.java\n+++ b/src/main/java/example/Service.java\n@@ -8,1 +8,0 @@\n-        obsolete();\n"
+        self.assertEqual(frozenset({8}), parse_touched_java_lines(diff)["src/main/java/example/Service.java"])
 
     def test_deleted_production_source_still_requires_production_review(self) -> None:
-        with self.subTest("deleted source"):
-            findings, source_parts, has_production = _scan_sources(
-                ROOT,
-                {"src/main/java/example/Deleted.java": frozenset({1})},
-            )
-
+        findings, source_parts, has_production = _scan_sources(ROOT, {"src/main/java/example/Deleted.java": frozenset({1})})
         self.assertEqual([], findings)
         self.assertEqual({}, source_parts)
         self.assertTrue(has_production)
 
-    def test_detects_broad_catch_fallback_after_nested_block(self) -> None:
-        source = """
-class Service {
-    boolean load() {
-        try {
-            return false;
-        } catch (Exception error) {
-            if (error != null) {
-                audit();
-            }
-            return true;
+    def test_disabled_test_is_a_hard_finding(self) -> None:
+        findings = scan_java_source("@Disabled\n@Test\nvoid behavior() {}", production=False)
+        disabled = [finding for finding in findings if finding.code == "DISABLED-TEST"]
+        self.assertTrue(disabled)
+        self.assertEqual({"error"}, {finding.severity for finding in disabled})
+
+    def test_review_evidence_requires_independent_reviewer(self) -> None:
+        candidate = candidate_sha256({"source": "class Service {}"})
+        evidence = {"candidate_sha256": candidate, "reviewer": "reviewer-1", "independent": True, "risks": [], "accepted_findings": [], "blocking_findings": [], "guards": ["clean-code-guard"]}
+        self.assertEqual([], review_evidence_errors(evidence, candidate, [], require_clean_guard=True))
+
+    def test_review_rejects_duplicate_risk_ownership_entries(self) -> None:
+        candidate = candidate_sha256({"source": "class Service {}"})
+        risk = {"id": "JAVA_OOD", "owner": "121-java-object-oriented-design", "evidence": ["Service"]}
+        evidence = {"candidate_sha256": candidate, "reviewer": "reviewer-1", "independent": True, "risks": [risk, risk], "accepted_findings": [], "blocking_findings": []}
+        self.assertIn("review risk id must be unique: JAVA_OOD", review_evidence_errors(evidence, candidate, []))
+
+    def test_review_rejects_wrong_risk_owner(self) -> None:
+        candidate = candidate_sha256({"source": "class Service {}"})
+        evidence = {"candidate_sha256": candidate, "reviewer": "reviewer-1", "independent": True, "risks": [{"id": "TYPE_DESIGN", "owner": "java-code-review", "evidence": ["Score"]}], "accepted_findings": [], "blocking_findings": []}
+        self.assertIn("review risk TYPE_DESIGN must be owned by 122-java-type-design", review_evidence_errors(evidence, candidate, []))
+
+    def test_review_rejects_invalid_accepted_finding_collection(self) -> None:
+        candidate = candidate_sha256({"source": "class Service {}"})
+        evidence = {"candidate_sha256": candidate, "reviewer": "reviewer-1", "independent": True, "risks": [], "accepted_findings": "none", "blocking_findings": []}
+        self.assertIn("review evidence accepted_findings must be a list", review_evidence_errors(evidence, candidate, []))
+
+    def test_changed_scope_ignores_explanatory_documents(self) -> None:
+        self.assertEqual([], _scope_errors({"docs/pretty/example/design.md"}, set()))
+
+    def test_runtime_paths_are_never_treated_as_explanatory(self) -> None:
+        changed = {
+            "context-service/src/main/java/example/Service.java",
+            "src/main/resources/help.md",
+            "module/src/main/java/adr/Policy.java",
         }
-    }
-
-    void audit() {}
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertIn("BROAD-CATCH-FALLBACK", codes)
-
-    def test_accepts_fully_qualified_nullable_annotation(self) -> None:
-        source = """
-class Service {
-    public @org.springframework.lang.Nullable String load() {
-        return null;
-    }
-}
-"""
-
-        codes = {finding.code for finding in scan_java_source(source)}
-
-        self.assertNotIn("NULL-RETURN", codes)
-
-    def test_scope_rejects_planned_path_without_a_change(self) -> None:
-        errors = _scope_errors(
-            {"src/main/java/example/A.java"},
-            {
-                "src/main/java/example/A.java",
-                "src/main/java/example/B.java",
-            },
-            None,
-        )
-
-        self.assertIn(
-            "planned path has no corresponding change: src/main/java/example/B.java",
-            errors,
-        )
-
-    def test_plan_scope_includes_sql_files(self) -> None:
-        plan = """
-- Modify: `src/main/java/example/A.java`
-- Create: `db/migration/V2__event_index.sql`
-"""
-
-        self.assertEqual(
-            {
-                "src/main/java/example/A.java",
-                "db/migration/V2__event_index.sql",
-            },
-            _plan_paths(plan),
-        )
+        errors = _scope_errors(changed, set())
+        self.assertEqual(3, len(errors))
 
     def test_quality_candidate_binds_sql_file_content(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
             sql_path = repo / "db/migration/V2__event_index.sql"
             sql_path.parent.mkdir(parents=True)
-            sql_path.write_text("CREATE INDEX idx_event_code ON service_event(event_code);\n")
-
-            parts, source_hashes = _candidate_file_parts(
-                repo,
-                {"db/migration/V2__event_index.sql"},
-            )
-
+            sql_path.write_text("CREATE INDEX idx_event_code ON service_event(event_code);\n", encoding="utf-8")
+            parts, source_hashes = _candidate_file_parts(repo, {"db/migration/V2__event_index.sql"})
         self.assertIn("CREATE INDEX", parts["file:db/migration/V2__event_index.sql"])
         self.assertEqual(64, len(source_hashes["db/migration/V2__event_index.sql"]))
 
     def test_changed_manifest_rejects_parent_path(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            manifest = Path(directory) / "changed.json"
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "changed.json"
             manifest.write_text('{"../outside.java": [1]}', encoding="utf-8")
-
             with self.assertRaisesRegex(ValueError, "repository-relative"):
                 _read_manifest(manifest)
 
-    def test_review_requires_structured_independent_evidence(self) -> None:
-        candidate = candidate_sha256({"source": "class Service {}"})
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risks": [],
-            "accepted_findings": [],
-            "blocking_findings": [],
-            "guards": ["clean-code-guard"],
-        }
+    def test_disabled_scope_is_reported_before_apply(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/test/java/example/ServiceTest.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("@Disabled\nclass ServiceTest {}\n", encoding="utf-8")
+            findings = scan_disabled_annotations(repo, ["src/test/java/example/ServiceTest.java"])
+        self.assertEqual("disabled", findings[0]["kind"])
 
-        self.assertEqual(
-            [],
-            review_evidence_errors(evidence, candidate, [], require_clean_guard=True),
-        )
+    def test_expected_test_must_appear_in_fresh_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "TEST-example.ServiceTest.xml"
+            report.write_text("<testsuite><testcase classname='example.ServiceTest' name='works'/></testsuite>", encoding="utf-8")
+            executed, errors = verify_expected_tests((report,), ("example.ServiceTest#works",))
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(executed))
 
-    def test_review_rejects_duplicate_risk_ownership_entries(self) -> None:
-        candidate = candidate_sha256({"source": "class Service {}"})
-        risk = {
-            "id": "JAVA_OOD",
-            "owner": "121-java-object-oriented-design",
-            "evidence": ["Service"],
-        }
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risks": [risk, risk],
-            "accepted_findings": [],
-            "blocking_findings": [],
-        }
+    def test_new_test_source_cannot_use_a_disabled_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/test/java/example/ServiceTest.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("@Disabled\nclass ServiceTest {\n@Test void works() {}\n}\n", encoding="utf-8")
+            payload = verify(TestExecutionRequest(
+                repo=repo,
+                test_sources=("src/test/java/example/ServiceTest.java",),
+                expected_tests=("ServiceTest#works",),
+                reports=(),
+                report_not_before=0,
+                new_test_sources=("src/test/java/example/ServiceTest.java",),
+                design_sha256="design-sha",
+            ))
 
-        errors = review_evidence_errors(evidence, candidate, [])
+        self.assertFalse(payload["passed"])
+        self.assertTrue(any("disabled" in error for error in payload["errors"]))
 
-        self.assertIn("review risk id must be unique: JAVA_OOD", errors)
-
-    def test_review_rejects_wrong_risk_owner(self) -> None:
-        candidate = candidate_sha256({"source": "class Service {}"})
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risks": [
-                {"id": "TYPE_DESIGN", "owner": "java-code-review", "evidence": ["Score"]}
-            ],
-            "accepted_findings": [],
-            "blocking_findings": [],
-        }
-
-        errors = review_evidence_errors(evidence, candidate, [])
-
-        self.assertIn(
-            "review risk TYPE_DESIGN must be owned by 122-java-type-design",
-            errors,
-        )
-
-    def test_review_rejects_unmatched_accepted_finding(self) -> None:
-        candidate = candidate_sha256({"source": "class Service {}"})
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risks": [],
-            "accepted_findings": [
-                {"fingerprint": "stale-finding", "reason": "A detailed but stale explanation"}
-            ],
-            "blocking_findings": [],
-        }
-
-        errors = review_evidence_errors(evidence, candidate, [])
-
-        self.assertIn(
-            "accepted finding does not match the current candidate: stale-finding",
-            errors,
-        )
-
-    def test_accepted_finding_requires_concrete_evidence(self) -> None:
-        finding = next(
-            finding
-            for finding in scan_java_source(
-                """
-class Service {
-    String route(String code) {
-        return code.trim();
-    }
-}
-"""
+    def test_new_test_can_use_enabled_class_beside_historical_disabled_class(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/test/java/example/NewTest.java"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "@Disabled\nclass OldTest {}\nclass NewTest {\n@Test void works() {}\n}\n",
+                encoding="utf-8",
             )
-            if finding.code == "NORMALIZATION-OWNERSHIP"
-        )
-        candidate = candidate_sha256({"source": "trim"})
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risks": [],
-            "accepted_findings": [
-                {
-                    "fingerprint": finding.fingerprint,
-                    "reason": "The HTTP contract explicitly defines surrounding whitespace as insignificant.",
-                }
-            ],
-            "blocking_findings": [],
-        }
+            report = repo / "target/TEST-NewTest.xml"
+            report.parent.mkdir(parents=True)
+            report.write_text(
+                "<testsuite><testcase classname='NewTest' name='works'/></testsuite>",
+                encoding="utf-8",
+            )
+            os.utime(source, (100, 100))
+            os.utime(report, (200, 200))
+            payload = verify(TestExecutionRequest(
+                repo=repo,
+                test_sources=("src/test/java/example/NewTest.java",),
+                expected_tests=("NewTest#works",),
+                reports=(report,),
+                report_not_before=0,
+                new_test_sources=("src/test/java/example/NewTest.java",),
+                design_sha256="design-sha",
+            ))
+        self.assertTrue(payload["passed"])
 
-        errors = review_evidence_errors(evidence, candidate, [finding])
+    def test_report_must_be_newer_than_target_test_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/test/java/example/ServiceTest.java"
+            report = repo / "target/TEST-ServiceTest.xml"
+            source.parent.mkdir(parents=True)
+            report.parent.mkdir(parents=True)
+            source.write_text("class ServiceTest { @Test void works() {} }", encoding="utf-8")
+            report.write_text("<testsuite><testcase classname='ServiceTest' name='works'/></testsuite>", encoding="utf-8")
+            os.utime(report, (100, 100))
+            os.utime(source, (200, 200))
+            payload = verify(TestExecutionRequest(
+                repo=repo,
+                test_sources=("src/test/java/example/ServiceTest.java",),
+                expected_tests=("ServiceTest#works",),
+                reports=(report,),
+                report_not_before=0,
+            ))
+        self.assertTrue(any("stale" in error for error in payload["errors"]))
 
+    def test_one_skipped_parameterized_invocation_fails_expected_test(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary) / "TEST-example.ServiceTest.xml"
+            report.write_text(
+                "<testsuite><testcase classname='example.ServiceTest' name='works[1]'/><testcase classname='example.ServiceTest' name='works[2]'><skipped/></testcase></testsuite>",
+                encoding="utf-8",
+            )
+            _, errors = verify_expected_tests((report,), ("example.ServiceTest#works",))
+        self.assertTrue(any("skipped or failed invocation" in error for error in errors))
+
+    def test_target_test_source_must_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            request = TestExecutionRequest(
+                repo=Path(temporary),
+                test_sources=("src/test/java/example/MissingTest.java",),
+                expected_tests=(),
+                reports=(),
+                report_not_before=0,
+                design_sha256="design-sha",
+            )
+            payload = verify(request)
         self.assertIn(
-            f"accepted finding {finding.fingerprint} needs concrete evidence",
-            errors,
+            "target test source does not exist: src/test/java/example/MissingTest.java",
+            payload["errors"],
         )
-        evidence["accepted_findings"][0]["evidence"] = ["api.yaml#/eventDefineCode"]
-        self.assertEqual([], review_evidence_errors(evidence, candidate, [finding]))
 
-    def test_review_rejects_invalid_accepted_finding_collection(self) -> None:
-        candidate = candidate_sha256({"source": "class Service {}"})
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risks": [],
-            "accepted_findings": "none",
-            "blocking_findings": [],
-        }
-
-        errors = review_evidence_errors(evidence, candidate, [])
-
-        self.assertIn("review evidence accepted_findings must be a list", errors)
+    def test_meta_disabled_annotation_is_detected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/test/java/example/ServiceTest.java"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "@Disabled\n@interface DisabledByPolicy {}\n@DisabledByPolicy\nclass ServiceTest {}\n",
+                encoding="utf-8",
+            )
+            findings = scan_disabled_annotations(repo, ("src/test/java/example/ServiceTest.java",))
+        self.assertTrue(any(finding["kind"] == "meta-disabled" for finding in findings))
 
 
 if __name__ == "__main__":

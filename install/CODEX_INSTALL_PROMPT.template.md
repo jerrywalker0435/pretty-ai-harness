@@ -1,11 +1,11 @@
 # 安装最新 Pretty Skills
 
-请使用 `npx skills@1.5.22` 安装下面 4 个 Pretty Skills 及其 10 个实际依赖，共 14 个可注册 Skill；另外从同一仓库默认分支复制 1 个 `pretty-common` 共享资源目录。仓库 URL 不附加 Git ref，以获取远程默认分支 HEAD 的最新版本。
+请使用 `npx skills@1.5.22` 安装下面 3 个 Pretty Skills 及其 10 个实际依赖，共 13 个可注册 Skill；另外从同一仓库默认分支复制 1 个 `pretty-common` 共享资源目录。仓库 URL 不附加 Git ref，以获取远程默认分支 HEAD 的最新版本。
 
 <!-- SOURCE_CATALOG_START -->
 | 仓库 | Skills |
 |---|---|
-| `git@gitlab-inner.haidilao.com:zhangy114/pretty-ai-harness.git` | `pretty-writing-prd`、`pretty-writing-design`、`pretty-writing-plan`、`pretty-executing-plan` |
+| `git@gitlab-inner.haidilao.com:zhangy114/pretty-ai-harness.git` | `pretty-writing-prd`、`pretty-writing-design`、`pretty-executing` |
 | `https://github.com/mattpocock/skills.git` | `domain-modeling`、`grilling`、`codebase-design`、`tdd` |
 | `https://github.com/jabrena/cursor-rules-java.git` | `121-java-object-oriented-design`、`122-java-type-design` |
 | `https://github.com/florianbuetow/claude-code.git` | `solid-principles` |
@@ -15,11 +15,11 @@
 
 共享资源（不注册为 Skill）：
 
-- `skills/pretty-common/references/quality-principles.md`：`pretty-writing-plan` 与 `pretty-executing-plan` 必须共同读取的质量基线。
+- `skills/pretty-common/references/quality-principles.md`：`pretty-writing-design` 与 `pretty-executing` 必须共同读取的质量基线。
 - `skills/pretty-common/references/quality-routing.md`：风险与唯一专项 Reviewer 的路由表。
 - `skills/pretty-common/references/quality-review-protocol.md`：独立审查及证据协议。
-- `skills/pretty-common/scripts/quality_contract_gate.py`：Plan 和 Execution 共用的高确定性 Java 代码质量扫描器。
-- 安装后目标结构必须保持为 `<target-skills-dir>/pretty-common/...`，与四个 Pretty Skill 目录同级；不要把它嵌套进任一 Skill 目录。
+- `skills/pretty-common/scripts/quality_contract_gate.py`：Preview 和 Apply 共用的高确定性 Java 代码质量扫描器。
+- 安装后目标结构必须保持为 `<target-skills-dir>/pretty-common/...`，与三个 Pretty Skill 目录同级；不要把它嵌套进任一 Skill 目录。
 
 ## 1. 确认安装范围
 
@@ -33,13 +33,13 @@
 
 展示默认值不等于获得同意。只有用户明确选择 1 或 2 才继续；空回复、含糊回复、取消或未回复时停止，不得获取任何仓库，也不得写入任何文件。
 
-检查所选目录中的 14 个同名 Skill 路径和上述 4 个共享资源，文件、目录或符号链接都算已存在。只要存在任意同名项或共享资源，列出名称并询问：“是否更新全部 14 个 Skill 和 pretty-common 共享资源到最新版本？”只有明确同意才继续，否则停止且不修改。
+检查所选目录中的 13 个同名 Skill 路径和上述 4 个共享资源，文件、目录或符号链接都算已存在。只要存在任意同名项或共享资源，列出名称并询问：“是否更新全部 13 个 Skill 和 pretty-common 共享资源到最新版本？”只有明确同意才继续，否则停止且不修改。
 
-同时检查 `<target-skills-dir>/refactor` 和 `<target-skills-dir>/verification-before-completion`。它们是旧版 Harness 安装过、但不再属于当前 14-Skill 组合的遗留项。若存在任意一个，单独列出并要求用户明确选择：
+同时检查 `<target-skills-dir>/refactor`、`<target-skills-dir>/verification-before-completion`、`<target-skills-dir>/pretty-writing-plan` 和 `<target-skills-dir>/pretty-executing-plan`。它们是旧版 Harness 安装过、但不再属于当前 13-Skill 组合的遗留项。若存在任意一个，单独列出并要求用户明确选择：
 
 ```text
-1. 保留这些额外 Skill（最终报告必须逐项标记为“保留的额外 Skill”，不得声称目标目录只有 14 个 Skill）
-2. 删除这些旧版遗留 Skill（仅在当前 14 个 Skill 和 pretty-common 全部更新、验证成功后删除）
+1. 保留这些额外 Skill（最终报告必须逐项标记为“保留的额外 Skill”，不得声称目标目录只有 13 个 Skill）
+2. 删除这些旧版遗留 Skill（仅在当前 13 个 Skill 和 pretty-common 全部更新、验证成功后删除）
 3. 取消
 ```
 
@@ -65,7 +65,7 @@ npx skills@1.5.22 add <repository-url> --global --agent universal --copy --full-
 
 ### 同步共享资源
 
-`pretty-common` 没有 `SKILL.md`，不能作为 `--skill` 名称传给 `npx skills`；完成 14 个 Skill 安装后，从同一 Pretty Harness 仓库的远程默认分支复制它：
+`pretty-common` 没有 `SKILL.md`，不能作为 `--skill` 名称传给 `npx skills`；完成 13 个 Skill 安装后，从同一 Pretty Harness 仓库的远程默认分支复制它：
 
 ```bash
 set -eu
@@ -109,7 +109,7 @@ PRETTY_RESTORE_REQUIRED=false
 
 ## 3. 验证
 
-检查全部 14 个 Skill 目录均存在 `SKILL.md`，且 frontmatter 的 `name` 与目录名一致；另行确认上述 4 个共享资源存在。再运行与所选范围对应的命令：
+检查全部 13 个 Skill 目录均存在 `SKILL.md`，且 frontmatter 的 `name` 与目录名一致；另行确认上述 4 个共享资源存在。再运行与所选范围对应的命令：
 
 ```text
 # 当前目录
@@ -121,13 +121,15 @@ npx skills@1.5.22 list --global --agent universal --json
 
 ### 处理旧版遗留 Skill
 
-仅当之前明确记录 `PRETTY_LEGACY_ACTION=remove`，并且本节已确认 14 个当前 Skill 与 4 个共享资源全部验证成功后，才删除实际存在的精确路径：
+仅当之前明确记录 `PRETTY_LEGACY_ACTION=remove`，并且本节已确认 13 个当前 Skill 与 4 个共享资源全部验证成功后，才删除实际存在的精确路径：
 
 ```bash
 rm -rf "$PRETTY_TARGET_SKILLS_DIR/refactor"
 rm -rf "$PRETTY_TARGET_SKILLS_DIR/verification-before-completion"
+rm -rf "$PRETTY_TARGET_SKILLS_DIR/pretty-writing-plan"
+rm -rf "$PRETTY_TARGET_SKILLS_DIR/pretty-executing-plan"
 ```
 
-选择 `keep` 时不修改这两个目录，并在最终报告中逐项列出。路径不存在时不制造失败，也不得删除其他来源的同名或相邻目录。
+选择 `keep` 时不修改这四个目录，并在最终报告中逐项列出。路径不存在时不制造失败，也不得删除其他来源的同名或相邻目录。
 
-最终报告安装范围、绝对目标目录、14 个 Skill 的成功和失败名称、共享资源验证结果，以及两个 legacy 路径各自的“不存在 / 已删除 / 保留为额外 Skill”状态。只有 14 个 Skill 和 4 个共享资源全部验证通过才报告当前组合安装成功；若保留 legacy 项，必须明确实际目录含额外 Skill。若 Codex 未立即识别新版本，建议重启 Codex 一次。
+最终报告安装范围、绝对目标目录、13 个 Skill 的成功和失败名称、共享资源验证结果，以及四个 legacy 路径各自的“不存在 / 已删除 / 保留为额外 Skill”状态。只有 13 个 Skill 和 4 个共享资源全部验证通过才报告当前组合安装成功；若保留 legacy 项，必须明确实际目录含额外 Skill。若 Codex 未立即识别新版本，建议重启 Codex 一次。

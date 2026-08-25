@@ -17,6 +17,8 @@ REQUIRED_SECTIONS = (
     "需求",
     "验收标准",
 )
+REQ_HEADING = re.compile(r"^REQ-\d{3}：\S.+$")
+AC_HEADING = re.compile(r"^AC-\d{3}：\S.+$")
 FORBIDDEN_HEADINGS = ("约束与未决问题", "未决问题")
 PLACEHOLDER_PATTERN = re.compile(
     r"<[^>\n]+>|\b(?:TODO|TBD|FIXME)\b|待用户选择|待确认|未澄清",
@@ -54,10 +56,33 @@ def validate_prd_document(document: str) -> list[str]:
     errors.extend(f"禁止章节：{heading}" for heading in FORBIDDEN_HEADINGS if heading in headings)
     if PLACEHOLDER_PATTERN.search(document):
         errors.append("PRD 仍包含占位内容或未澄清项")
+    requirement_headings = [line[4:].strip() for line in document.splitlines() if line.startswith("### REQ-")]
+    acceptance_headings = [line[4:].strip() for line in document.splitlines() if line.startswith("### AC-")]
+    if not requirement_headings:
+        errors.append("PRD 至少需要一个 REQ-* 需求")
+    if not acceptance_headings:
+        errors.append("PRD 至少需要一个 AC-* 验收标准")
+    if any(not REQ_HEADING.fullmatch(heading) for heading in requirement_headings):
+        errors.append("REQ-* 必须使用连续三位编号和非空标题")
+    if any(not AC_HEADING.fullmatch(heading) for heading in acceptance_headings):
+        errors.append("AC-* 必须使用连续三位编号和非空标题")
+    if _numbers(requirement_headings, "REQ") != list(range(1, len(requirement_headings) + 1)):
+        errors.append("REQ-* 编号必须从 001 连续递增")
+    if _numbers(acceptance_headings, "AC") != list(range(1, len(acceptance_headings) + 1)):
+        errors.append("AC-* 编号必须从 001 连续递增")
     flow = section_body(document, "核心用例流程（可选）")
     if flow and not FLOW_PATTERN.search(flow):
         errors.append("核心用例流程必须使用业务流程图格式")
     return errors
+
+
+def _numbers(headings: list[str], prefix: str) -> list[int]:
+    numbers = []
+    for heading in headings:
+        match = re.match(rf"{prefix}-(\d{{3}})：", heading)
+        if match:
+            numbers.append(int(match.group(1)))
+    return numbers
 
 
 def _build_parser() -> argparse.ArgumentParser:

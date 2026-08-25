@@ -5,7 +5,7 @@ description: Use when creating or revising a Pretty prd.md for a Java/Spring fea
 
 # 编写 PRD
 
-把用户目标、业务规则和必要仓库事实整理成可由用户确认的 PRD。PRD 只锁定外部可观察结果、业务规则和验收语义，不选择技术实现，不创建 ADR，不进入 Design 或 Plan。
+把用户目标、业务规则和必要仓库事实整理成可由用户确认的 PRD。PRD 只锁定外部可观察结果、业务规则和验收语义，不选择技术实现，不创建 ADR，不进入 Design 或 Execution。
 
 加载当前阶段模板 [assets/prd.md](assets/prd.md)。
 
@@ -72,7 +72,7 @@ docs/pretty/<topic>/prd.md
 - 不写未澄清的问题、待用户选择项或占位内容；
 - 不写类、方法、模块职责、数据库 Schema、事务实现、设计模式、完整代码或实施任务。
 
-简单需求使用短场景列表。出现多个真实角色/系统触点、状态分支、多步骤、失败隔离、幂等、并发或异步结果时，生成 3–6 个具象业务故事；故事只是解释视图，`REQ/AC` 是唯一需求合同。
+简单需求使用短场景列表。出现多个真实角色/系统触点、状态分支、多步骤、失败隔离、幂等、并发或异步结果时，生成 3–6 个具象业务故事；故事只是解释视图，带稳定编号的 `REQ-*` / `AC-*` 是唯一需求合同。
 
 复杂业务可以增加可选的“核心用例流程”图示，但必须满足：
 
@@ -110,4 +110,4 @@ python3 <pretty-writing-prd>/scripts/validate_prd.py \
 - 不创建 ADR；
 - 不把业务故事变成第二套需求合同；
 - 不把业务流程图写成技术实现流程图；
-- 不自动进入 Design、Plan 或 Execution。
+- 不自动进入 Design 或 Execution。

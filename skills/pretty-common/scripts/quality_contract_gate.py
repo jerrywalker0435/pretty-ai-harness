@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from disabled_test_scope import annotation_findings
+
 
 ERROR = "error"
 REVIEW = "review_required"
@@ -45,11 +47,13 @@ RULES = (
     RuleSpec("EXCESSIVE-LOGGING", REVIEW, "method has many log calls", 2),
     RuleSpec("BRANCH-LOGGING", REVIEW, "multiple branches log independently"),
     RuleSpec("MANUAL-DURATION-LOGGING", ERROR, "manual wall-clock timing must not be used for logs"),
-    RuleSpec("CJK-COMMENT", ERROR, "production comments must not contain CJK text"),
     RuleSpec("COMMENT-JUSTIFICATION", REVIEW, "production comment must explain a non-obvious reason"),
     RuleSpec("NORMALIZATION-OWNERSHIP", REVIEW, "input normalization needs an explicit boundary contract"),
     RuleSpec("AMBIGUOUS-BUCKET-NAME", REVIEW, "relative bucket name needs a defined opposite and partition rule"),
-    RuleSpec("DISABLED-TEST", REVIEW, "new or changed test is disabled"),
+    RuleSpec("DISABLED-TEST", ERROR, "new or changed test is disabled or conditionally skipped"),
+    RuleSpec("REQUIRED-INPUT-EMPTY-FALLBACK", REVIEW, "missing input may be disguised as an empty query result"),
+    RuleSpec("BOUNDARY-ANY-WITHOUT-CAPTOR", REVIEW, "boundary stub uses any() without request capture"),
+    RuleSpec("MULTI-CODE-NO-OUTPUT-ASSERTION", REVIEW, "multiple event or status codes need matching output assertions"),
 )
 RULE_BY_CODE = {rule.code: rule for rule in RULES}
 RISK_OWNERS = {
@@ -152,8 +156,18 @@ MANUAL_DURATION_TIMER = re.compile(
     r"System\s*\.\s*(?:currentTimeMillis|nanoTime)\s*\(",
     re.IGNORECASE,
 )
-CJK_TEXT = re.compile(r"[\u3400-\u9fff]")
-DISABLED_TEST = re.compile(r"(?m)^\s*@(Disabled|Ignore)\b")
+REQUIRED_INPUT_EMPTY_FALLBACK = re.compile(
+    r"if\s*\([^)]*(?:==\s*null|\.isBlank\s*\(|\.isEmpty\s*\()[^)]*\)"
+    r"\s*\{?\s*return\s+(?:Collections\.(?:emptyList|emptySet|emptyMap)|Optional\.empty)\s*\(",
+    re.DOTALL,
+)
+BOUNDARY_ANY = re.compile(
+    r"(?:when|verify)\s*\([^;\n]*(?:gateway|repository|client|adapter)\.[^;\n]*\bany\w*\s*\(",
+    re.IGNORECASE,
+)
+CAPTOR_USAGE = re.compile(r"\b(?:ArgumentCaptor|Captor|capture)\b")
+CONTRACT_CODE = re.compile(r"\b[A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+\b")
+ASSERTION = re.compile(r"\b(?:assert\w*|then|expect)\s*\([^;]*", re.IGNORECASE)
 GENERIC_RESULT = re.compile(
     r"\b(?:class|record)\s+[A-Za-z_$][\w$]*(?:Result|Response)\b"
     r"(?:(?!\b(?:class|record)\b).){0,1500}\b(?:success|ok)\b"
@@ -518,38 +532,6 @@ def _comment_justification_findings(
     return findings
 
 
-def _cjk_comment_findings(
-    source: str,
-    source_name: str,
-    methods: Sequence[MethodSpan],
-    eligible_lines: frozenset[int] | None,
-) -> list[QualityFinding]:
-    findings = []
-    comments = (
-        token
-        for token in JAVA_TOKEN.finditer(source)
-        if token.group(0).startswith(("//", "/*"))
-    )
-    for comment in comments:
-        if CJK_TEXT.search(comment.group(0)) and _span_is_eligible(
-            source,
-            comment.start(),
-            comment.end(),
-            eligible_lines,
-        ):
-            findings.append(
-                _finding(
-                    "CJK-COMMENT",
-                    "production comment uses CJK text instead of self-explanatory code or concise English rationale",
-                    source,
-                    source_name,
-                    comment.start(),
-                    methods,
-                )
-            )
-    return findings
-
-
 def _manual_duration_logging_findings(context: JavaScanContext) -> list[QualityFinding]:
     findings = []
     for method in context.methods:
@@ -665,30 +647,109 @@ def scan_java_source(
     methods = method_spans(masked_source, source_name)
     eligible = _eligible_lines(source, methods, changed_lines)
     context = JavaScanContext(source, masked_source, source_name, methods, eligible)
-    findings = []
+    findings = _base_findings(context)
+    findings.extend(_production_findings(context) if production else _test_contract_findings(context))
+    findings.extend(_method_metric_findings(source, masked_source, source_name, methods, eligible))
+    findings.extend(_method_structure_findings(source, masked_source, source_name, methods, eligible))
+    findings.extend(_ambiguous_bucket_name_findings(context))
+    return sorted(findings, key=lambda finding: (finding.source, finding.line, finding.code))
+
+
+def _base_findings(context: JavaScanContext) -> list[QualityFinding]:
     checks = (
         (EMPTY_CATCH, "EMPTY-CATCH", "empty catch ignores a failure"),
         (WILDCARD_IMPORT, "WILDCARD-IMPORT", "wildcard import needs style review"),
         (re.compile(r"\bcontinue\s*;"), "CONTROL-FLOW-SKIP", "continue needs flow review"),
         (GENERIC_RESULT, "GENERIC-RESULT-SHAPE", "generic result shape needs boundary review"),
-        (DISABLED_TEST, "DISABLED-TEST", "disabled test needs explicit review"),
     )
+    findings = []
     for pattern, code, message in checks:
-        findings.extend(_pattern_findings(pattern, code, message, source, masked_source, source_name, methods, eligible))
-    findings.extend(
-        _broad_catch_findings(context)
-    )
-    if production:
-        findings.extend(_pattern_findings(FIELD_INJECTION, "FIELD-INJECTION", "use constructor injection", source, masked_source, source_name, methods, eligible))
-        findings.extend(_null_findings(source, masked_source, source_name, methods, eligible))
-        findings.extend(_cjk_comment_findings(source, source_name, methods, eligible))
-        findings.extend(_comment_justification_findings(source, source_name, methods, eligible))
-        findings.extend(_manual_duration_logging_findings(context))
-        findings.extend(_normalization_findings(context))
-    findings.extend(_method_metric_findings(source, masked_source, source_name, methods, eligible))
-    findings.extend(_method_structure_findings(source, masked_source, source_name, methods, eligible))
-    findings.extend(_ambiguous_bucket_name_findings(context))
-    return sorted(findings, key=lambda finding: (finding.source, finding.line, finding.code))
+        findings.extend(_pattern_findings(
+            pattern, code, message, context.source, context.masked_source,
+            context.source_name, context.methods, context.eligible_lines,
+        ))
+    return findings + _broad_catch_findings(context)
+
+
+def _production_findings(context: JavaScanContext) -> list[QualityFinding]:
+    scan_arguments = (context.source, context.masked_source, context.source_name, context.methods, context.eligible_lines)
+    findings = _pattern_findings(FIELD_INJECTION, "FIELD-INJECTION", "use constructor injection", *scan_arguments)
+    findings.extend(_null_findings(*scan_arguments))
+    findings.extend(_comment_justification_findings(context.source, context.source_name, context.methods, context.eligible_lines))
+    findings.extend(_manual_duration_logging_findings(context))
+    findings.extend(_normalization_findings(context))
+    findings.extend(_pattern_findings(
+        REQUIRED_INPUT_EMPTY_FALLBACK,
+        "REQUIRED-INPUT-EMPTY-FALLBACK",
+        "missing required input may return an empty result instead of failing fast",
+        *scan_arguments,
+    ))
+    return findings
+
+
+def _test_contract_findings(context: JavaScanContext) -> list[QualityFinding]:
+    findings = [
+        _finding(
+            "DISABLED-TEST",
+            "disabled or conditional test scope needs explicit review",
+            context.source,
+            context.source_name,
+            _position_for_line(context.source, int(finding["line"])),
+            context.methods,
+        )
+        for finding in annotation_findings(context.source)
+        if context.eligible_lines is None or int(finding["line"]) in context.eligible_lines
+    ]
+    findings.extend(_boundary_any_findings(context))
+    findings.extend(_multi_code_assertion_findings(context))
+    return findings
+
+
+def _position_for_line(source: str, line: int) -> int:
+    if line <= 1:
+        return 0
+    position = 0
+    for _ in range(line - 1):
+        position = source.find("\n", position) + 1
+        if position == 0:
+            return len(source)
+    return position
+
+
+def _boundary_any_findings(context: JavaScanContext) -> list[QualityFinding]:
+    if BOUNDARY_ANY.search(context.masked_source) and not CAPTOR_USAGE.search(context.masked_source):
+        match = BOUNDARY_ANY.search(context.masked_source)
+        assert match is not None
+        return [_finding(
+            "BOUNDARY-ANY-WITHOUT-CAPTOR",
+            "critical boundary request uses any() without captor or exact matching",
+            context.source,
+            context.source_name,
+            match.start(),
+            context.methods,
+        )]
+    return []
+
+
+def _multi_code_assertion_findings(context: JavaScanContext) -> list[QualityFinding]:
+    codes = set(CONTRACT_CODE.findall(context.masked_source))
+    asserted_codes = {
+        code
+        for assertion in ASSERTION.finditer(context.masked_source)
+        for code in CONTRACT_CODE.findall(assertion.group(0))
+    }
+    if len(codes) > 1 and len(asserted_codes) < len(codes):
+        match = CONTRACT_CODE.search(context.masked_source)
+        assert match is not None
+        return [_finding(
+            "MULTI-CODE-NO-OUTPUT-ASSERTION",
+            "multiple event or status codes appear without corresponding output mapping assertions",
+            context.source,
+            context.source_name,
+            match.start(),
+            context.methods,
+        )]
+    return []
 
 
 def candidate_sha256(parts: Mapping[str, str]) -> str:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Pretty implementation Plan and its Java proposals."""
+"""Validate a non-authoritative Pretty Execution Preview and its Java proposals."""
 
 from __future__ import annotations
 
@@ -19,18 +19,20 @@ if str(COMMON_SCRIPTS) not in sys.path:
 from quality_contract_gate import (  # type: ignore[import-not-found]
     QualityFinding,
     candidate_sha256,
-    load_review_evidence,
     mask_java_non_code,
     method_spans,
-    review_evidence_errors,
     scan_java_source,
 )
 
 
-TITLE = re.compile(r"^#\s+.+\s+Implementation Plan\s*$")
+TITLE = re.compile(r"^#\s+.+\s+Execution Preview\s*$")
 TASK = re.compile(r"^###\s+TASK-(\d{3})[：:]\s*\S.+$", re.MULTILINE)
 FILE_ENTRY = re.compile(
     r"^[-*+]\s+(Create|Modify|Test|Delete):\s+\x60([^\x60\n]+)\x60\s*$",
+    re.MULTILINE,
+)
+SYMBOL_ENTRY = re.compile(
+    r"^[-*+]\s+Symbol:\s+\x60([^\x60\n]+\.java)#([A-Za-z_$][\w$]*)(?:#([A-Za-z_$][\w$]*))?\x60\s*$",
     re.MULTILINE,
 )
 PLACEHOLDER = re.compile(r"\b(?:TODO|TBD|FIXME)\b|<[^>\n]*(?:\.\.\.|待|完整|真实|主题|结果|路径)[^>\n]*>", re.IGNORECASE)
@@ -41,6 +43,7 @@ EXTERNAL_SKILL = re.compile(
     re.IGNORECASE,
 )
 QUALITY_REPORT = re.compile(r"质量(?:审查|评分|报告)|Quality\s+Gate", re.IGNORECASE)
+NON_AUTHORITATIVE = re.compile(r"^>\s*本文档是.+非权威实施预演", re.MULTILINE)
 VARARGS = re.compile(r"\b[\w$]+(?:\s*<[^>\n]+>)?(?:\s*\[\])?\s*\.\.\.\s*[\w$]+")
 FENCE = re.compile(r"^[ \t]*([\x60~])\1{2,}")
 DML_STATEMENT = re.compile(r"(?im)^\s*(?:INSERT|UPDATE|DELETE|REPLACE|MERGE)\b")
@@ -103,16 +106,16 @@ def mask_fenced_blocks(text: str) -> str:
     return "".join(masked)
 
 
-def _standard_path_errors(plan_path: Path) -> list[str]:
-    parts = plan_path.resolve().parts
-    if len(parts) < 4 or tuple(parts[-4:-2]) != ("docs", "pretty") or parts[-1] != "plan.md":
-        return ["expected docs/pretty/<topic>/plan.md"]
+def _standard_path_errors(preview_path: Path) -> list[str]:
+    parts = preview_path.resolve().parts
+    if len(parts) < 4 or tuple(parts[-4:-2]) != ("docs", "pretty") or parts[-1] != "execution-preview.md":
+        return ["expected docs/pretty/<topic>/execution-preview.md"]
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", parts[-2]):
-        return ["Plan topic must use lowercase kebab-case"]
+        return ["Preview topic must use lowercase kebab-case"]
     errors = []
     for required in ("design.md", "prd.md"):
-        if not plan_path.with_name(required).is_file():
-            errors.append(f"Plan requires sibling {required}")
+        if not preview_path.with_name(required).is_file():
+            errors.append(f"Preview requires sibling {required}")
     return errors
 
 
@@ -121,18 +124,20 @@ def _structure_errors(text: str) -> list[str]:
     prose = mask_fenced_blocks(text)
     lines = [line.strip() for line in prose.splitlines() if line.strip()]
     if not lines or not TITLE.fullmatch(lines[0]):
-        errors.append("first content line must be '# <topic> Implementation Plan'")
+        errors.append("first content line must be '# <topic> Execution Preview'")
     headings = [line for line in prose.splitlines() if line.startswith("## ")]
-    allowed = {"## 变更链路", "## 实施任务"}
+    allowed = {"## 受影响链路", "## TASK 提案"}
     errors.extend(f"unsupported top-level section: {heading}" for heading in headings if heading not in allowed)
-    if headings.count("## 实施任务") != 1:
-        errors.append("Plan must contain exactly one '实施任务' section")
+    if headings.count("## TASK 提案") != 1:
+        errors.append("Preview must contain exactly one 'TASK 提案' section")
     if (
-        "## 变更链路" in headings
-        and "## 实施任务" in headings
-        and headings.index("## 变更链路") > headings.index("## 实施任务")
+        "## 受影响链路" in headings
+        and "## TASK 提案" in headings
+        and headings.index("## 受影响链路") > headings.index("## TASK 提案")
     ):
-        errors.append("'变更链路' must precede '实施任务'")
+        errors.append("'受影响链路' must precede 'TASK 提案'")
+    if not NON_AUTHORITATIVE.search(prose):
+        errors.append("Preview must declare that it is non-authoritative")
     return errors
 
 
@@ -141,8 +146,8 @@ def _forbidden_errors(text: str) -> list[str]:
     checks = (
         (PLACEHOLDER, text, "unresolved placeholder"),
         (PERSONAL_PATH, text, "personal absolute path"),
-        (EXTERNAL_SKILL, prose, "final Plan must not expose Skill names"),
-        (QUALITY_REPORT, prose, "final Plan must not contain a quality report"),
+        (EXTERNAL_SKILL, prose, "final Preview must not expose Skill names"),
+        (QUALITY_REPORT, prose, "final Preview must not contain a quality report"),
     )
     errors = []
     for pattern, target, message in checks:
@@ -218,7 +223,7 @@ def _blocks_between(segment: str, start: int, end: int, language: str | None = N
 
 def _java_block_has_method(segment: str, block: FencedBlock) -> bool:
     source = segment[block.content_start:block.content_end]
-    return bool(method_spans(mask_java_non_code(source), "Plan proposal"))
+    return bool(method_spans(mask_java_non_code(source), "Preview proposal"))
 
 
 def _task_errors(
@@ -255,8 +260,28 @@ def _task_errors(
     )
     if java_methods:
         errors.extend(_logic_task_errors(segment, prefix, entries))
+        errors.extend(_symbol_errors(segment, prefix, entries))
     if sql_change:
         errors.extend(_sql_change_errors(segment, prefix, entries, java_methods))
+    return errors
+
+
+def _symbol_errors(
+    segment: str,
+    prefix: str,
+    entries: Sequence[tuple[str, str]],
+) -> list[str]:
+    symbols = SYMBOL_ENTRY.findall(mask_fenced_blocks(segment))
+    if not symbols:
+        return [f"{prefix} logic change needs at least one production Symbol"]
+    production_paths = {
+        path for operation, path in entries
+        if operation in {"Create", "Modify"} and path.endswith(".java")
+    }
+    errors = []
+    for path, _, _ in symbols:
+        if path not in production_paths:
+            errors.append(f"{prefix} Symbol path is not a production Create/Modify entry: {path}")
     return errors
 
 
@@ -323,12 +348,46 @@ def _configuration_data_dml_errors(segment: str, prefix: str) -> list[str]:
 def _tasks_errors(text: str, allow_project_governance: bool) -> list[str]:
     ranges = _task_ranges(text)
     if not ranges:
-        return ["Plan must contain at least TASK-001"]
+        return ["Preview must contain at least TASK-001"]
     identifiers = [task_id for task_id, _, _ in ranges]
     expected = list(range(1, len(ranges) + 1))
     errors = [] if identifiers == expected else [f"TASK ids must be continuous: {identifiers}"]
     for task_id, start, end in ranges:
         errors.extend(_task_errors(text[start:end], task_id, allow_project_governance))
+    return errors
+
+
+def _repository_fact_errors(preview_path: Path, text: str) -> list[str]:
+    repository = preview_path.resolve().parents[3]
+    errors = []
+    for task_id, start, end in _task_ranges(text):
+        segment = text[start:end]
+        for operation, relative_path in FILE_ENTRY.findall(mask_fenced_blocks(segment)):
+            target = repository / relative_path
+            if operation in {"Modify", "Delete"} and not target.is_file():
+                errors.append(f"TASK-{task_id:03d} {operation} path does not exist: {relative_path}")
+            if operation == "Create" and target.exists():
+                errors.append(f"TASK-{task_id:03d} Create path already exists: {relative_path}")
+        errors.extend(_repository_symbol_errors(repository, segment, task_id))
+    return errors
+
+
+def _repository_symbol_errors(repository: Path, segment: str, task_id: int) -> list[str]:
+    proposal = "\n".join(
+        segment[block.content_start:block.content_end]
+        for block in fenced_blocks(segment)[0]
+        if block.language == "java" and not _is_test_block(segment, block)
+    )
+    errors = []
+    for relative_path, class_name, method_name in SYMBOL_ENTRY.findall(mask_fenced_blocks(segment)):
+        target = repository / relative_path
+        existing = target.read_text(encoding="utf-8") if target.is_file() else ""
+        declaration = re.compile(rf"\b(?:class|interface|enum|record)\s+{re.escape(class_name)}\b")
+        if not declaration.search(existing) and not declaration.search(proposal):
+            errors.append(f"TASK-{task_id:03d} Symbol type is absent from repository and proposal: {class_name}")
+        method = re.compile(rf"\b{re.escape(method_name)}\s*\(") if method_name else None
+        if method and not method.search(existing) and not method.search(proposal):
+            errors.append(f"TASK-{task_id:03d} Symbol method is absent from repository and proposal: {method_name}")
     return errors
 
 
@@ -341,7 +400,7 @@ def _is_test_block(text: str, block: FencedBlock) -> bool:
     return max(positions, key=positions.get) == "测试"
 
 
-def plan_findings(text: str) -> list[QualityFinding]:
+def preview_findings(text: str) -> list[QualityFinding]:
     findings = []
     for block in fenced_blocks(text)[0]:
         if block.language != "java":
@@ -350,49 +409,51 @@ def plan_findings(text: str) -> list[QualityFinding]:
         findings.extend(
             scan_java_source(
                 source,
-                source_name=f"plan.md:{_line_number(text, block.content_start)}",
+                source_name=f"execution-preview.md:{_line_number(text, block.content_start)}",
                 production=not _is_test_block(text, block),
             )
         )
     return findings
 
 
-def plan_candidate_hash(text: str) -> str:
-    return candidate_sha256({"plan.md": text})
+def preview_candidate_hash(text: str) -> str:
+    return candidate_sha256({"execution-preview.md": text})
 
 
-def validate_plan(
-    plan_path: Path,
-    review_evidence: Mapping[str, object] | None = None,
+def validate_preview(
+    preview_path: Path,
     *,
-    require_review: bool = False,
     allow_project_governance: bool = False,
 ) -> tuple[list[str], list[QualityFinding]]:
     try:
-        text = plan_path.read_text(encoding="utf-8")
+        text = preview_path.read_text(encoding="utf-8")
     except OSError as error:
-        return [f"cannot read Plan: {error}"], []
-    findings = plan_findings(text)
-    errors = _standard_path_errors(plan_path)
+        return [f"cannot read Preview: {error}"], []
+    findings = preview_findings(text)
+    errors = _standard_path_errors(preview_path)
     errors.extend(_structure_errors(text))
     errors.extend(_forbidden_errors(text))
     errors.extend(_tasks_errors(text, allow_project_governance))
-    if require_review:
-        errors.extend(review_evidence_errors(review_evidence, plan_candidate_hash(text), findings))
-    else:
-        errors.extend(
-            f"{finding.code} at {finding.source}:{finding.line}"
-            for finding in findings
-            if finding.severity == "error"
-        )
+    errors.extend(_repository_fact_errors(preview_path, text))
+    errors.extend(
+        f"{finding.code} at {finding.source}:{finding.line}"
+        for finding in findings
+        if finding.severity == "error" or finding.code == "DISABLED-TEST"
+    )
+    try:
+        design = preview_path.with_name("design.md").read_text(encoding="utf-8")
+        design_tasks = {match.group(1) for match in re.finditer(r"^###\s+(TASK-\d{3})[：:]", design, re.MULTILINE)}
+        preview_tasks = {f"TASK-{task_id:03d}" for task_id, _, _ in _task_ranges(text)}
+        if preview_tasks != design_tasks:
+            errors.append(f"Preview TASK set must match Design: {sorted(design_tasks)}")
+    except OSError:
+        pass
     return errors, findings
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("plan", type=Path)
-    parser.add_argument("--review-evidence", type=Path)
-    parser.add_argument("--scan-only", action="store_true")
+    parser.add_argument("preview", type=Path)
     parser.add_argument("--allow-project-governance", action="store_true")
     parser.add_argument("--json-output", type=Path)
     return parser
@@ -406,21 +467,18 @@ def _write_json(path: Path | None, payload: Mapping[str, object]) -> None:
 def main(arguments: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(arguments)
     try:
-        plan_text = args.plan.read_text(encoding="utf-8")
-        evidence = load_review_evidence(args.review_evidence) if args.review_evidence else None
-        errors, findings = validate_plan(
-            args.plan,
-            evidence,
-            require_review=not args.scan_only,
+        preview_text = args.preview.read_text(encoding="utf-8")
+        errors, findings = validate_preview(
+            args.preview,
             allow_project_governance=args.allow_project_governance,
         )
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        print(f"Plan validation failed: {error}", file=sys.stderr)
+    except (OSError, ValueError) as error:
+        print(f"Preview validation failed: {error}", file=sys.stderr)
         return 2
     for finding in findings:
         print(f"{finding.severity}: {finding.code} {finding.source}:{finding.line} [{finding.symbol}]")
     _write_json(args.json_output, {
-        "candidate_sha256": plan_candidate_hash(plan_text),
+        "candidate_sha256": preview_candidate_hash(preview_text),
         "findings": [finding.as_dict() for finding in findings],
         "passed": not errors,
         "errors": errors,
@@ -428,7 +486,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     for error in errors:
         print(f"error: {error}", file=sys.stderr)
     if not errors:
-        print(f"Plan Gate: passed ({len(_task_ranges(plan_text))} task(s))")
+        print(f"Preview Gate: passed ({len(_task_ranges(preview_text))} task(s))")
     return 0 if not errors else 1
 
 

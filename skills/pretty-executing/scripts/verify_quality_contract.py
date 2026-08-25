@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Verify the current Execution Java increment and independent review evidence."""
+"""Verify an Apply increment against Design, its execution matrix, and review evidence."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import time
@@ -14,8 +15,8 @@ from typing import Mapping, Sequence
 
 
 COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
-PLAN_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-writing-plan" / "scripts"
-for scripts_dir in (COMMON_SCRIPTS, PLAN_SCRIPTS):
+DESIGN_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-writing-design" / "scripts"
+for scripts_dir in (COMMON_SCRIPTS, DESIGN_SCRIPTS):
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
 
@@ -27,7 +28,14 @@ from quality_contract_gate import (  # type: ignore[import-not-found]
     review_evidence_errors,
     scan_java_source,
 )
-from validate_plan import FILE_ENTRY, validate_plan  # type: ignore[import-not-found]
+from validate_design import validate_design  # type: ignore[import-not-found]
+
+
+def _load_json(path: Path) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return payload
 
 
 def _run_git(repo: Path, arguments: Sequence[str]) -> str:
@@ -46,6 +54,31 @@ def _run_git(repo: Path, arguments: Sequence[str]) -> str:
 def _is_test_path(path: str) -> bool:
     normalized = f"/{path.replace(chr(92), '/').lower().lstrip('/')}"
     return "/src/test/" in normalized or normalized.startswith("/test/")
+
+
+def _is_explanatory_path(path: str) -> bool:
+    normalized = path.replace(chr(92), "/").lower().lstrip("/")
+    parts = PurePosixPath(normalized).parts
+    name = parts[-1] if parts else ""
+    runtime_names = {
+        "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle",
+        "settings.gradle.kts", "gradle.properties", "mvnw", "mvnw.cmd",
+    }
+    runtime_suffixes = {
+        ".java", ".kt", ".kts", ".groovy", ".scala", ".xml", ".sql",
+        ".properties", ".yml", ".yaml", ".json", ".conf", ".toml",
+    }
+    runtime_parts = {"src", "test", "tests", "resources", "migration", "migrations"}
+    if name in runtime_names or runtime_parts.intersection(parts):
+        return False
+    if PurePosixPath(name).suffix in runtime_suffixes:
+        return False
+    return (
+        normalized.startswith(("docs/", ".code-review/"))
+        or (parts and parts[0] in {"context", "contexts", "adr", "adrs"})
+        or name in {"agents.md", "business-map.md", ".execution-state.json"}
+        or PurePosixPath(name).suffix in {".md", ".adoc", ".rst"}
+    )
 
 
 def _read_manifest(path: Path) -> dict[str, frozenset[int]]:
@@ -89,43 +122,59 @@ def _changed_scope(
         manifest_content = manifest.read_text(encoding="utf-8")
         all_changed = _read_manifest(manifest)
         java_changed = {path: lines for path, lines in all_changed.items() if path.endswith(".java")}
-        return java_changed, set(all_changed), manifest_content
+        relevant_paths = {path for path in all_changed if not _is_explanatory_path(path)}
+        java_changed = {path: lines for path, lines in java_changed.items() if path in relevant_paths}
+        return java_changed, relevant_paths, manifest_content
     assert base is not None
     diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, "--"])
     changed_paths = set(_run_git(repo, ["diff", "--name-only", base, "--"]).splitlines())
     untracked_paths = _untracked_paths(repo)
     changed_paths.update(untracked_paths)
+    changed_paths = {path for path in changed_paths if not _is_explanatory_path(path)}
     java_changed = parse_touched_java_lines(diff)
     java_changed.update(_untracked_java(repo, untracked_paths))
+    java_changed = {path: lines for path, lines in java_changed.items() if path in changed_paths}
     return java_changed, changed_paths, diff
 
 
-def _plan_paths(plan_text: str) -> set[str]:
-    return {path for _, path in FILE_ENTRY.findall(plan_text)}
-
-
-def _scope_extensions(evidence: Mapping[str, object] | None) -> dict[str, str]:
-    extensions = {}
-    if not evidence:
-        return extensions
-    for entry in evidence.get("scope_extensions", []):
-        if isinstance(entry, dict) and isinstance(entry.get("path"), str):
-            extensions[entry["path"]] = str(entry.get("reason", "")).strip()
-    return extensions
+def _matrix_paths(matrix: Mapping[str, object], design_text: str) -> tuple[set[str], list[str]]:
+    tasks = matrix.get("tasks")
+    if not isinstance(tasks, list):
+        return set(), ["execution matrix tasks must be a list"]
+    expected_tasks = set(re.findall(r"^###\s+(TASK-\d{3})[：:]", design_text, re.MULTILINE))
+    actual_tasks, paths, errors = set(), set(), []
+    for index, task in enumerate(tasks):
+        if not isinstance(task, dict) or not isinstance(task.get("id"), str):
+            errors.append(f"execution matrix task {index} needs an id")
+            continue
+        actual_tasks.add(task["id"])
+        for field in ("production_files", "test_files", "supporting_files"):
+            declared_paths = task.get(field, [])
+            if not isinstance(declared_paths, list) or any(not isinstance(path, str) for path in declared_paths):
+                errors.append(f"execution matrix {task['id']} {field} must be a string list")
+                continue
+            for declared_path in declared_paths:
+                candidate = PurePosixPath(declared_path)
+                if candidate.is_absolute() or ".." in candidate.parts or "\\" in declared_path:
+                    errors.append(f"execution matrix path must be repository-relative: {declared_path}")
+                else:
+                    paths.add(declared_path)
+    if actual_tasks != expected_tasks:
+        errors.append(f"execution matrix TASK set must match Design: {sorted(expected_tasks)}")
+    return paths, errors
 
 
 def _scope_errors(
     changed_paths: set[str],
-    planned_paths: set[str],
-    evidence: Mapping[str, object] | None,
+    matrix_paths: set[str],
 ) -> list[str]:
-    extensions = _scope_extensions(evidence)
+    changed_paths = {path for path in changed_paths if not _is_explanatory_path(path)}
+    matrix_paths = {path for path in matrix_paths if not _is_explanatory_path(path)}
     errors = []
-    for path in sorted(changed_paths - planned_paths):
-        if len(extensions.get(path, "")) < 12:
-            errors.append(f"unplanned path without a justified scope extension: {path}")
-    for path in sorted(planned_paths - changed_paths):
-        errors.append(f"planned path has no corresponding change: {path}")
+    for path in sorted(changed_paths - matrix_paths):
+        errors.append(f"changed path is missing from execution matrix: {path}")
+    for path in sorted(matrix_paths - changed_paths):
+        errors.append(f"execution matrix path has no corresponding change: {path}")
     return errors
 
 
@@ -136,6 +185,9 @@ def _candidate_file_parts(
     parts, source_hashes = {}, {}
     for relative_path in sorted(changed_paths):
         source_path = repo / relative_path
+        if not source_path.exists():
+            parts[f"file:{relative_path}"] = "<deleted>"
+            continue
         if not source_path.is_file() or source_path.is_symlink():
             continue
         source_bytes = source_path.read_bytes()
@@ -184,8 +236,10 @@ def _build_parser() -> argparse.ArgumentParser:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--base")
     source.add_argument("--changed-manifest", type=Path)
-    parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--plan-review-evidence", type=Path)
+    parser.add_argument("--design", type=Path, required=True)
+    parser.add_argument("--design-review-evidence", type=Path)
+    parser.add_argument("--design-contract-source", action="append", type=Path, default=[])
+    parser.add_argument("--execution-matrix", type=Path, required=True)
     parser.add_argument("--review-evidence", type=Path, required=True)
     parser.add_argument("--json-output", type=Path, required=True)
     return parser
@@ -194,29 +248,33 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(arguments: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(arguments)
     repo = args.repo.resolve()
-    plan_path = args.plan if args.plan.is_absolute() else repo / args.plan
+    design_path = args.design if args.design.is_absolute() else repo / args.design
     try:
-        plan_text = plan_path.read_text(encoding="utf-8")
-        plan_evidence = load_review_evidence(args.plan_review_evidence) if args.plan_review_evidence else None
-        plan_errors, plan_findings = validate_plan(
-            plan_path,
-            plan_evidence,
-            require_review=plan_evidence is not None,
-        )
-        if plan_evidence is None and any(finding.severity == "review_required" for finding in plan_findings):
-            plan_errors.append("Plan has review findings and needs matching --plan-review-evidence")
-        changed_java, changed_paths, diff_or_manifest = _changed_scope(repo, args.base, args.changed_manifest)
+        design_text = design_path.read_text(encoding="utf-8")
+        contract_sources = [
+            path if path.is_absolute() else repo / path
+            for path in args.design_contract_source
+        ]
+        design_errors = validate_design(design_path, args.design_review_evidence, contract_sources)
+        matrix = _load_json(args.execution_matrix)
+        matrix_paths, matrix_errors = _matrix_paths(matrix, design_text)
+        design_hash = hashlib.sha256(design_text.encode("utf-8")).hexdigest()
+        if matrix.get("design_sha256") != design_hash:
+            matrix_errors.append("execution matrix does not match the current Design")
+        changed_java, changed_paths, _ = _changed_scope(repo, args.base, args.changed_manifest)
         findings, _, has_production = _scan_sources(repo, changed_java)
         candidate_files, changed_source_hashes = _candidate_file_parts(repo, changed_paths)
         candidate_parts = {
-            "plan.md": plan_text,
-            "changes": diff_or_manifest,
+            "design.md": design_text,
+            "execution-matrix.json": json.dumps(matrix, ensure_ascii=False, sort_keys=True),
+            "runtime-change-scope.json": json.dumps(sorted(changed_paths), ensure_ascii=False),
             **candidate_files,
         }
         candidate_hash = candidate_sha256(candidate_parts)
         evidence = load_review_evidence(args.review_evidence)
-        errors = list(plan_errors)
-        errors.extend(_scope_errors(changed_paths, _plan_paths(plan_text), evidence))
+        errors = list(design_errors)
+        errors.extend(matrix_errors)
+        errors.extend(_scope_errors(changed_paths, matrix_paths))
         errors.extend(
             review_evidence_errors(
                 evidence,
@@ -230,7 +288,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return 2
     payload = {
         "candidate_sha256": candidate_hash,
-        "plan_sha256": hashlib.sha256(plan_text.encode("utf-8")).hexdigest(),
+        "design_sha256": design_hash,
         "changed_files": sorted(changed_paths),
         "changed_java_files": sorted(changed_java),
         "source_sha256": changed_source_hashes,

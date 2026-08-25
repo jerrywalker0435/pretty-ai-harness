@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run isolated synthetic Plan-to-Execution forward replays with real Codex agents."""
+"""Run isolated synthetic Design-to-Execution forward replays with real Codex agents."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from typing import Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS_PATH = Path(__file__).with_name("scenarios.json")
 ORACLES_PATH = Path(__file__).with_name("oracles")
-SKILLS = ("pretty-common", "pretty-writing-plan", "pretty-executing-plan")
+SKILLS = ("pretty-common", "pretty-writing-prd", "pretty-writing-design", "pretty-executing")
 DEFAULT_COMMAND_TIMEOUT = 900.0
 ORACLE_SOURCES = {
     path.stem: path.read_text(encoding="utf-8")
@@ -99,8 +99,8 @@ class ReplayResult:
     scenario: str
     repetition: int
     workspace: str
-    plan_agent_exit: int
-    plan_gate_exit: int
+    design_agent_exit: int
+    design_gate_exit: int
     execution_agent_exit: int
     execution_gate_exit: int
     oracle_exit: int
@@ -112,8 +112,8 @@ class ReplayResult:
         return self.infrastructure_error is None and not self.semantic_errors and all(
             code == 0
             for code in (
-                self.plan_agent_exit,
-                self.plan_gate_exit,
+                self.design_agent_exit,
+                self.design_gate_exit,
                 self.execution_agent_exit,
                 self.execution_gate_exit,
                 self.oracle_exit,
@@ -237,22 +237,21 @@ def _codex_command(repo: Path, evidence: Path, prompt: str) -> list[str]:
     ]
 
 
-def _plan_prompt(topic: str, evidence: Path) -> str:
-    return f"""This is a synthetic forward evaluation with explicit approval to create the Plan.
-Read and obey .agents/skills/pretty-writing-plan/SKILL.md and every resource it directly requires.
+def _design_prompt(topic: str, evidence: Path) -> str:
+    return f"""This is a synthetic forward evaluation with explicit approval to finalize the Design.
+Read and obey .agents/skills/pretty-writing-design/SKILL.md and every resource it directly requires.
 The primary input is docs/pretty/{topic}/design.md; the PRD and Design are approved in this prompt.
 Read Context.md, Context-Map.md, pom.xml, and the real Java source and tests.
-Create only docs/pretty/{topic}/plan.md. Spawn an independent reviewer agent; do not fabricate its review.
-Write its structured evidence to {evidence / 'plan-review.json'} and make the Plan pass validate_plan.py with that evidence.
-Do not implement production code, commit, or ask questions. Finish only after the Plan Gate passes.
+Update only docs/pretty/{topic}/design.md. Put temporary Design Reviewer evidence at {evidence / 'design-review.json'} when the Design declares high risk. Do not create a Plan or implement production code.
+Do not ask questions. Finish after the Design Gate passes and the document requests Apply and Dry Run.
 """
 
 
 def _execution_prompt(topic: str, evidence: Path) -> str:
-    return f"""This is the Execution half of a synthetic forward evaluation. The evaluator explicitly approves the current Plan.
-Read and obey .agents/skills/pretty-executing-plan/SKILL.md and every resource it directly requires.
-Implement docs/pretty/{topic}/plan.md in the real Java repository with tests. Use an actual independent reviewer agent.
-Use {evidence} for all temporary evidence. Required final files are quality.json, coverage.json, build.json there and docs/pretty/{topic}/execution.md in the repo.
+    return f"""This is the Apply half of a synthetic forward evaluation. The evaluator explicitly approves the current Design.
+Read and obey .agents/skills/pretty-executing/SKILL.md and every resource it directly requires.
+Implement docs/pretty/{topic}/design.md in the real Java repository with tests. Use an actual independent reviewer agent.
+Use {evidence} for all temporary evidence. Required final files are quality.json, coverage.json, tests.json, build.json there and docs/pretty/{topic}/execution.md in the repo.
 Run the supplied quality, coverage, and Execution validators. The coverage build must run tests and create a fresh JaCoCo report.
 Do not commit, push, change approved upstream files, or ask questions. Finish only after the Execution Gate passes.
 """
@@ -260,18 +259,18 @@ Do not commit, push, change approved upstream files, or ask questions. Finish on
 
 def _semantic_errors(repo: Path, scenario: Mapping[str, object]) -> tuple[str, ...]:
     topic = str(scenario["id"])
-    plan_path = repo / f"docs/pretty/{topic}/plan.md"
+    design_path = repo / f"docs/pretty/{topic}/design.md"
     execution_path = repo / f"docs/pretty/{topic}/execution.md"
     production = "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted((repo / "src/main/java").rglob("*.java"))
     )
     errors = []
-    plan = plan_path.read_text(encoding="utf-8") if plan_path.is_file() else ""
+    design = design_path.read_text(encoding="utf-8") if design_path.is_file() else ""
     execution = execution_path.read_text(encoding="utf-8") if execution_path.is_file() else ""
-    for token in scenario["plan_tokens"]:
-        if str(token) not in plan:
-            errors.append(f"Plan missing required contract token: {token}")
+    for token in scenario["design_tokens"]:
+        if str(token) not in design:
+            errors.append(f"Design missing required contract token: {token}")
     for token in scenario["code_tokens"]:
         if str(token) not in production:
             errors.append(f"production code missing required token: {token}")
@@ -300,15 +299,17 @@ def _infrastructure_error(log: Path) -> str | None:
     return next((message for marker, message in markers.items() if marker in content), None)
 
 
-def _validate_plan(environment: ReplayEnvironment, log: Path) -> int:
+def _validate_design(environment: ReplayEnvironment, log: Path) -> int:
+    command = [
+        sys.executable,
+        ".agents/skills/pretty-writing-design/scripts/validate_design.py",
+        f"docs/pretty/{environment.topic}/design.md",
+    ]
+    review = environment.evidence / "design-review.json"
+    if review.is_file():
+        command.extend(["--review-evidence", str(review)])
     return _run(
-        [
-            sys.executable,
-            ".agents/skills/pretty-writing-plan/scripts/validate_plan.py",
-            f"docs/pretty/{environment.topic}/plan.md",
-            "--review-evidence",
-            str(environment.evidence / "plan-review.json"),
-        ],
+        command,
         environment.repo,
         log,
         timeout=environment.timeout,
@@ -319,16 +320,18 @@ def _validate_execution(environment: ReplayEnvironment, log: Path) -> int:
     return _run(
         [
             sys.executable,
-            ".agents/skills/pretty-executing-plan/scripts/validate_execution.py",
+            ".agents/skills/pretty-executing/scripts/validate_execution.py",
             f"docs/pretty/{environment.topic}/execution.md",
-            "--plan",
-            f"docs/pretty/{environment.topic}/plan.md",
+            "--design",
+            f"docs/pretty/{environment.topic}/design.md",
             "--quality-evidence",
             str(environment.evidence / "quality.json"),
             "--coverage-evidence",
             str(environment.evidence / "coverage.json"),
             "--build-evidence",
             str(environment.evidence / "build.json"),
+            "--test-evidence",
+            str(environment.evidence / "tests.json"),
         ],
         environment.repo,
         log,
@@ -367,16 +370,16 @@ def _run_behavior_oracle(
     )
 
 
-def _run_plan_stage(
+def _run_design_stage(
     environment: ReplayEnvironment,
     workspace: Path,
 ) -> AgentGateResult:
-    agent_log = workspace / "plan-agent.log"
+    agent_log = workspace / "design-agent.log"
     agent_exit = _run(
         _codex_command(
             environment.repo,
             environment.evidence,
-            _plan_prompt(environment.topic, environment.evidence),
+            _design_prompt(environment.topic, environment.evidence),
         ),
         environment.repo,
         agent_log,
@@ -385,8 +388,8 @@ def _run_plan_stage(
     infrastructure_error = _infrastructure_error(agent_log)
     if agent_exit != 0:
         return AgentGateResult(agent_exit, -1, infrastructure_error)
-    gate_log = workspace / "plan-gate.log"
-    gate_exit = _validate_plan(environment, gate_log)
+    gate_log = workspace / "design-gate.log"
+    gate_exit = _validate_design(environment, gate_log)
     return AgentGateResult(
         agent_exit,
         gate_exit,
@@ -431,12 +434,12 @@ def run_one(
     workspace = output_root / f"{topic}-{repetition}"
     repo, evidence = _prepare_repo(workspace, scenario, timeout)
     environment = ReplayEnvironment(repo, evidence, topic, timeout)
-    plan_stage = _run_plan_stage(environment, workspace)
+    design_stage = _run_design_stage(environment, workspace)
     execution_stage = AgentGateResult(-1, -1, None)
-    if plan_stage.agent_exit == 0 and plan_stage.gate_exit == 0:
+    if design_stage.agent_exit == 0 and design_stage.gate_exit == 0:
         execution_stage = _run_execution_stage(environment, workspace)
     infrastructure_error = (
-        plan_stage.infrastructure_error or execution_stage.infrastructure_error
+        design_stage.infrastructure_error or execution_stage.infrastructure_error
     )
     oracle_exit = -1
     if execution_stage.agent_exit == 0 and execution_stage.gate_exit == 0:
@@ -450,8 +453,8 @@ def run_one(
         topic,
         repetition,
         str(workspace),
-        plan_stage.agent_exit,
-        plan_stage.gate_exit,
+        design_stage.agent_exit,
+        design_stage.gate_exit,
         execution_stage.agent_exit,
         execution_stage.gate_exit,
         oracle_exit,

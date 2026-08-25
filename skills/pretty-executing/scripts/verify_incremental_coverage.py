@@ -433,6 +433,7 @@ def discover_reports(repo: Path) -> tuple[Path, ...]:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."), help="目标仓库根目录")
+    parser.add_argument("--design", type=Path, required=True, help="当前批准的 Design")
     parser.add_argument("--base", default="HEAD", help="执行开始的 Git 基线")
     parser.add_argument("--changed-manifest", type=Path, help="执行归因生成的临时 changed-line JSON")
     parser.add_argument("--report", action="append", type=Path, help="JaCoCo XML；可重复传入")
@@ -483,6 +484,7 @@ def _emit_result(
     reports: Sequence[Path],
     candidate_hash: str,
     source_hashes: Mapping[str, str],
+    design_sha256: str,
     json_output: Path | None,
 ) -> int:
     payload = coverage_result.as_dict()
@@ -493,6 +495,7 @@ def _emit_result(
     }
     payload["candidate_sha256"] = candidate_hash
     payload["source_sha256"] = dict(sorted(source_hashes.items()))
+    payload["design_sha256"] = design_sha256
     payload["generated_at"] = time.time()
     print(_render_text(coverage_result))
     _write_json(json_output, payload)
@@ -586,6 +589,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(arguments)
     repo = args.repo.resolve()
     try:
+        design_path = args.design if args.design.is_absolute() else repo / args.design
+        design_sha256 = _file_sha256(design_path)
         _validate_thresholds(args.line_threshold, args.branch_threshold)
         if not args.run and args.report_not_before is None:
             raise ValueError("--report-not-before is required unless --run is used")
@@ -598,7 +603,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         reports = _resolve_reports(repo, args.report, report_not_before)
         if not changed_sources:
             coverage_result = calculate_coverage((), {}, args.line_threshold, args.branch_threshold)
-            return _emit_result(coverage_result, (), candidate_hash, source_hashes, args.json_output)
+            return _emit_result(coverage_result, (), candidate_hash, source_hashes, design_sha256, args.json_output)
         if not reports:
             raise RuntimeError("未找到 JaCoCo XML 报告；请使用 --report 或 --run")
         stale_sources = _stale_sources(repo, changed_sources, reports)
@@ -611,7 +616,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             args.line_threshold,
             args.branch_threshold,
         )
-        return _emit_result(coverage_result, reports, candidate_hash, source_hashes, args.json_output)
+        return _emit_result(coverage_result, reports, candidate_hash, source_hashes, design_sha256, args.json_output)
     except (OSError, RuntimeError, ValueError, ElementTree.ParseError) as error:
         print(f"覆盖率验证无法验证：{error}", file=sys.stderr)
         return UNMEASURABLE_EXIT

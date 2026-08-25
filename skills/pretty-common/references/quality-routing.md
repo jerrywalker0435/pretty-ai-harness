@@ -10,13 +10,13 @@ Pretty Harness 决定阶段、审批、构建范围、证据格式和完成状�
 
 | 风险 ID | 触发事实 | 主审 Skill |
 | --- | --- | --- |
-| `MODULE_BOUNDARY` | Interface、Seam、Depth、Locality、跨模块规则归属 | `codebase-design` |
+| `MODULE_BOUNDARY` | Interface、公共验证入口、Depth、Locality、跨模块规则归属 | `codebase-design` |
 | `JAVA_OOD` | Java 职责、封装、重复、对象创建、类或方法合同 | `121-java-object-oriented-design` |
 | `FOCUSED_SOLID` | 只有一个明确 SOLID 原则需要定向判断 | `solid-principles` |
 | `TYPE_DESIGN` | primitive obsession、值对象、类型层级、精度或签名混淆 | `122-java-type-design` |
 | `CHANGE_AXIS` | 已存在第二实现或已批准的真实变化轴 | `design-patterns` |
 | `JAVA_RUNTIME_RISK` | null、异常、并发、资源、性能或 Java API 风险 | `java-code-review` |
-| `BEHAVIOR_TEST` | 行为变化、Bug 修复、测试 Seam、断言或边界替身 | `tdd` |
+| `BEHAVIOR_TEST` | 行为变化、Bug 修复、公共验证入口、断言或边界替身 | `tdd` |
 
 `JAVA_OOD` 与 `FOCUSED_SOLID` 对同一问题二选一：跨多个 OOD 关注点使用前者，只审一个已证实原则时使用后者。`CHANGE_AXIS` 不能由假想扩展触发。
 

@@ -6,56 +6,38 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills/pretty-executing-plan/scripts"))
+sys.path.insert(0, str(ROOT / "skills/pretty-executing/scripts"))
 
-from validate_execution import validate_execution  # noqa: E402
+from validate_execution import ExecutionEvidence, validate_execution  # noqa: E402
 
-
-PLAN = """# example Implementation Plan
-
-## 实施任务
-
+DESIGN = """# Example Design
+## 实施影响
 ### TASK-001：返回订单
-
-**Files:**
-- Modify: `app/src/main/java/example/Service.java`
 """
 
-COMPLETE_EXECUTION = """# example Execution
-
+EXECUTION = """# Example Execution
 ## 执行起点
-
-- 执行依据：当前工作区最新 Plan
+- 执行依据：当前工作区最新 Design
 - 起始 HEAD：`1234567`
-
 ## 基线
-
 基线通过。
-
 ## TASK 结果
-
 ### TASK-001：返回订单
-
-- 路由与审查：JAVA_OOD 由独立 reviewer 完成审查。
-
+- 路由与审查：独立 reviewer 已完成。
 ## 最终门禁
-
 | 门禁 | 证据 | 结果 |
 | --- | --- | --- |
-| Plan 与真实 Diff | scope.json | 通过 |
+| Design TASK 与真实 Diff | matrix.json | 通过 |
 | 机械 Gate 与独立审查 | quality.json | 通过 |
 | 编译与相关测试 | build.json | 通过 |
+| 新增/修改测试实际执行 | tests.json | 通过 |
 | 增量覆盖率 | coverage.json | 通过 |
-
 ## 未验证范围
-
 - 无
-
 ## 结论与恢复点
-
 - 状态：完成
+- 最终 Diff 摘要：`quality`
 - 测试覆盖率：增量行覆盖率 100.00%，分支覆盖率 98.91%
 """
 
@@ -63,205 +45,108 @@ COMPLETE_EXECUTION = """# example Execution
 class ExecutionValidatorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.plan_path = Path(self.temporary.name) / "plan.md"
-        self.plan_path.write_text(PLAN, encoding="utf-8")
-        self.source_path = Path(self.temporary.name) / "Service.java"
-        self.source_path.write_text("final class Service {}\n", encoding="utf-8")
-        plan_hash = hashlib.sha256(self.plan_path.read_bytes()).hexdigest()
-        source_hash = hashlib.sha256(self.source_path.read_bytes()).hexdigest()
-        self.quality = {
-            "candidate_sha256": "quality",
-            "plan_sha256": plan_hash,
-            "source_sha256": {"Service.java": source_hash},
-            "passed": True,
-        }
-        self.coverage = {
-            "candidate_sha256": "coverage",
-            "source_sha256": {"Service.java": source_hash},
-            "status": "pass",
-            "line_percentage": 100.0,
-            "branch_percentage": 98.91,
-        }
-        self.build = {
-            "plan_sha256": plan_hash,
-            "quality_candidate_sha256": "quality",
-            "coverage_candidate_sha256": "coverage",
-            "started_at": 100,
-            "commands": [
-                {"kind": kind, "command": f"run {kind}", "exit_code": 0, "finished_at": 101}
-                for kind in ("compile", "new_tests", "regression_tests")
-            ],
-        }
+        root = Path(self.temporary.name)
+        self.topic = root / "docs/pretty/example"
+        self.topic.mkdir(parents=True)
+        self.design = self.topic / "design.md"
+        self.design.write_text(DESIGN, encoding="utf-8")
+        self.source = root / "src/main/java/example/Service.java"
+        self.source.parent.mkdir(parents=True)
+        self.source.write_text("final class Service {}\n", encoding="utf-8")
+        design_hash = hashlib.sha256(self.design.read_bytes()).hexdigest()
+        source_hash = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        self.quality = {"candidate_sha256": "quality", "design_sha256": design_hash, "source_sha256": {"src/main/java/example/Service.java": source_hash}, "production_java": True, "passed": True}
+        self.coverage = {"candidate_sha256": "coverage", "design_sha256": design_hash, "source_sha256": {"src/main/java/example/Service.java": source_hash}, "status": "pass", "line_percentage": 100.0, "branch_percentage": 98.91}
+        self.tests = {"candidate_sha256": "tests", "design_sha256": design_hash, "source_sha256": {}, "status": "pass", "passed": True}
+        self.build = {"design_sha256": design_hash, "quality_candidate_sha256": "quality", "coverage_candidate_sha256": "coverage", "test_candidate_sha256": "tests", "commands": [{"kind": kind, "exit_code": 0, "finished_at": 101} for kind in ("compile", "new_tests", "regression_tests")]}
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_accepts_exact_coverage_conclusion(self) -> None:
-        errors = validate_execution(
-            COMPLETE_EXECUTION,
-            PLAN,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
+    def validate(self, document: str = EXECUTION) -> list[str]:
+        return validate_execution(document, DESIGN, self.design, ExecutionEvidence(self.quality, self.coverage, self.build, self.tests))
 
-        self.assertEqual([], errors)
+    def test_accepts_design_bound_execution_and_exact_coverage(self) -> None:
+        self.assertEqual([], self.validate())
+
+    def test_rejects_task_set_drift(self) -> None:
+        errors = self.validate(EXECUTION.replace("TASK-001：返回订单", "TASK-002：返回订单"))
+        self.assertTrue(any("TASK set must match Design" in error for error in errors))
+
+    def test_rejects_tests_that_were_not_actually_executed(self) -> None:
+        self.tests["passed"] = False
+        self.tests["status"] = "fail"
+        self.assertIn("完成状态需要新增/修改测试实际执行通过", self.validate())
 
     def test_rejects_coverage_numbers_not_backed_by_evidence(self) -> None:
-        document = COMPLETE_EXECUTION.replace("98.91%", "99.00%")
-
-        errors = validate_execution(
-            document,
-            PLAN,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
-
+        errors = self.validate(EXECUTION.replace("98.91%", "99.00%"))
         self.assertTrue(any("结论必须包含覆盖率证据" in error for error in errors))
 
-    def test_stopped_report_does_not_require_successful_builds(self) -> None:
-        document = COMPLETE_EXECUTION.replace("- 状态：完成", "- 状态：停止：测试环境不可用")
+    def test_rejects_evidence_after_source_changes(self) -> None:
+        self.source.write_text("final class Service { int changed; }\n", encoding="utf-8")
+        errors = self.validate()
+        self.assertIn("quality evidence is stale for src/main/java/example/Service.java", errors)
+        self.assertIn("coverage evidence is stale for src/main/java/example/Service.java", errors)
+
+    def test_latest_failed_build_command_overrides_earlier_success(self) -> None:
+        self.build["commands"].append({"kind": "compile", "exit_code": 1, "finished_at": 102})
+        self.assertIn("latest build evidence failed: compile", self.validate())
+
+    def test_latest_successful_build_command_can_close_an_earlier_failure(self) -> None:
+        self.build["commands"].insert(0, {"kind": "compile", "exit_code": 1, "finished_at": 100})
+        self.assertEqual([], self.validate())
+
+    def test_rejects_stale_candidate_binding(self) -> None:
+        self.build["quality_candidate_sha256"] = "older-quality"
+        self.assertIn("build evidence has stale quality_candidate_sha256", self.validate())
+
+    def test_stopped_report_does_not_require_successful_commands(self) -> None:
+        document = EXECUTION.replace("- 状态：完成", "- 状态：停止：测试环境不可用")
         document = document.replace(
             "- 测试覆盖率：增量行覆盖率 100.00%，分支覆盖率 98.91%",
             "- 测试覆盖率：无法验证",
         )
-        document = document.replace("| coverage.json | 通过 |", "| coverage.json | 未通过 |")
-        quality = {**self.quality, "passed": False}
-        coverage = {**self.coverage, "status": "unmeasurable"}
+        document = document.replace("| coverage.json | 通过 |", "| coverage.json | 不通过 |")
+        self.coverage["status"] = "unmeasurable"
+        self.coverage["line_percentage"] = None
+        self.coverage["branch_percentage"] = None
         self.build["commands"] = []
+        self.assertEqual([], self.validate(document))
 
-        errors = validate_execution(
-            document,
-            PLAN,
-            self.plan_path,
-            quality,
-            coverage,
-            self.build,
+    def test_stopped_report_does_not_require_final_evidence_files(self) -> None:
+        document = EXECUTION.replace("- 状态：完成", "- 状态：停止：基线测试失败")
+        document = document.replace(
+            "- 测试覆盖率：增量行覆盖率 100.00%，分支覆盖率 98.91%",
+            "- 测试覆盖率：无法验证",
         )
+        evidence = ExecutionEvidence({}, {}, {}, {})
+        self.assertEqual([], validate_execution(document, DESIGN, self.design, evidence))
 
-        self.assertEqual([], errors)
-
-    def test_extra_passing_row_cannot_hide_a_failed_required_gate(self) -> None:
-        document = COMPLETE_EXECUTION.replace(
-            "| Plan 与真实 Diff | scope.json | 通过 |",
-            "| Plan 与真实 Diff | scope.json | 未通过 |\n| 额外检查 | extra.json | 通过 |",
-        )
-
-        errors = validate_execution(
-            document,
-            PLAN,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
-
-        self.assertIn("完成状态的最终门禁未通过：Plan 与真实 Diff", errors)
-
-    def test_rejects_evidence_after_source_changes(self) -> None:
-        self.source_path.write_text("final class Service { int changed; }\n", encoding="utf-8")
-
-        errors = validate_execution(
-            COMPLETE_EXECUTION,
-            PLAN,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
-
-        self.assertIn("quality evidence is stale for Service.java", errors)
-        self.assertIn("coverage evidence is stale for Service.java", errors)
-
-    def test_latest_failed_build_command_overrides_earlier_success(self) -> None:
-        self.build["commands"].append(
-            {
-                "kind": "compile",
-                "command": "run compile again",
-                "exit_code": 1,
-                "finished_at": 102,
-            }
-        )
-
-        errors = validate_execution(
-            COMPLETE_EXECUTION,
-            PLAN,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
-
-        self.assertIn("latest build evidence failed: compile", errors)
-
-    def test_latest_successful_build_command_can_close_an_earlier_failure(self) -> None:
-        self.build["commands"].insert(
-            0,
-            {
-                "kind": "compile",
-                "command": "initial compile",
-                "exit_code": 1,
-                "finished_at": 100,
-            },
-        )
-
-        errors = validate_execution(
-            COMPLETE_EXECUTION,
-            PLAN,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
-
-        self.assertEqual([], errors)
-
-    def test_sql_plan_does_not_require_database_validation(self) -> None:
-        sql_plan = """# event-index Implementation Plan
-
-## 实施任务
-
-### TASK-001：创建事件索引
-
-**Files:**
-- Modify: `db/migration/V2__event_index.sql`
-"""
-        self.plan_path.write_text(sql_plan, encoding="utf-8")
-        plan_hash = hashlib.sha256(self.plan_path.read_bytes()).hexdigest()
-        self.quality["plan_sha256"] = plan_hash
-        self.build["plan_sha256"] = plan_hash
-        self.build["commands"] = []
-        self.coverage.update(
-            {
-                "status": "not_applicable",
-                "line_percentage": None,
-                "branch_percentage": None,
-            }
-        )
-        document = COMPLETE_EXECUTION.replace(
-            "| coverage.json | 通过 |",
-            "| coverage.json | 不适用 |",
-        ).replace(
+    def test_ddl_only_execution_can_declare_no_build_command_kinds(self) -> None:
+        document = EXECUTION.replace(
             "- 测试覆盖率：增量行覆盖率 100.00%，分支覆盖率 98.91%",
             "- 测试覆盖率：不适用",
-        ).replace(
-            "- 无",
-            "- DDL 未验证",
         )
+        document = document.replace("| build.json | 通过 |", "| build.json | 不适用 |")
+        document = document.replace("| tests.json | 通过 |", "| tests.json | 不适用 |")
+        document = document.replace("| coverage.json | 通过 |", "| coverage.json | 不适用 |")
+        self.coverage["status"] = "not_applicable"
+        self.coverage["line_percentage"] = None
+        self.coverage["branch_percentage"] = None
+        self.tests["status"] = "not_applicable"
+        self.quality["production_java"] = False
+        self.build["required_kinds"] = []
+        self.build["commands"] = []
+        self.assertEqual([], self.validate(document))
 
-        errors = validate_execution(
-            document,
-            sql_plan,
-            self.plan_path,
-            self.quality,
-            self.coverage,
-            self.build,
-        )
+    def test_java_execution_cannot_disable_required_build_kinds(self) -> None:
+        self.build["required_kinds"] = []
+        self.build["commands"] = []
+        self.assertTrue(any("applicable command" in error for error in self.validate()))
 
-        self.assertEqual([], errors)
+    def test_rejects_preview_ready_as_execution_status(self) -> None:
+        document = EXECUTION.replace("- 状态：完成", "- 状态：预演就绪")
+        self.assertTrue(any("valid final status" in error for error in self.validate(document)))
 
 
 if __name__ == "__main__":
