@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shlex
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import xml.etree.ElementTree as ElementTree
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -86,8 +88,15 @@ def _percentage(covered: int, total: int) -> float | None:
 
 
 def _is_production_java(path: str) -> bool:
-    normalized = path.replace("\\", "/").lower()
-    excluded = ("/src/test/", "/test/", "/target/", "/build/", "generated-sources")
+    normalized = f"/{path.replace(chr(92), '/').lower().lstrip('/')}"
+    excluded = (
+        "/src/test/",
+        "/test/",
+        "/target/",
+        "/build/",
+        "/generated/",
+        "/generated-sources/",
+    )
     return normalized.endswith(".java") and not any(item in normalized for item in excluded)
 
 
@@ -174,7 +183,10 @@ def _source_key(package_name: str, source_name: str) -> str:
     return f"{package}/{source_name}" if package else source_name
 
 
-def parse_jacoco_report(report: Path) -> dict[str, SourceCoverage]:
+def parse_jacoco_report(
+    report: Path,
+    source_prefix: str = "",
+) -> dict[str, SourceCoverage]:
     root = ElementTree.parse(report).getroot()
     sources: dict[str, SourceCoverage] = {}
     for package in root.findall(".//package"):
@@ -182,6 +194,7 @@ def parse_jacoco_report(report: Path) -> dict[str, SourceCoverage]:
         for sourcefile in package.findall("sourcefile"):
             source_name = sourcefile.attrib.get("name", "")
             key = _source_key(package_name, source_name)
+            key = f"{source_prefix}/{key}" if source_prefix else key
             lines = {
                 _integer_attribute(line, "nr"): LineCoverage(
                     _integer_attribute(line, "ci"),
@@ -195,10 +208,29 @@ def parse_jacoco_report(report: Path) -> dict[str, SourceCoverage]:
     return sources
 
 
-def merge_reports(reports: Iterable[Path]) -> dict[str, SourceCoverage]:
+def _report_module(repo: Path, report: Path) -> str:
+    try:
+        relative_parts = report.resolve().relative_to(repo.resolve()).parts
+    except ValueError:
+        return ""
+    build_indexes = [
+        index
+        for index, part in enumerate(relative_parts)
+        if part in {"target", "build"}
+    ]
+    if not build_indexes:
+        return ""
+    return "/".join(relative_parts[: build_indexes[0]])
+
+
+def merge_reports(
+    reports: Iterable[Path],
+    repo: Path | None = None,
+) -> dict[str, SourceCoverage]:
     merged: dict[str, SourceCoverage] = {}
     for report in reports:
-        for key, source in parse_jacoco_report(report).items():
+        prefix = _report_module(repo, report) if repo else ""
+        for key, source in parse_jacoco_report(report, prefix).items():
             existing = merged.get(key)
             if existing is None:
                 merged[key] = source
@@ -227,7 +259,12 @@ def _merge_line_maps(
 
 def _match_source(path: str, sources: Mapping[str, SourceCoverage]) -> SourceCoverage | None:
     normalized = path.replace("\\", "/")
-    suffix_matches = [source for key, source in sources.items() if normalized.endswith(key)]
+    source_relative = re.sub(r"/(?:src/(?:main|test)/java|src)/", "/", normalized)
+    suffix_matches = [
+        source
+        for key, source in sources.items()
+        if normalized.endswith(key) or source_relative.endswith(key)
+    ]
     if len(suffix_matches) == 1:
         return suffix_matches[0]
     basename = Path(normalized).name
@@ -405,13 +442,24 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--line-threshold", type=float, default=DEFAULT_LINE_THRESHOLD)
     parser.add_argument("--branch-threshold", type=float, default=DEFAULT_BRANCH_THRESHOLD)
     parser.add_argument("--json-output", type=Path, help="可选 JSON 结果路径")
+    parser.add_argument(
+        "--report-not-before",
+        type=float,
+        help="未使用 --run 时，JaCoCo 报告不得早于此 Unix 时间",
+    )
     return parser
 
 
-def _resolve_reports(repo: Path, report_arguments: Sequence[Path] | None) -> tuple[Path, ...]:
+def _resolve_reports(
+    repo: Path,
+    report_arguments: Sequence[Path] | None,
+    not_before: float,
+) -> tuple[Path, ...]:
     if report_arguments:
-        return tuple(path if path.is_absolute() else repo / path for path in report_arguments)
-    return discover_reports(repo)
+        reports = tuple(path if path.is_absolute() else repo / path for path in report_arguments)
+    else:
+        reports = discover_reports(repo)
+    return tuple(report for report in reports if report.is_file() and report.stat().st_mtime >= not_before)
 
 
 def _render_text(result: CoverageResult) -> str:
@@ -431,10 +479,21 @@ def _write_json(output_path: Path | None, payload: Mapping[str, object]) -> None
 
 
 def _emit_result(
-    coverage_result: CoverageResult, reports: Sequence[Path], json_output: Path | None
+    coverage_result: CoverageResult,
+    reports: Sequence[Path],
+    candidate_hash: str,
+    source_hashes: Mapping[str, str],
+    json_output: Path | None,
 ) -> int:
     payload = coverage_result.as_dict()
     payload["reports"] = [str(report) for report in reports]
+    payload["report_sha256"] = {
+        str(report): _file_sha256(report)
+        for report in reports
+    }
+    payload["candidate_sha256"] = candidate_hash
+    payload["source_sha256"] = dict(sorted(source_hashes.items()))
+    payload["generated_at"] = time.time()
     print(_render_text(coverage_result))
     _write_json(json_output, payload)
     if coverage_result.status == "unmeasurable":
@@ -445,6 +504,7 @@ def _emit_result(
 def _run_requested_build(args: argparse.Namespace, repo: Path) -> None:
     if not args.run:
         return
+    _reject_test_skipping(args.build_arg)
     build_tool = _find_build_tool(repo, args.build_tool)
     build_exit, command = run_coverage_build(repo, build_tool, args.build_arg)
     if build_exit != 0:
@@ -457,26 +517,101 @@ def _load_changed_sources(args: argparse.Namespace, repo: Path) -> tuple[Changed
     return collect_changed_sources(repo, args.base)
 
 
+def _file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _coverage_candidate_hash(repo: Path, sources: Sequence[ChangedSource]) -> str:
+    digest = hashlib.sha256()
+    for source in sources:
+        digest.update(source.path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(",".join(str(line) for line in sorted(source.lines)).encode("ascii"))
+        source_path = repo / source.path
+        if source_path.is_file():
+            digest.update(b"\0")
+            digest.update(source_path.read_bytes())
+    return digest.hexdigest()
+
+
+def _source_hashes(repo: Path, sources: Sequence[ChangedSource]) -> dict[str, str]:
+    return {
+        source.path: _file_sha256(repo / source.path)
+        for source in sources
+        if (repo / source.path).is_file()
+    }
+
+
+def _stale_sources(
+    repo: Path,
+    changed_sources: Sequence[ChangedSource],
+    reports: Sequence[Path],
+) -> list[str]:
+    parsed_reports = [
+        (report.stat().st_mtime, parse_jacoco_report(report, _report_module(repo, report)))
+        for report in reports
+    ]
+    stale = []
+    for changed in changed_sources:
+        source_path = repo / changed.path
+        matching_mtimes = [
+            modified_at
+            for modified_at, sources in parsed_reports
+            if _match_source(changed.path, sources) is not None
+        ]
+        if source_path.is_file() and matching_mtimes and max(matching_mtimes) < source_path.stat().st_mtime:
+            stale.append(changed.path)
+    return stale
+
+
+def _reject_test_skipping(build_arguments: Sequence[str]) -> None:
+    forbidden = re.compile(
+        r"skipTests|maven\.test\.skip|test\.enabled\s*=\s*false|"
+        r"(?:^|\s)(?:-x|--exclude-task)(?:\s|=)",
+        re.IGNORECASE,
+    )
+    rendered = " ".join(build_arguments)
+    if forbidden.search(rendered):
+        raise ValueError("coverage build arguments must not skip or exclude tests")
+
+
+def _validate_thresholds(line_threshold: float, branch_threshold: float) -> None:
+    if not 0 <= line_threshold <= 100:
+        raise ValueError("line threshold must be between 0 and 100")
+    if not 0 <= branch_threshold <= 100:
+        raise ValueError("branch threshold must be between 0 and 100")
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(arguments)
     repo = args.repo.resolve()
     try:
+        _validate_thresholds(args.line_threshold, args.branch_threshold)
+        if not args.run and args.report_not_before is None:
+            raise ValueError("--report-not-before is required unless --run is used")
+        report_not_before = time.time() if args.run else args.report_not_before
+        assert report_not_before is not None
         _run_requested_build(args, repo)
         changed_sources = _load_changed_sources(args, repo)
-        reports = _resolve_reports(repo, args.report)
+        candidate_hash = _coverage_candidate_hash(repo, changed_sources)
+        source_hashes = _source_hashes(repo, changed_sources)
+        reports = _resolve_reports(repo, args.report, report_not_before)
         if not changed_sources:
             coverage_result = calculate_coverage((), {}, args.line_threshold, args.branch_threshold)
-            return _emit_result(coverage_result, (), args.json_output)
+            return _emit_result(coverage_result, (), candidate_hash, source_hashes, args.json_output)
         if not reports:
             raise RuntimeError("未找到 JaCoCo XML 报告；请使用 --report 或 --run")
-        sources = merge_reports(reports)
+        stale_sources = _stale_sources(repo, changed_sources, reports)
+        if stale_sources:
+            raise RuntimeError(f"JaCoCo 报告早于生产源码：{', '.join(stale_sources)}")
+        sources = merge_reports(reports, repo)
         coverage_result = calculate_coverage(
             changed_sources,
             sources,
             args.line_threshold,
             args.branch_threshold,
         )
-        return _emit_result(coverage_result, reports, args.json_output)
+        return _emit_result(coverage_result, reports, candidate_hash, source_hashes, args.json_output)
     except (OSError, RuntimeError, ValueError, ElementTree.ParseError) as error:
         print(f"覆盖率验证无法验证：{error}", file=sys.stderr)
         return UNMEASURABLE_EXIT

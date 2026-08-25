@@ -1,0 +1,161 @@
+{
+  "review_status": "REQUEST_CHANGES",
+  "counts": {
+    "P0": 0,
+    "P1": 7,
+    "P2": 3,
+    "P3": 0
+  },
+  "blocked": true,
+  "items": [
+    {
+      "severity": "P1",
+      "file": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "line": 671,
+      "title": "整文件删除不会进入 Java 变更范围",
+      "description": "parse_touched_java_lines 用 not new_line 判断是否位于 hunk；整文件删除的标准 hunk 头是 @@ -1,N +0,0 @@，此时 new_line == 0，后续所有删除行都会在设置 saw_deletion 前被跳过。定向验证对完整删除 src/main/java/S.java 的 diff 返回了空字典。",
+      "impact": "删除的生产 Java 文件不会参与 Plan 范围校验、生产代码判定或 clean-code-guard 强制检查；未计划的生产文件删除因此可能获得通过结论。",
+      "fix_suggestion": "使用显式 in_hunk 状态解析 hunk，并为 +0,0 的整文件删除增加回归测试；删除文件至少保留路径、生产或测试分类和范围校验证据。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "line": 128,
+      "title": "宽泛 catch 内出现嵌套块时 fallback 规则失效",
+      "description": "BROAD_FALLBACK 的主体匹配在遇到第一个右花括号时停止，因此 catch 中只要先有 if、try 或其他嵌套块，后面的 return true、false 或 empty 就不会命中。定向反例得到零 finding。",
+      "impact": "本应属于机械 error 的异常转成功或空结果可以被常见控制流绕过，失败可能被静默伪装为成功。",
+      "fix_suggestion": "复用花括号配对逻辑提取完整 catch span，再在完整主体上检测 fallback return，并覆盖嵌套 if、try 和 lambda 的测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "line": 103,
+      "title": "全限定可空注解被当作未声明 null 合同",
+      "description": "方法注解模式只接受不含点号的简单名，NULLABLE 也只识别 @Nullable 和 @CheckForNull。合法的 @org.springframework.lang.Nullable 方法会产生不可豁免的 NULL-RETURN error，定向验证已复现。",
+      "impact": "使用全限定框架注解的合法 Java 或 Spring 代码将无法通过质量 Gate。",
+      "fix_suggestion": "让注解解析支持限定名及常见 type-use 位置，并以注解简单名判断 Nullable 或 CheckForNull；补充 Spring、javax 和 jakarta 注解测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-executing-plan/scripts/verify_quality_contract.py",
+      "line": 111,
+      "title": "范围校验不检查 Plan 中漏实现的 Java 文件",
+      "description": "_scope_errors 只遍历 changed_paths - planned_paths，没有检查 Plan 声明的 Create、Modify 或 Delete Java 路径是否实际出现在变更集中。定向调用 changed={A.java}、planned={A.java,B.java} 返回空错误。",
+      "impact": "只实现 Plan 一部分时仍可生成 passed=true 的质量证据，最终可能把缺少文件或 TASK 的不完整实现声明为完成。",
+      "fix_suggestion": "按 FILE_ENTRY 操作语义校验双向一致性；若允许无操作条目，要求独立、结构化的原因并写入最终证据。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-writing-plan/scripts/validate_plan.py",
+      "line": 208,
+      "title": "空代码块会被当成完整的 Plan 核心代码和测试提案",
+      "description": "_blocks_between 只判断围栏块是否存在，没有检查内容非空。空的修改 text 围栏或逻辑 TASK 的空测试 java 围栏均可让 validate_plan 返回空错误列表。",
+      "impact": "机械 Gate 会放行没有实现内容或行为测试的 Plan，Execution 因而缺少规范实现基线。",
+      "fix_suggestion": "只接受内容 strip 后非空的块，并增加空修改块和空测试 Java 块的回归测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-executing-plan/scripts/validate_execution.py",
+      "line": 212,
+      "title": "较早的成功记录可以掩盖同类命令最后一次执行失败",
+      "description": "_build_errors 收集任意 exit_code == 0 的命令种类，只检查三种必需 kind 是否曾经成功。在成功 compile 后追加更新鲜且 exit_code 为 1 的 compile，完成态仍返回空错误。",
+      "impact": "最终一次编译或测试已经失败时，Execution Gate 仍可接受完成状态。",
+      "fix_suggestion": "按 finished_at 选择每个必需 kind 的最新记录并要求其 exit_code == 0，同时校验每条命令的 exit_code 类型；补充先成功后失败和先失败后成功测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "benchmarks/quality-forward/run_replay.py",
+      "line": 216,
+      "title": "Replay 的通过条件没有独立验证场景行为",
+      "description": "_semantic_errors 只检查 Plan 或生产代码中的字符串 token，以及 execution.md 的完成和覆盖率文案；场景真实输入输出合同没有由 evaluator 自己执行。",
+      "impact": "Agent 可以写出错误实现和与之相符的测试，只要包含要求 token 并通过自己生成的 Gate 证据，benchmark 仍可能给出假阳性。",
+      "fix_suggestion": "为每个 scenario 增加 evaluator-owned 验收测试或行为 oracle，从 Agent 不可修改的位置注入执行，并将退出码纳入 ReplayResult.passed；增加仅含 token 但行为错误的负向测试。"
+    },
+    {
+      "severity": "P2",
+      "file": "benchmarks/quality-forward/run_replay.py",
+      "line": 123,
+      "title": "外部命令无法启动或挂起时不会形成 infrastructure_error 结果",
+      "description": "_run 调用无 timeout 的 subprocess.run，且未捕获 FileNotFoundError、OSError 或 TimeoutExpired；任一线程任务抛异常会让汇总退出并且不生成 summary.json。",
+      "impact": "缺少 codex 或 git、进程启动失败或 Agent 卡死会丢失其他已完成场景的结果，与 README 的 infrastructure_error 承诺不一致。",
+      "fix_suggestion": "增加可配置 timeout，捕获启动和超时异常并写日志；让 _run_job 把环境异常转换为 ReplayResult，保证其余 job 和 summary 完成。"
+    },
+    {
+      "severity": "P2",
+      "file": "install/CODEX_INSTALL_PROMPT.template.md",
+      "line": 70,
+      "title": "共享资源更新在复制成功前删除最后一个可用版本",
+      "description": "更新脚本验证远端源文件后立即删除目标 pretty-common，再执行复制；若复制因磁盘、权限或中断失败，旧版本已无法恢复。",
+      "impact": "一次更新失败会把原本可工作的安装破坏成缺少共享依赖的半安装状态。",
+      "fix_suggestion": "先复制到目标父目录下的唯一 staging 目录并完整校验，再以可回滚的 rename 或 swap 替换；替换失败时保留或恢复旧目录。"
+    },
+    {
+      "severity": "P2",
+      "file": "install/CODEX_INSTALL_PROMPT.template.md",
+      "line": 36,
+      "title": "16 到 14 的升级路径不会处理已移除的两个 Skill",
+      "description": "模板移除了 refactor 与 verification-before-completion，但更新流程只检查和安装当前 14 个名称；旧用户安装的两个目录不会被识别、提示或处理。",
+      "impact": "实际可发现能力仍可能是 16 个，安装结果却会报告当前 14-Skill 组合更新成功。",
+      "fix_suggestion": "增加 legacy 迁移步骤：检测旧目录并明确提示其已不属于 Harness；经单独确认后删除，或在最终报告中列为保留的额外 Skill。"
+    }
+  ],
+  "removal_plan": {
+    "safe_now": [],
+    "defer_with_plan": []
+  },
+  "scope": {
+    "files_reviewed": [
+      "README.md",
+      "ai-harness-skill-orchestration-guide.md",
+      "install/CODEX_INSTALL_PROMPT.template.md",
+      "skills/pretty-common/references/quality-principles.md",
+      "skills/pretty-executing-plan/SKILL.md",
+      "skills/pretty-executing-plan/agents/openai.yaml",
+      "skills/pretty-executing-plan/assets/execution.md",
+      "skills/pretty-executing-plan/references/quality-contract-gates.md",
+      "skills/pretty-executing-plan/scripts/validate_execution.py",
+      "skills/pretty-executing-plan/scripts/verify_incremental_coverage.py",
+      "skills/pretty-writing-plan/SKILL.md",
+      "skills/pretty-writing-plan/agents/openai.yaml",
+      "skills/pretty-writing-plan/assets/plan.md",
+      "skills/pretty-writing-plan/scripts/validate_plan.py",
+      ".idea/git_toolbox_prj.xml",
+      "benchmarks/quality-forward/README.md",
+      "benchmarks/quality-forward/run_replay.py",
+      "benchmarks/quality-forward/scenarios.json",
+      "skills/pretty-common/references/quality-review-protocol.md",
+      "skills/pretty-common/references/quality-routing.md",
+      "skills/pretty-common/scripts/quality_contract_gate.py",
+      "skills/pretty-executing-plan/scripts/verify_quality_contract.py",
+      "tests/test_coverage_gate.py",
+      "tests/test_execution_validator.py",
+      "tests/test_plan_validator.py",
+      "tests/test_quality_contract_gate.py",
+      "tests/test_quality_forward_replay.py"
+    ],
+    "changed_lines": 4199,
+    "uncovered": [
+      "未运行默认 8 个场景各 2 次的真实 Codex replay，以避免在只读审查中消耗外部 Agent 额度。",
+      "未在真实 Maven 或 Gradle 多模块项目中端到端执行覆盖率采集。",
+      "未执行真实远程安装更新；网络访问和用户 skills 目录写入不属于本次只读审查。"
+    ],
+    "residual_risks": [
+      "Java 扫描器基于轻量语法解析，现代 Java 语法仍可能存在未覆盖边界。",
+      "当前 29 个单元测试全部通过，但缺少上述 10 个负向和异常路径回归用例。"
+    ],
+    "policy_state": "normal",
+    "policy_file": "/Users/jerry.zhang/Workspace/pretty-ai-harness/.code-review/config.yml"
+  },
+  "token_usage": {
+    "mode": "estimated",
+    "total": 90000,
+    "main_source": "3 个 reviewer agent 的上下文估算",
+    "note": "运行环境未提供精确 reviewer token 计数。"
+  },
+  "next_steps": [
+    "优先修复 7 个 P1，并为每个稳定反例增加回归测试。",
+    "再处理 replay 进程韧性和安装更新的 3 个 P2。",
+    "重新运行全量 Python 单测、py_compile、Skill 发现验证和至少一个带 evaluator oracle 的受控 replay。",
+    "确认全部 Gate 反例关闭后再声明当前变更完成。"
+  ]
+}

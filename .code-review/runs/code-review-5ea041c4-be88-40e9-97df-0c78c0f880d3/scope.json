@@ -1,0 +1,203 @@
+{
+  "mode": "local",
+  "remote": null,
+  "display_branch": "(working tree)",
+  "base_sha": null,
+  "review_base_sha": null,
+  "target_sha": null,
+  "merge_base_sha": null,
+  "push_commit_count": null,
+  "comment_mode": null,
+  "compare_url": null,
+  "files": [
+    {
+      "path": "README.md",
+      "added": 8,
+      "removed": 3,
+      "binary": false
+    },
+    {
+      "path": "ai-harness-skill-orchestration-guide.md",
+      "added": 13,
+      "removed": 16,
+      "binary": false
+    },
+    {
+      "path": "install/CODEX_INSTALL_PROMPT.template.md",
+      "added": 14,
+      "removed": 10,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-common/references/quality-principles.md",
+      "added": 39,
+      "removed": 108,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/SKILL.md",
+      "added": 42,
+      "removed": 124,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/agents/openai.yaml",
+      "added": 1,
+      "removed": 1,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/assets/execution.md",
+      "added": 23,
+      "removed": 31,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/references/quality-contract-gates.md",
+      "added": 38,
+      "removed": 35,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/scripts/validate_execution.py",
+      "added": 225,
+      "removed": 122,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/scripts/verify_incremental_coverage.py",
+      "added": 149,
+      "removed": 14,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-writing-plan/SKILL.md",
+      "added": 42,
+      "removed": 173,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-writing-plan/agents/openai.yaml",
+      "added": 2,
+      "removed": 2,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-writing-plan/assets/plan.md",
+      "added": 9,
+      "removed": 22,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-writing-plan/scripts/validate_plan.py",
+      "added": 240,
+      "removed": 527,
+      "binary": false
+    },
+    {
+      "path": ".idea/git_toolbox_prj.xml",
+      "added": 15,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "benchmarks/quality-forward/README.md",
+      "added": 12,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "benchmarks/quality-forward/run_replay.py",
+      "added": 376,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "benchmarks/quality-forward/scenarios.json",
+      "added": 74,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-common/references/quality-review-protocol.md",
+      "added": 42,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-common/references/quality-routing.md",
+      "added": 32,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "added": 754,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "skills/pretty-executing-plan/scripts/verify_quality_contract.py",
+      "added": 210,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "tests/test_coverage_gate.py",
+      "added": 106,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "tests/test_execution_validator.py",
+      "added": 178,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "tests/test_plan_validator.py",
+      "added": 124,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "tests/test_quality_contract_gate.py",
+      "added": 201,
+      "removed": 0,
+      "binary": false
+    },
+    {
+      "path": "tests/test_quality_forward_replay.py",
+      "added": 42,
+      "removed": 0,
+      "binary": false
+    }
+  ],
+  "changed_lines": 4199,
+  "diff_text_path": "/Users/jerry.zhang/Workspace/pretty-ai-harness/.code-review/runs/code-review-5ea041c4-be88-40e9-97df-0c78c0f880d3/diff.patch",
+  "diff_truncated": false,
+  "skipped_files": [],
+  "policy_state": "normal",
+  "policy_file": "/Users/jerry.zhang/Workspace/pretty-ai-harness/.code-review/config.yml",
+  "rule_files": {
+    "public": [
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/security/05-secrets-pii.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/security/06-supply-chain.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/security/08-cryptography.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/security/09-concurrency.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/code-quality/01-error-handling.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/code-quality/02-logging.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/code-quality/04-perf-db-io.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/code-quality/05-cache.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/code-quality/08-numeric-string-collection.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/solid/01-srp.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/solid/02-ocp.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/solid/04-isp.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/solid/05-dip.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/common/solid/06-code-smell.md",
+      "/Users/jerry.zhang/.codex/code-review-installer/skills/code-review/references/rules/backend/python.md"
+    ],
+    "project": []
+  },
+  "context_files": []
+}

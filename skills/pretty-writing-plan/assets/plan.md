@@ -4,45 +4,32 @@
 
 ```mermaid
 flowchart TD
-  A["入口"] --> B["受影响模块"]
-  B --> C["外部边界或持久化"]
+  A["入口"] --> B["受影响 Module"]
+  B --> C["Adapter 或持久化"]
 ```
-
-<仅在调用关系、交互顺序或状态迁移值得可视化时保留本节；简单任务可以省略。按需使用 flowchart、sequenceDiagram 或 stateDiagram-v2。>
 
 ## 实施任务
 
-### TASK-001：<领域结果或独立风险>
+### TASK-001：<可观察领域结果>
 
 约束：
-- <只有存在不可改变的边界时才填写。>
+- <代码无法直接表达的外部合同或兼容限制>
 
 **Files:**
-- Modify: `module/src/main/java/...`
-- Test: `module/src/test/java/...`
+- Modify: `module/src/main/java/example/Target.java`
+- Test: `module/src/test/java/example/TargetTest.java`
 
 修改：
 
 ```java
-<展示受影响的完整生产 symbol。>
+<完整核心生产 symbol>
 ```
 
 测试：
 
 ```java
-<展示公共行为入口、真实输入、必要边界替身和业务结果断言。>
+<从公共行为入口固定结果、状态或异常合同>
 ```
 
 依赖：
-- <仅在依赖关系确实影响任务顺序时填写。>
-
-### TASK-002：<另一个独立领域结果>
-
-**Files:**
-- Modify: `db/migration/...sql`
-
-修改：
-
-```sql
-<完整 DDL 或其他声明性变更内容。>
-```
+- <仅在 TASK 顺序确实受影响时保留>

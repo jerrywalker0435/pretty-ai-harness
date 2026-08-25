@@ -1,0 +1,31 @@
+{
+  "tool": "rg",
+  "budget": {
+    "max_hits_per_category": 5,
+    "max_excerpt_lines": 8,
+    "max_total_chars": 1200
+  },
+  "commands": [
+    {
+      "cmd": "rg -n --max-count=5 \\bFencedBlock\\s*\\(",
+      "hits": "no-hit",
+      "category": "caller"
+    },
+    {
+      "cmd": "rg -n --max-count=5 import.*FencedBlock|require.*FencedBlock",
+      "hits": "no-hit",
+      "category": "callee"
+    },
+    {
+      "cmd": "rg -n --max-count=5 (interface|type)\\s+FencedBlock|FencedBlock\\s*:\\s*\\(",
+      "hits": "no-hit",
+      "category": "contract"
+    }
+  ],
+  "hits_summary": {
+    "caller": 0,
+    "callee": 0,
+    "contract": 0
+  },
+  "truncated": false
+}

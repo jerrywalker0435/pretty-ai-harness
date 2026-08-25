@@ -187,7 +187,7 @@ Design 至少需要满足：
 - 任务之间的依赖、垂直切片和不可改变的实现限制；
 - 哪些声明性变更必须完整给出，哪些代码级变更必须精确到稳定符号。
 
-这里的“可验证”是指计划中的完整代码和测试提案先通过高确定性扫描，再由命中风险路由的 Reviewer/Repair 审查并修复，之后才能被人工审查、与仓库事实对照并交给 Execution 落地。TDD 的 RED/GREEN、验证命令、覆盖率和执行结果属于实施阶段，不在 Plan 中预先伪造。
+这里的“可验证”是指计划中的完整代码和测试提案先通过高确定性扫描，再由独立 Reviewer 按命中风险路由审查，Writer 修复后重新扫描和复审，之后才能被人工审查、与仓库事实对照并交给 Execution 落地。TDD 的 RED/GREEN、验证命令、覆盖率和执行结果属于实施阶段，不在 Plan 中预先伪造。
 
 #### 4.2 为什么计划需要仓库证据
 
@@ -206,7 +206,7 @@ Plan 完成不等于“任务都列出来了”，而是：
 - 每个行为变更都拆成可审查的垂直切片，并给出完整的生产代码与核心测试代码提案；
 - 文件、符号、调用链和契约准确，任务不会把架构决策重新推给执行者；
 - 声明性变更、失败语义、边界替身和测试观察面清楚；
-- 完整代码提案通过结构校验、共享 Java 代码质量扫描和命中路由的 Reviewer/Repair，并获得用户明确批准；
+- 完整代码提案通过结构校验、共享 Java 代码质量扫描和命中路由的独立审查，并获得用户明确批准；
 - 用户批准这份计划作为实施合同。
 
 计划阶段形成第三份合同：Execution 可以在合同范围内落地等价实现并修复实现问题，但不能现场发明新的架构、测试边界或验收标准。
@@ -222,14 +222,14 @@ RED：先写一个描述目标行为的测试，并观察它正确失败
   ↓
 GREEN：编写让当前测试通过的最小实现
   ↓
-确有明确整理目标时：使用 refactor 小步改善结构并复验
+确有明确整理目标时：小步改善结构并复验
   ↓
 下一个行为
 ```
 
 RED 的价值容易被低估。一个从未失败过的测试，可能根本没有验证新增行为：它可能测试了已有代码，也可能断言无效。观察测试因“目标行为尚不存在”而失败，才能证明这条测试确实能捕捉目标差异。
 
-GREEN 强调最小实现，是为了避免一次加入过多逻辑，使测试无法指出哪一部分导致结果变化。GREEN 后不要求为了流程而重构；确有局部整理目标时，必须使用 `refactor`，小步保持行为并在每步后复验。
+GREEN 强调最小实现，是为了避免一次加入过多逻辑，使测试无法指出哪一部分导致结果变化。GREEN 后不要求为了流程而重构；确有局部整理目标时，小步保持行为并在每步后复验。
 
 #### 5.2 覆盖率是什么，又不是什么
 
@@ -414,7 +414,7 @@ Harness 将“应该检查”变成“必须通过”：
 - 代码质量和架构审查；
 - 完成前的验证。
 
-门禁失败后必须修复并重新运行，不能把发现仅记录在报告中就视为闭环。生产代码可以由 Writer 在隔离候选中实现、由 Reviewer/Repair 修复局部质量问题，再由主 Agent 集成；任何修复都必须重新扫描、编译和测试。
+门禁失败后必须修复并重新运行，不能把发现仅记录在报告中就视为闭环。生产代码由 Writer 在隔离候选中实现，独立 Reviewer 提出问题，Writer 修复后再由主 Agent 集成；任何修复都必须重新扫描、编译和测试。
 
 #### 9.6 证据、权限和失败路由
 
@@ -506,7 +506,7 @@ Design 承接已批准的 PRD，但不能用技术语言补写需求。它要回
 
 ### 15. Plan：把技术决定变成可交给别人的变更提案
 
-Plan 以同目录且已批准的 PRD、Design 为输入，把技术决定落到真实文件、稳定符号、完整受影响链路和任务顺序上。它的标准不是“看起来详细”，而是一个没有参与前期对话的执行者能否据此开始工作，并且不需要重新发明架构。
+Plan 的主输入是同目录且已批准的 Design；同时读取 PRD、适用的 Context/Context Map/ADR 和真实仓库代码，把技术决定落到真实文件、稳定符号、完整受影响链路和任务顺序上。它的标准不是“看起来详细”，而是一个没有参与前期对话的执行者能否据此开始工作，并且不需要重新发明架构。
 
 因此，Plan 要说清楚：
 
@@ -525,7 +525,7 @@ Plan 不写已经发生的 RED、GREEN、命令输出、覆盖率结果或完成
 
 Execution 是四个核心阶段中唯一直接改变生产代码的阶段。它读取当前工作区最新 Plan，先确认工作区状态和基线，再按批准的任务实施。行为任务用测试驱动小步闭环；文档、配置等非行为任务使用与风险相称的等价验证。
 
-Execution 的完成结论不能只写“测试通过”。读者需要看到实际差异、相关测试、编译或其他验证、覆盖率、共享 Java 代码质量扫描和质量审查，以及哪些内容仍无法验证。生产代码允许在隔离候选中由 Writer 实现、由 Reviewer/Repair 修复局部质量问题，但最终仍由主 Agent 检查真实 Diff 并串行集成；报告的价值不是增加过程记录，而是区分历史问题与本次问题，并让完成结论可以被复核。
+Execution 的完成结论不能只写“测试通过”。读者需要看到实际差异、相关测试、编译或其他验证、覆盖率、共享 Java 代码质量扫描和质量审查，以及哪些内容仍无法验证。生产代码允许在隔离候选中由 Writer 实现、由独立 Reviewer 审查、再由 Writer 修复，但最终仍由主 Agent 检查真实 Diff 并串行集成；报告的价值不是增加过程记录，而是区分历史问题与本次问题，并让完成结论可以被复核。
 
 Execution 可以修复批准范围内的实现缺陷和验证失败，但不应静默改变需求、架构、测试边界或任务范围。提交、推送、创建 MR、合并、部署和发布也不由“执行计划”自动授权。
 
@@ -537,8 +537,7 @@ Execution 可以修复批准范围内的实现缺陷和验证失败，但不应�
 |---|-------------------------------------------------------------|
 | grilling、domain-modeling | 业务语义、术语、不变量和上下文是否清楚                      |
 | codebase-design、Java 对象/类型与 SOLID 能力 | 模块边界、职责、依赖方向和类型契约是否稳妥                  |
-| tdd、refactor、代码质量与 Java Review 能力 | 行为实现、结构整理和实现质量是否可靠                        |
-| verification-before-completion | 完成前是否有证据；它是辅助能力，不是四个核心 Skill 的硬依赖 |
+| tdd、代码质量与 Java Review 能力 | 行为实现、结构整理和实现质量是否可靠                        |
 
 这些能力不是并列作者，也不是越多越好。主流程 Skill 决定当前应该解决什么问题，专项 Skill 只在证据表明确有需要时介入；最后由主 Agent 裁决，并由用户 Review 权威产物。
 
@@ -688,7 +687,7 @@ Skill 提供能力，阶段合同限制能力，Harness 把能力组织成可以
 
 ### A. 安装什么
 
-当前组合包含 4 个 Pretty 核心 Skill 和 12 个外部依赖，共 16 个可注册 Skill。Pretty Harness 另外提供 1 个不注册为 Skill 的共享资源目录 `skills/pretty-common`，供 Plan 和 Execution 共同读取质量基线和 Java 代码质量扫描器；运行事实以各仓库最新的 `SKILL.md` 及该共享资源为准，来源、名称和安装顺序以安装模板为准。
+当前组合包含 4 个 Pretty 核心 Skill 和 10 个外部依赖，共 14 个可注册 Skill。Pretty Harness 另外提供 1 个不注册为 Skill 的共享资源目录 `skills/pretty-common`，供 Plan 和 Execution 共同读取质量基线、质量路由、独立审查协议和 Java 代码质量扫描器；运行事实以各仓库最新的 `SKILL.md` 及该共享资源为准，来源、名称和安装顺序以安装模板为准。
 
 | 来源仓库 | Skill |
 |---|---|
@@ -696,18 +695,16 @@ Skill 提供能力，阶段合同限制能力，Harness 把能力组织成可以
 | `https://github.com/mattpocock/skills.git` | `domain-modeling`、`grilling`、`codebase-design`、`tdd` |
 | `https://github.com/jabrena/cursor-rules-java.git` | `121-java-object-oriented-design`、`122-java-type-design` |
 | `https://github.com/florianbuetow/claude-code.git` | `solid-principles` |
-| `https://github.com/github/awesome-copilot.git` | `refactor` |
 | `https://github.com/amelnagdy/guard-skills.git` | `clean-code-guard` |
 | `https://github.com/decebals/claude-code-java.git` | `design-patterns`、`java-code-review` |
-| `https://github.com/obra/superpowers.git` | `verification-before-completion` |
 
-安装 Pretty Harness 仓库时，还必须将 `skills/pretty-common` 复制到目标 `skills` 目录，与四个核心 Skill 同级。它没有 `SKILL.md`，不计入 16 个 Skill，也不应作为独立 Skill 调用；其中的 `references/quality-principles.md` 是共同基线，`scripts/quality_contract_gate.py` 是两阶段共用的高确定性 Java 代码质量扫描器。
+安装 Pretty Harness 仓库时，还必须将 `skills/pretty-common` 复制到目标 `skills` 目录，与四个核心 Skill 同级。它没有 `SKILL.md`，不计入 14 个 Skill，也不应作为独立 Skill 调用；其 3 个 reference 分别是质量基线、质量路由和独立审查协议，`scripts/quality_contract_gate.py` 是两阶段共用的高确定性 Java 代码质量扫描器。
 
 安装需要 `git`、Node.js/npm/npx，以及访问内部 GitLab 的凭证。命令使用远程仓库默认分支的最新 HEAD，不锁定 tag、branch 或 commit。
 
 ### B. 安装与验证
 
-推荐直接使用仓库提供的 [安装 Prompt](install/CODEX_INSTALL_PROMPT.template.md)。它会让用户选择项目级 `.agents/skills`（推荐）或全局 `$HOME/.agents/skills`，先检查 16 个同名 Skill 和 `pretty-common`，再在覆盖已有版本前请求确认，并完成共享资源复制。
+推荐直接使用仓库提供的 [安装 Prompt](install/CODEX_INSTALL_PROMPT.template.md)。它会让用户选择项目级 `.agents/skills`（推荐）或全局 `$HOME/.agents/skills`，先检查 14 个同名 Skill 和 `pretty-common`，再在覆盖已有版本前请求确认，并以可恢复的 staging/swap 完成共享资源替换。旧版安装遗留的 `refactor` 与 `verification-before-completion` 会单独提示保留或删除，不从普通更新授权中推断删除权限。
 
 手动安装时，对表中的每个仓库执行同一形式的命令，并按需替换 Skill 名称：
 
@@ -716,7 +713,7 @@ npx skills@1.5.22 add <repository-url> \
   --agent universal --copy --full-depth --yes --skill <name...>
 ```
 
-全局安装增加 `--global`。安装后用 `npx skills@1.5.22 list --agent universal --json`（全局安装则增加 `--global`）核对 16 个 Skill，并确认每个目录都有 `SKILL.md` 且 frontmatter 的 `name` 与目录名一致；同时确认目标目录存在 `pretty-common/references/quality-principles.md` 和 `pretty-common/scripts/quality_contract_gate.py`。新版本未被识别时，重启 Codex。
+全局安装增加 `--global`。安装后用 `npx skills@1.5.22 list --agent universal --json`（全局安装则增加 `--global`）核对 14 个 Skill，并确认每个目录都有 `SKILL.md` 且 frontmatter 的 `name` 与目录名一致；同时确认目标目录存在 `pretty-common` 的 3 个 reference 和扫描器。新版本未被识别时，重启 Codex。
 
 ### C. 标准使用方式
 
@@ -726,7 +723,7 @@ npx skills@1.5.22 add <repository-url> \
 docs/pretty/<topic>/{prd.md, design.md, plan.md, execution.md}
 ```
 
-按“目标 → PRD → Design → Plan → Execution”推进，每一步完成后由人 Review 并停止。Plan 必须读取同目录且已批准的 PRD/Design；Execution 读取当前工作区最新 Plan，只修改批准范围内的代码、测试和声明性文件。提交、推送、MR、部署和发布都需要另行授权。
+按“目标 → PRD → Design → Plan → Execution”推进，每一步完成后由人 Review 并停止。Plan 以已批准 Design 为主输入，并读取同目录 PRD、适用 Context 文档和真实仓库代码；Execution 读取当前工作区最新 Plan，只修改批准范围内的代码、测试和声明性文件。提交、推送、MR、部署和发布都需要另行授权。
 
 ### D. 中断与恢复
 
