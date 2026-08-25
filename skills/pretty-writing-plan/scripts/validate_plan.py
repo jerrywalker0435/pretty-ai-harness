@@ -43,6 +43,12 @@ EXTERNAL_SKILL = re.compile(
 QUALITY_REPORT = re.compile(r"质量(?:审查|评分|报告)|Quality\s+Gate", re.IGNORECASE)
 VARARGS = re.compile(r"\b[\w$]+(?:\s*<[^>\n]+>)?(?:\s*\[\])?\s*\.\.\.\s*[\w$]+")
 FENCE = re.compile(r"^[ \t]*([\x60~])\1{2,}")
+DML_STATEMENT = re.compile(r"(?im)^\s*(?:INSERT|UPDATE|DELETE|REPLACE|MERGE)\b")
+CONFIGURATION_DATA_CONTEXT = re.compile(
+    r"配置数据|白名单|事件定义|种子数据|reference\s+data|seed\s+data|"
+    r"(?:config|setting|define|definition|dictionary|whitelist)[A-Za-z0-9_]*",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -171,6 +177,18 @@ def _safe_file_path(path: str) -> bool:
     )
 
 
+def _project_governance_path(path: str) -> bool:
+    parts = tuple(part.lower() for part in PurePosixPath(path).parts)
+    if not parts:
+        return False
+    return (
+        parts[0] == ".trellis"
+        or parts[-1] in {"agents.md", "business-map.md"}
+        or "adr" in parts
+        or "adrs" in parts
+    )
+
+
 def _label_position(segment: str, label: str) -> int:
     match = re.search(rf"^{re.escape(label)}：[ \t]*$", mask_fenced_blocks(segment), re.MULTILINE)
     return match.end() if match else -1
@@ -203,13 +221,23 @@ def _java_block_has_method(segment: str, block: FencedBlock) -> bool:
     return bool(method_spans(mask_java_non_code(source), "Plan proposal"))
 
 
-def _task_errors(segment: str, task_id: int) -> list[str]:
+def _task_errors(
+    segment: str,
+    task_id: int,
+    allow_project_governance: bool,
+) -> list[str]:
     prefix = f"TASK-{task_id:03d}"
     entries = FILE_ENTRY.findall(mask_fenced_blocks(segment))
     errors = [] if entries else [f"{prefix} must declare Files"]
     if "**Files:**" not in mask_fenced_blocks(segment):
         errors.append(f"{prefix} must contain **Files:**")
     errors.extend(f"{prefix} has unsafe path: {path}" for _, path in entries if not _safe_file_path(path))
+    if not allow_project_governance:
+        errors.extend(
+            f"{prefix} has out-of-scope project-governance path: {path}"
+            for _, path in entries
+            if _project_governance_path(path)
+        )
     modification = _label_position(segment, "修改")
     if modification < 0:
         return errors + [f"{prefix} must contain 修改"]
@@ -228,7 +256,7 @@ def _task_errors(segment: str, task_id: int) -> list[str]:
     if java_methods:
         errors.extend(_logic_task_errors(segment, prefix, entries))
     if sql_change:
-        errors.extend(_database_validation_errors(segment, prefix))
+        errors.extend(_sql_change_errors(segment, prefix, entries, java_methods))
     return errors
 
 
@@ -250,30 +278,49 @@ def _logic_task_errors(
     return errors
 
 
-def _database_validation_errors(segment: str, prefix: str) -> list[str]:
-    errors = []
-    tests = _label_position(segment, "测试")
-    if tests >= 0 and _blocks_between(segment, tests, _section_end(segment, tests), "sql"):
-        errors.append(f"{prefix} SQL verification belongs under 数据库验证, not 测试")
-    validation = _label_position(segment, "数据库验证")
-    if validation < 0:
-        return errors + [f"{prefix} SQL change must contain 数据库验证, not a Java unit test"]
-    validation_end = _section_end(segment, validation)
-    prose = mask_fenced_blocks(segment[validation:validation_end])
-    required_fields = {
-        "类型": r"(?m)^[-*+]\s*类型：\s*\S.+$",
-        "目标引擎": r"(?m)^[-*+]\s*目标引擎：\s*\S.+$",
-        "期望": r"(?m)^[-*+]\s*期望：\s*\S.+$",
-    }
-    for field, pattern in required_fields.items():
-        if not re.search(pattern, prose):
-            errors.append(f"{prefix} 数据库验证 needs {field}")
-    if not _blocks_between(segment, validation, validation_end, "sql"):
-        errors.append(f"{prefix} 数据库验证 must contain a non-empty SQL block")
+def _sql_change_errors(
+    segment: str,
+    prefix: str,
+    entries: Sequence[tuple[str, str]],
+    java_methods: bool,
+) -> list[str]:
+    errors = _sql_test_errors(segment, prefix, entries, java_methods)
+    errors.extend(_configuration_data_dml_errors(segment, prefix))
     return errors
 
 
-def _tasks_errors(text: str) -> list[str]:
+def _sql_test_errors(
+    segment: str,
+    prefix: str,
+    entries: Sequence[tuple[str, str]],
+    java_methods: bool,
+) -> list[str]:
+    errors = []
+    tests = _label_position(segment, "测试")
+    if tests >= 0 and _blocks_between(segment, tests, _section_end(segment, tests), "sql"):
+        errors.append(f"{prefix} SQL/DDL change must not contain SQL tests")
+    validation = _label_position(segment, "数据库验证")
+    if validation >= 0:
+        errors.append(f"{prefix} SQL/DDL change must not contain 数据库验证")
+    if not java_methods:
+        if tests >= 0:
+            errors.append(f"{prefix} SQL-only change must not contain 测试")
+        if any(operation == "Test" or "/src/test/" in f"/{path}" for operation, path in entries):
+            errors.append(f"{prefix} SQL-only change must not declare Test files")
+    return errors
+
+
+def _configuration_data_dml_errors(segment: str, prefix: str) -> list[str]:
+    for block in fenced_blocks(segment)[0]:
+        if block.language != "sql":
+            continue
+        source = segment[block.content_start:block.content_end]
+        if DML_STATEMENT.search(source) and CONFIGURATION_DATA_CONTEXT.search(segment):
+            return [f"{prefix} must not contain data DML; configuration data is handled manually"]
+    return []
+
+
+def _tasks_errors(text: str, allow_project_governance: bool) -> list[str]:
     ranges = _task_ranges(text)
     if not ranges:
         return ["Plan must contain at least TASK-001"]
@@ -281,7 +328,7 @@ def _tasks_errors(text: str) -> list[str]:
     expected = list(range(1, len(ranges) + 1))
     errors = [] if identifiers == expected else [f"TASK ids must be continuous: {identifiers}"]
     for task_id, start, end in ranges:
-        errors.extend(_task_errors(text[start:end], task_id))
+        errors.extend(_task_errors(text[start:end], task_id, allow_project_governance))
     return errors
 
 
@@ -319,6 +366,7 @@ def validate_plan(
     review_evidence: Mapping[str, object] | None = None,
     *,
     require_review: bool = False,
+    allow_project_governance: bool = False,
 ) -> tuple[list[str], list[QualityFinding]]:
     try:
         text = plan_path.read_text(encoding="utf-8")
@@ -328,7 +376,7 @@ def validate_plan(
     errors = _standard_path_errors(plan_path)
     errors.extend(_structure_errors(text))
     errors.extend(_forbidden_errors(text))
-    errors.extend(_tasks_errors(text))
+    errors.extend(_tasks_errors(text, allow_project_governance))
     if require_review:
         errors.extend(review_evidence_errors(review_evidence, plan_candidate_hash(text), findings))
     else:
@@ -345,6 +393,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("plan", type=Path)
     parser.add_argument("--review-evidence", type=Path)
     parser.add_argument("--scan-only", action="store_true")
+    parser.add_argument("--allow-project-governance", action="store_true")
     parser.add_argument("--json-output", type=Path)
     return parser
 
@@ -359,7 +408,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         plan_text = args.plan.read_text(encoding="utf-8")
         evidence = load_review_evidence(args.review_evidence) if args.review_evidence else None
-        errors, findings = validate_plan(args.plan, evidence, require_review=not args.scan_only)
+        errors, findings = validate_plan(
+            args.plan,
+            evidence,
+            require_review=not args.scan_only,
+            allow_project_governance=args.allow_project_governance,
+        )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Plan validation failed: {error}", file=sys.stderr)
         return 2

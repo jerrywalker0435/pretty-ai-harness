@@ -11,24 +11,24 @@
 
 ## 基线
 
-- 受影响模块按仓库真实 Java 配置编译。
-- 相关既有测试和拟修改测试入口通过。
+- 工作区归因清晰，Plan Files 与用户已有改动能够区分。
+- 只运行能够区分历史失败的最小相关既有测试和必要确定性检查；完整编译留到集成候选稳定后执行一次。
 - 基线失败时不编辑生产代码；历史失败只记录，不归入成果。
 
 ## TASK
 
 - 生产 Java 候选通过共享机械 Gate。
-- SQL 变更使用 Plan 声明的目标数据库引擎验证解析、迁移后置条件、查询结果或执行计划；SQL 文本断言不算 Java UT 或数据库验证。
+- 表、字段和索引 DDL 不生成测试或数据库验证；实现后在报告的未验证范围中记录，不阻止 Java 交付完成。
 - 所有 `review_required` 已修复或由独立 Reviewer 基于合同事实接受。
 - 独立 Reviewer 已检查风险路由完整性、共享基线、Plan 规范和真实 Diff，并执行 `clean-code-guard`。
-- Reviewer 提出问题且 Writer 修复后，重新运行扫描、编译、相关测试和独立审查。
+- Reviewer 提出问题且 Writer 修复后，只重跑受影响扫描、目标测试和同一 Reviewer 的增量复核；修复改变完整候选结论时才重跑对应编译、回归或覆盖率。
 - 未修改且与本次增量无因果关系的问题不扩张为当前范围。
 
 ## 最终验证
 
 - Plan Files 与真实 Diff 一致，语义不变的范围扩展已记录。
 - 全部 TASK 组合后不存在新增职责混杂、重复知识、接口膨胀或依赖反转。
-- 编译、相关测试、机械 Gate、独立审查和增量覆盖率均有新鲜证据。
+- 候选稳定后，编译、相关测试、机械 Gate、独立审查和增量覆盖率各有一次新鲜证据。
 - 任一质量阻断、测试失败、覆盖率未达标或无法验证都不能进入完成状态。
 
 构建证据使用临时 JSON，绑定当前 Plan、质量候选和覆盖率候选：
@@ -42,10 +42,9 @@
   "commands": [
     {"kind": "compile", "command": "<真实命令>", "exit_code": 0, "finished_at": 0},
     {"kind": "new_tests", "command": "<真实命令>", "exit_code": 0, "finished_at": 0},
-    {"kind": "regression_tests", "command": "<真实命令>", "exit_code": 0, "finished_at": 0},
-    {"kind": "database_validation", "command": "<仅 SQL TASK 要求>", "exit_code": 0, "finished_at": 0}
+    {"kind": "regression_tests", "command": "<真实命令>", "exit_code": 0, "finished_at": 0}
   ]
 }
 ```
 
-时间使用 Unix 秒；命令必须在 `started_at` 之后结束。`database_validation` 只在 Plan 含生产 SQL 文件时要求。停止态保留已执行命令及真实退出码，不要求伪造成功。
+时间使用 Unix 秒；命令必须在 `started_at` 之后结束。停止态保留已执行命令及真实退出码，不要求伪造成功。

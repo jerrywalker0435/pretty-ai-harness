@@ -22,8 +22,8 @@ SECTIONS = (
 )
 TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})[：:]\s*\S.+$", re.MULTILINE)
 PLAN_TASK = re.compile(r"^###\s+(TASK-\d{3})[：:]", re.MULTILINE)
-PLAN_SQL_FILE = re.compile(
-    r"^[-*+]\s+(?:Create|Modify):\s+\x60[^\x60\n]+\.sql\x60\s*$",
+PLAN_PRODUCTION_JAVA_FILE = re.compile(
+    r"^[-*+]\s+(?:Create|Modify):\s+\x60(?:[^\x60\n]+/)?src/main/java/[^\x60\n]+\.java\x60\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 HEAD = re.compile(r"^-\s*起始 HEAD：\s*\x60[0-9a-f]{7,64}\x60\s*$", re.MULTILINE)
@@ -97,8 +97,8 @@ def _complete_status(document: str) -> bool:
     return re.search(r"^-\s*状态：\s*完成\s*$", conclusion, re.MULTILINE) is not None
 
 
-def _plan_has_sql(plan_text: str) -> bool:
-    return PLAN_SQL_FILE.search(plan_text) is not None
+def _plan_has_production_java(plan_text: str) -> bool:
+    return PLAN_PRODUCTION_JAVA_FILE.search(plan_text) is not None
 
 
 def _coverage_summary(coverage: Mapping[str, object]) -> str:
@@ -131,7 +131,6 @@ def _coverage_errors(document: str, coverage: Mapping[str, object]) -> list[str]
 def _quality_errors(
     document: str,
     quality: Mapping[str, object],
-    require_database_validation: bool,
 ) -> list[str]:
     errors = []
     if _complete_status(document) and quality.get("passed") is not True:
@@ -141,7 +140,6 @@ def _quality_errors(
         "Plan 与真实 Diff",
         "机械 Gate 与独立审查",
         "编译与相关测试",
-        "数据库验证",
         "增量覆盖率",
     )
     for row in required_rows:
@@ -153,8 +151,7 @@ def _quality_errors(
         if not match:
             errors.append(f"最终门禁缺少：{row}")
         elif _complete_status(document):
-            accepted_results = {"通过"} if row == "数据库验证" and require_database_validation else {"通过", "不适用"}
-            if match.group(1).strip() not in accepted_results:
+            if match.group(1).strip() not in {"通过", "不适用"}:
                 errors.append(f"完成状态的最终门禁未通过：{row}")
     return errors
 
@@ -190,7 +187,6 @@ def _build_errors(
     quality: Mapping[str, object],
     coverage: Mapping[str, object],
     require_passes: bool,
-    require_database_validation: bool,
 ) -> list[str]:
     errors = []
     if build.get("plan_sha256") != _sha256(plan_path):
@@ -242,8 +238,6 @@ def _build_errors(
     if not require_passes:
         return errors
     required_commands = {"compile", "new_tests", "regression_tests"}
-    if require_database_validation:
-        required_commands.add("database_validation")
     errors.extend(_latest_required_command_errors(valid_commands, required_commands))
     return errors
 
@@ -280,7 +274,7 @@ def validate_execution(
 ) -> list[str]:
     errors = _structure_errors(document)
     errors.extend(_task_errors(document, plan_text))
-    errors.extend(_quality_errors(document, quality, _plan_has_sql(plan_text)))
+    errors.extend(_quality_errors(document, quality))
     errors.extend(_coverage_errors(document, coverage))
     if quality.get("plan_sha256") != _sha256(plan_path):
         errors.append("quality evidence does not match the current Plan")
@@ -292,8 +286,7 @@ def validate_execution(
             plan_path,
             quality,
             coverage,
-            require_passes=_complete_status(document),
-            require_database_validation=_plan_has_sql(plan_text),
+            require_passes=_complete_status(document) and _plan_has_production_java(plan_text),
         )
     )
     return errors

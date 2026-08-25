@@ -84,6 +84,77 @@ class Service {
         self.assertIn("COMMENT-JUSTIFICATION", codes)
         self.assertNotIn("COMMENT-JUSTIFICATION", {finding.code for finding in scan_java_source(source, production=False)})
 
+    def test_rejects_cjk_production_comment(self) -> None:
+        source = """
+class Service {
+    String load() {
+        // 查询订单后返回结果。
+        return "ORDER";
+    }
+}
+"""
+
+        codes = {finding.code for finding in scan_java_source(source)}
+
+        self.assertIn("CJK-COMMENT", codes)
+
+    def test_cjk_text_inside_string_is_not_a_comment(self) -> None:
+        source = """
+class Service {
+    String endpoint() {
+        return "https://example.test/中文";
+    }
+}
+"""
+
+        codes = {finding.code for finding in scan_java_source(source)}
+
+        self.assertNotIn("CJK-COMMENT", codes)
+
+    def test_rejects_manual_duration_logging(self) -> None:
+        source = """
+class Service {
+    void dispatch() {
+        long start = System.currentTimeMillis();
+        send();
+        log.info("dispatch durationMs={}", System.currentTimeMillis() - start);
+    }
+}
+"""
+
+        codes = {finding.code for finding in scan_java_source(source)}
+
+        self.assertIn("MANUAL-DURATION-LOGGING", codes)
+
+    def test_business_timestamp_without_logging_is_not_duration_logging(self) -> None:
+        source = """
+class Service {
+    long currentTimestamp() {
+        long startedAt = System.currentTimeMillis();
+        return startedAt;
+    }
+}
+"""
+
+        codes = {finding.code for finding in scan_java_source(source)}
+
+        self.assertNotIn("MANUAL-DURATION-LOGGING", codes)
+
+    def test_business_timestamp_with_unrelated_logging_is_not_duration_logging(self) -> None:
+        source = """
+class Service {
+    long currentTimestamp() {
+        long startedAt = System.currentTimeMillis();
+        log.info("timestamp captured");
+        return startedAt;
+    }
+}
+"""
+
+        codes = {finding.code for finding in scan_java_source(source)}
+
+        self.assertNotIn("MANUAL-DURATION-LOGGING", codes)
+
     def test_trim_requires_boundary_contract_review(self) -> None:
         source = """
 class Service {

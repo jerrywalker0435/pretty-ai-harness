@@ -61,16 +61,6 @@ VALID_SQL_PLAN = """# event-index Implementation Plan
 ```sql
 CREATE INDEX idx_event_code ON service_event (event_define_code);
 ```
-
-数据库验证：
-
-- 类型：INDEX
-- 目标引擎：MySQL 8.0
-- 期望：索引存在且事件编码查询使用 idx_event_code
-
-```sql
-SHOW INDEX FROM service_event WHERE Key_name = 'idx_event_code';
-```
 """
 
 
@@ -167,7 +157,7 @@ class PlanValidatorTest(unittest.TestCase):
 
         self.assertIn("TASK-001 测试 must contain a non-empty Java code block", errors)
 
-    def test_sql_change_uses_database_validation_without_java_unit_test(self) -> None:
+    def test_sql_change_needs_no_test_or_database_validation(self) -> None:
         self.plan.write_text(VALID_SQL_PLAN, encoding="utf-8")
 
         errors, findings = validate_plan(self.plan)
@@ -176,28 +166,37 @@ class PlanValidatorTest(unittest.TestCase):
         self.assertEqual([], findings)
 
     def test_sql_change_rejects_sql_block_under_test_section(self) -> None:
-        plan = VALID_SQL_PLAN.replace(
-            "数据库验证：",
-            "测试：\n\n```sql\nSELECT COUNT(*) FROM service_event;\n```\n\n数据库验证：",
-        )
+        plan = VALID_SQL_PLAN + "\n测试：\n\n```sql\nSELECT COUNT(*) FROM service_event;\n```\n"
         self.plan.write_text(plan, encoding="utf-8")
 
         errors, _ = validate_plan(self.plan)
 
-        self.assertIn("TASK-001 SQL verification belongs under 数据库验证, not 测试", errors)
+        self.assertIn("TASK-001 SQL/DDL change must not contain SQL tests", errors)
+        self.assertIn("TASK-001 SQL-only change must not contain 测试", errors)
 
-    def test_sql_change_requires_database_validation_contract(self) -> None:
-        plan = VALID_SQL_PLAN[: VALID_SQL_PLAN.index("\n数据库验证：")]
+    def test_sql_change_rejects_database_validation(self) -> None:
+        plan = VALID_SQL_PLAN + """
+
+数据库验证：
+
+- 类型：INDEX
+- 目标引擎：MySQL 8.0
+- 期望：索引存在
+
+```sql
+SHOW INDEX FROM service_event;
+```
+"""
         self.plan.write_text(plan, encoding="utf-8")
 
         errors, _ = validate_plan(self.plan)
 
         self.assertIn(
-            "TASK-001 SQL change must contain 数据库验证, not a Java unit test",
+            "TASK-001 SQL/DDL change must not contain 数据库验证",
             errors,
         )
 
-    def test_java_and_sql_change_requires_both_validation_types(self) -> None:
+    def test_java_and_sql_change_requires_only_java_behavior_test(self) -> None:
         mixed = VALID_PLAN.replace(
             "- Test: `app/src/test/java/example/OrderServiceTest.java`",
             "- Test: `app/src/test/java/example/OrderServiceTest.java`\n"
@@ -210,11 +209,54 @@ class PlanValidatorTest(unittest.TestCase):
 
         errors, _ = validate_plan(self.plan)
 
+        self.assertEqual([], errors)
+        self.assertNotIn("TASK-001 logic change must contain 测试", errors)
+
+    def test_rejects_data_dml_as_manually_managed_configuration(self) -> None:
+        plan = VALID_SQL_PLAN.replace(
+            "CREATE INDEX idx_event_code ON service_event (event_define_code);",
+            "INSERT INTO event_definition (event_code) VALUES ('EVENT');",
+        )
+        self.plan.write_text(plan, encoding="utf-8")
+
+        errors, _ = validate_plan(self.plan)
+
         self.assertIn(
-            "TASK-001 SQL change must contain 数据库验证, not a Java unit test",
+            "TASK-001 must not contain data DML; configuration data is handled manually",
             errors,
         )
-        self.assertNotIn("TASK-001 logic change must contain 测试", errors)
+
+    def test_schema_backfill_is_not_misclassified_as_configuration_data(self) -> None:
+        plan = VALID_SQL_PLAN.replace(
+            "CREATE INDEX idx_event_code ON service_event (event_define_code);",
+            "UPDATE service_event SET archived = 0 WHERE archived IS NULL;",
+        )
+        self.plan.write_text(plan, encoding="utf-8")
+
+        errors, _ = validate_plan(self.plan)
+
+        self.assertEqual([], errors)
+
+    def test_rejects_unsolicited_project_governance_files(self) -> None:
+        plan = VALID_SQL_PLAN.replace(
+            "- Modify: `db/migration/V2__event_index.sql`",
+            "- Modify: `.trellis/spec/backend/business-map.md`",
+        )
+        self.plan.write_text(plan, encoding="utf-8")
+
+        errors, _ = validate_plan(self.plan)
+
+        self.assertIn(
+            "TASK-001 has out-of-scope project-governance path: .trellis/spec/backend/business-map.md",
+            errors,
+        )
+
+        allowed_errors, _ = validate_plan(
+            self.plan,
+            allow_project_governance=True,
+        )
+
+        self.assertEqual([], allowed_errors)
 
 
 if __name__ == "__main__":

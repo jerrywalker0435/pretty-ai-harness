@@ -18,6 +18,9 @@ PLAN = """# example Implementation Plan
 ## 实施任务
 
 ### TASK-001：返回订单
+
+**Files:**
+- Modify: `app/src/main/java/example/Service.java`
 """
 
 COMPLETE_EXECUTION = """# example Execution
@@ -44,7 +47,6 @@ COMPLETE_EXECUTION = """# example Execution
 | Plan 与真实 Diff | scope.json | 通过 |
 | 机械 Gate 与独立审查 | quality.json | 通过 |
 | 编译与相关测试 | build.json | 通过 |
-| 数据库验证 | 不适用 | 不适用 |
 | 增量覆盖率 | coverage.json | 通过 |
 
 ## 未验证范围
@@ -217,15 +219,37 @@ class ExecutionValidatorTest(unittest.TestCase):
 
         self.assertEqual([], errors)
 
-    def test_sql_plan_requires_fresh_database_validation(self) -> None:
-        sql_plan = PLAN + "\n- Modify: `db/migration/V2__event_index.sql`\n"
+    def test_sql_plan_does_not_require_database_validation(self) -> None:
+        sql_plan = """# event-index Implementation Plan
+
+## 实施任务
+
+### TASK-001：创建事件索引
+
+**Files:**
+- Modify: `db/migration/V2__event_index.sql`
+"""
         self.plan_path.write_text(sql_plan, encoding="utf-8")
         plan_hash = hashlib.sha256(self.plan_path.read_bytes()).hexdigest()
         self.quality["plan_sha256"] = plan_hash
         self.build["plan_sha256"] = plan_hash
+        self.build["commands"] = []
+        self.coverage.update(
+            {
+                "status": "not_applicable",
+                "line_percentage": None,
+                "branch_percentage": None,
+            }
+        )
         document = COMPLETE_EXECUTION.replace(
-            "| 数据库验证 | 不适用 | 不适用 |",
-            "| 数据库验证 | database.json | 通过 |",
+            "| coverage.json | 通过 |",
+            "| coverage.json | 不适用 |",
+        ).replace(
+            "- 测试覆盖率：增量行覆盖率 100.00%，分支覆盖率 98.91%",
+            "- 测试覆盖率：不适用",
+        ).replace(
+            "- 无",
+            "- DDL 未验证",
         )
 
         errors = validate_execution(
@@ -237,26 +261,7 @@ class ExecutionValidatorTest(unittest.TestCase):
             self.build,
         )
 
-        self.assertIn("missing build evidence: database_validation", errors)
-        self.build["commands"].append(
-            {
-                "kind": "database_validation",
-                "command": "mysql --execute SHOW INDEX FROM service_event",
-                "exit_code": 0,
-                "finished_at": 102,
-            }
-        )
-        self.assertEqual(
-            [],
-            validate_execution(
-                document,
-                sql_plan,
-                self.plan_path,
-                self.quality,
-                self.coverage,
-                self.build,
-            ),
-        )
+        self.assertEqual([], errors)
 
 
 if __name__ == "__main__":

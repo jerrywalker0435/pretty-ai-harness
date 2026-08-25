@@ -44,6 +44,8 @@ RULES = (
     RuleSpec("OPTIONAL-GET", REVIEW, "Optional isPresent/get pair requires contract review"),
     RuleSpec("EXCESSIVE-LOGGING", REVIEW, "method has many log calls", 2),
     RuleSpec("BRANCH-LOGGING", REVIEW, "multiple branches log independently"),
+    RuleSpec("MANUAL-DURATION-LOGGING", ERROR, "manual wall-clock timing must not be used for logs"),
+    RuleSpec("CJK-COMMENT", ERROR, "production comments must not contain CJK text"),
     RuleSpec("COMMENT-JUSTIFICATION", REVIEW, "production comment must explain a non-obvious reason"),
     RuleSpec("NORMALIZATION-OWNERSHIP", REVIEW, "input normalization needs an explicit boundary contract"),
     RuleSpec("AMBIGUOUS-BUCKET-NAME", REVIEW, "relative bucket name needs a defined opposite and partition rule"),
@@ -144,6 +146,13 @@ LOGGER_CALL = re.compile(
     r"\b(?:log|logger|LOG|LOGGER|[A-Za-z_$][\w$]*(?:Logger|Log))"
     r"\s*\.\s*(?:trace|debug|info|warn|error|fatal)\s*\("
 )
+MANUAL_DURATION_TIMER = re.compile(
+    r"\b(?:final\s+)?(?:long|Long|var)\s+"
+    r"(?P<variable>(?:start|started|begin)(?:Time)?(?:At|Timestamp|Millis|Nanos)?)\s*=\s*"
+    r"System\s*\.\s*(?:currentTimeMillis|nanoTime)\s*\(",
+    re.IGNORECASE,
+)
+CJK_TEXT = re.compile(r"[\u3400-\u9fff]")
 DISABLED_TEST = re.compile(r"(?m)^\s*@(Disabled|Ignore)\b")
 GENERIC_RESULT = re.compile(
     r"\b(?:class|record)\s+[A-Za-z_$][\w$]*(?:Result|Response)\b"
@@ -509,6 +518,73 @@ def _comment_justification_findings(
     return findings
 
 
+def _cjk_comment_findings(
+    source: str,
+    source_name: str,
+    methods: Sequence[MethodSpan],
+    eligible_lines: frozenset[int] | None,
+) -> list[QualityFinding]:
+    findings = []
+    comments = (
+        token
+        for token in JAVA_TOKEN.finditer(source)
+        if token.group(0).startswith(("//", "/*"))
+    )
+    for comment in comments:
+        if CJK_TEXT.search(comment.group(0)) and _span_is_eligible(
+            source,
+            comment.start(),
+            comment.end(),
+            eligible_lines,
+        ):
+            findings.append(
+                _finding(
+                    "CJK-COMMENT",
+                    "production comment uses CJK text instead of self-explanatory code or concise English rationale",
+                    source,
+                    source_name,
+                    comment.start(),
+                    methods,
+                )
+            )
+    return findings
+
+
+def _manual_duration_logging_findings(context: JavaScanContext) -> list[QualityFinding]:
+    findings = []
+    for method in context.methods:
+        if not _position_is_eligible(context.source, method.start, context.eligible_lines):
+            continue
+        timer = MANUAL_DURATION_TIMER.search(
+            context.masked_source,
+            method.body_start,
+            method.end,
+        )
+        logger = LOGGER_CALL.search(
+            context.masked_source,
+            method.body_start,
+            method.end,
+        )
+        duration = None
+        if timer:
+            duration = re.search(
+                rf"System\s*\.\s*(?:currentTimeMillis|nanoTime)\s*\(\s*\)\s*-\s*{re.escape(timer.group('variable'))}\b",
+                context.masked_source[timer.end():method.end],
+            )
+        if timer and duration and logger:
+            findings.append(
+                _finding(
+                    "MANUAL-DURATION-LOGGING",
+                    "manual wall-clock timer is coupled to method logging; use existing tracing or metrics",
+                    context.source,
+                    context.source_name,
+                    timer.start(),
+                    (method,),
+                )
+            )
+    return findings
+
+
 def _normalization_findings(
     context: JavaScanContext,
 ) -> list[QualityFinding]:
@@ -605,7 +681,9 @@ def scan_java_source(
     if production:
         findings.extend(_pattern_findings(FIELD_INJECTION, "FIELD-INJECTION", "use constructor injection", source, masked_source, source_name, methods, eligible))
         findings.extend(_null_findings(source, masked_source, source_name, methods, eligible))
+        findings.extend(_cjk_comment_findings(source, source_name, methods, eligible))
         findings.extend(_comment_justification_findings(source, source_name, methods, eligible))
+        findings.extend(_manual_duration_logging_findings(context))
         findings.extend(_normalization_findings(context))
     findings.extend(_method_metric_findings(source, masked_source, source_name, methods, eligible))
     findings.extend(_method_structure_findings(source, masked_source, source_name, methods, eligible))
