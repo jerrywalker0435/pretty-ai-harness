@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import sys
 import tempfile
 import unittest
@@ -10,7 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills/pretty-writing-design/scripts"))
 
-from validate_design import design_candidate_hash, validate_design  # noqa: E402
+from validate_design import validate_design  # noqa: E402
+from validate_design_review import design_candidate_hash, review_evidence_errors, validate_design_review  # noqa: E402
+
 
 PRD = """# Example PRD
 ## 背景与问题
@@ -45,11 +46,10 @@ DESIGN = """# Example Design
 - 公共验证入口：OrderService#load
 - 影响锚点：OrderService、OrderRepository
 - 验证观察面：订单结果或缺失异常。
+- Execution 交付：Java、测试
+- 人工运维产物：无
 ## 验证与风险
 验证存在和缺失结果。
-- Design 风险级别：低
-- Design 风险类型：无
-- 合同来源：无
 """
 
 
@@ -66,57 +66,159 @@ class DesignValidatorTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
-    def test_accepts_complete_low_risk_design(self) -> None:
+    def test_accepts_complete_design_without_self_declared_risk_fields(self) -> None:
         self.assertEqual([], validate_design(self.design))
 
     def test_requires_task_traceability_fields(self) -> None:
         self.design.write_text(DESIGN.replace("- 公共验证入口：OrderService#load\n", ""), encoding="utf-8")
         self.assertIn("TASK-001 缺少字段：公共验证入口", validate_design(self.design))
 
+    def test_requires_task_delivery_ownership_fields(self) -> None:
+        self.design.write_text(DESIGN.replace("- 人工运维产物：无\n", ""), encoding="utf-8")
+        self.assertIn("TASK-001 缺少字段：人工运维产物", validate_design(self.design))
+
+    def test_rejects_configuration_dml_as_execution_delivery(self) -> None:
+        invalid = DESIGN.replace(
+            "- Execution 交付：Java、测试",
+            "- Execution 交付：Java、测试、事件定义配置 DML 脚本",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertTrue(any("不得把配置数据 DML" in error for error in validate_design(self.design)))
+
+    def test_rejects_reverse_configuration_dml_assignment_to_execution(self) -> None:
+        invalid = DESIGN.replace(
+            "保持现有职责。",
+            "事件定义配置 DML 由 Execution 生成。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertIn("Execution 不得生成、交付或执行配置数据 DML", validate_design(self.design))
+
+    def test_accepts_configuration_dml_as_manual_operations_artifact(self) -> None:
+        valid = DESIGN.replace(
+            "- 人工运维产物：无",
+            "- 人工运维产物：事件定义、模板关系失效和激活配置 DML",
+        )
+        self.design.write_text(valid, encoding="utf-8")
+        self.assertEqual([], validate_design(self.design))
+
+    def test_accepts_structural_ddl_as_file_delivery(self) -> None:
+        valid = DESIGN.replace(
+            "- Execution 交付：Java、测试",
+            "- Execution 交付：Java、测试、联合索引 DDL 文件",
+        )
+        self.design.write_text(valid, encoding="utf-8")
+        self.assertEqual([], validate_design(self.design))
+
+    def test_rejects_execution_of_structural_ddl(self) -> None:
+        invalid = DESIGN.replace(
+            "保持现有职责。",
+            "保持现有职责；Execution 执行联合索引 DDL。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertIn("Execution 只能交付 DDL 文件，不得执行或间接执行 DDL", validate_design(self.design))
+
+    def test_requires_manual_owner_when_task_mentions_configuration_dml(self) -> None:
+        invalid = DESIGN.replace(
+            "- 结果：返回目标订单。",
+            "- 结果：返回目标订单，并准备事件定义配置 DML。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertTrue(any("必须声明人工运维产物" in error for error in validate_design(self.design)))
+
+    def test_allows_explicit_configuration_dml_exclusion_without_manual_artifact(self) -> None:
+        valid = DESIGN.replace(
+            "保持现有职责。",
+            "保持现有职责；Execution 不生成或执行配置数据 DML。",
+        )
+        self.design.write_text(valid, encoding="utf-8")
+        self.assertEqual([], validate_design(self.design))
+
+    def test_does_not_treat_java_event_definition_symbol_as_configuration_dml(self) -> None:
+        valid = DESIGN.replace(
+            "OrderService、OrderRepository",
+            "EventDefinitionCode、OrderService、OrderRepository",
+        )
+        self.design.write_text(valid, encoding="utf-8")
+        self.assertEqual([], validate_design(self.design))
+
+    def test_requires_task_owner_for_configuration_dml_outside_impact_section(self) -> None:
+        invalid = DESIGN.replace(
+            "保持现有职责。",
+            "准备事件定义配置 DML 后保持现有职责。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertIn(
+            "Design 提及配置数据变更时必须由 TASK 声明人工运维产物",
+            validate_design(self.design),
+        )
+
     def test_rejects_missing_prd_contract_coverage(self) -> None:
         self.design.write_text(DESIGN.replace("REQ-001、", ""), encoding="utf-8")
         self.assertIn("实施影响未覆盖 REQ-001", validate_design(self.design))
 
-    def test_high_risk_design_requires_matching_independent_review(self) -> None:
-        high_risk = DESIGN.replace(
-            "- Design 风险级别：低\n- Design 风险类型：无\n- 合同来源：无",
-            "- Design 风险级别：高\n- Design 风险类型：事务与幂等\n- 合同来源：无",
-        )
-        self.design.write_text(high_risk, encoding="utf-8")
-        self.assertIn("高风险 Design 需要独立 Reviewer 证据", validate_design(self.design))
-        evidence = self.topic / "review.json"
-        evidence.write_text(json.dumps({
-            "candidate_sha256": design_candidate_hash(high_risk, PRD),
+    def test_review_receipt_requires_all_three_risk_surfaces(self) -> None:
+        candidate = design_candidate_hash(DESIGN, PRD)
+        evidence = {
+            "candidate_sha256": candidate,
             "reviewer": "reviewer-1",
             "independent": True,
-            "contract_sources_sha256": {},
+            "risk_surfaces": {
+                "MODULE_BOUNDARY": {"checked": True},
+                "JAVA_RUNTIME_RISK": {"checked": True},
+                "BEHAVIOR_TEST": {"checked": True},
+            },
             "blocking_findings": [],
-        }), encoding="utf-8")
-        self.assertEqual([], validate_design(self.design, evidence))
+        }
+        receipt = self.topic / "review.json"
+        receipt.write_text(json.dumps(evidence), encoding="utf-8")
+        self.assertEqual([], validate_design_review(self.design, receipt))
+        evidence["risk_surfaces"].pop("BEHAVIOR_TEST")
+        self.assertTrue(review_evidence_errors(evidence, candidate))
 
-    def test_review_candidate_binds_contract_source_content(self) -> None:
-        high_risk = DESIGN.replace(
-            "- Design 风险级别：低\n- Design 风险类型：无\n- 合同来源：无",
-            "- Design 风险级别：高\n- Design 风险类型：公共合同\n- 合同来源：src/main/resources/schema.json",
-        )
-        self.design.write_text(high_risk, encoding="utf-8")
-        contract = self.topic.parents[2] / "src/main/resources/schema.json"
-        contract.parent.mkdir(parents=True)
-        contract.write_text('{"type":"object"}\n', encoding="utf-8")
-        source_name = "src/main/resources/schema.json"
-        source_content = contract.read_text(encoding="utf-8")
-        source_hash = hashlib.sha256(source_content.encode("utf-8")).hexdigest()
-        evidence = self.topic / "review.json"
-        evidence.write_text(json.dumps({
-            "candidate_sha256": design_candidate_hash(high_risk, PRD, {source_name: source_content}),
-            "contract_sources_sha256": {source_name: source_hash},
+    def test_review_receipt_is_invalid_after_design_changes(self) -> None:
+        candidate = design_candidate_hash(DESIGN, PRD)
+        evidence = {
+            "candidate_sha256": candidate,
             "reviewer": "reviewer-1",
             "independent": True,
+            "risk_surfaces": {
+                "MODULE_BOUNDARY": {"checked": True},
+                "JAVA_RUNTIME_RISK": {"checked": True},
+                "BEHAVIOR_TEST": {"checked": True},
+            },
             "blocking_findings": [],
-        }), encoding="utf-8")
-        self.assertEqual([], validate_design(self.design, evidence, (contract,)))
-        contract.write_text('{"type":"string"}\n', encoding="utf-8")
-        self.assertTrue(any("候选不匹配" in error for error in validate_design(self.design, evidence, (contract,))))
+        }
+        receipt = self.topic / "review.json"
+        receipt.write_text(json.dumps(evidence), encoding="utf-8")
+        self.design.write_text(DESIGN + "\n新增事实。\n", encoding="utf-8")
+        self.assertTrue(any("候选不匹配" in error for error in validate_design_review(self.design, receipt)))
+
+    def test_review_receipt_rejects_blocking_findings(self) -> None:
+        candidate = design_candidate_hash(DESIGN, PRD)
+        errors = review_evidence_errors({
+            "candidate_sha256": candidate,
+            "reviewer": "reviewer-1",
+            "independent": True,
+            "risk_surfaces": {surface: {"checked": True} for surface in (
+                "MODULE_BOUNDARY", "JAVA_RUNTIME_RISK", "BEHAVIOR_TEST",
+            )},
+            "blocking_findings": [{"id": "B-001"}],
+        }, candidate)
+        self.assertTrue(any("仍有 blocking finding" in error for error in errors))
+
+    def test_review_receipt_rejects_non_blocking_output(self) -> None:
+        candidate = design_candidate_hash(DESIGN, PRD)
+        errors = review_evidence_errors({
+            "candidate_sha256": candidate,
+            "reviewer": "reviewer-1",
+            "independent": True,
+            "risk_surfaces": {surface: {"checked": True} for surface in (
+                "MODULE_BOUNDARY", "JAVA_RUNTIME_RISK", "BEHAVIOR_TEST",
+            )},
+            "blocking_findings": [],
+            "suggestions": ["rename service"],
+        }, candidate)
+        self.assertTrue(any("非阻断输出字段" in error for error in errors))
 
 
 if __name__ == "__main__":

@@ -6,6 +6,8 @@
 
 Pretty Harness 决定阶段、审批、构建范围、证据格式和完成状态。冲突优先级唯一以 [quality-principles.md 的 QP-03](quality-principles.md#qp-03-约定优先) 为准；本文不重新定义优先级。本文只规定 Pretty 质量层内部的风险所有权：专项 Skill 只提供适用的语义检查，路由决定主审者；其适用建议位于共享质量规则之后、仓库惯例之前，但不能覆盖用户要求、批准合同或共享质量基线。专项 Skill 自带命令、报告格式、审批流程和数值阈值不进入 Harness。真实 API、Schema 和依赖版本仍作为不可伪造的事实约束。
 
+本表主要服务 Apply Reviewer 和实现阶段的专项语义路由。Design Reviewer 不按本表拆分 Reviewer；Design 阶段始终由一名独立 Reviewer 统一检查三个固定风险面。
+
 ## 风险所有权
 
 | 风险 ID | 触发事实 | 主审 Skill |

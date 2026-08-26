@@ -15,10 +15,8 @@ from typing import Mapping, Sequence
 
 
 COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
-DESIGN_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-writing-design" / "scripts"
-for scripts_dir in (COMMON_SCRIPTS, DESIGN_SCRIPTS):
-    if str(scripts_dir) not in sys.path:
-        sys.path.insert(0, str(scripts_dir))
+if str(COMMON_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPTS))
 
 from quality_contract_gate import (  # type: ignore[import-not-found]
     QualityFinding,
@@ -28,7 +26,6 @@ from quality_contract_gate import (  # type: ignore[import-not-found]
     review_evidence_errors,
     scan_java_source,
 )
-from validate_design import validate_design  # type: ignore[import-not-found]
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -237,8 +234,6 @@ def _build_parser() -> argparse.ArgumentParser:
     source.add_argument("--base")
     source.add_argument("--changed-manifest", type=Path)
     parser.add_argument("--design", type=Path, required=True)
-    parser.add_argument("--design-review-evidence", type=Path)
-    parser.add_argument("--design-contract-source", action="append", type=Path, default=[])
     parser.add_argument("--execution-matrix", type=Path, required=True)
     parser.add_argument("--review-evidence", type=Path, required=True)
     parser.add_argument("--json-output", type=Path, required=True)
@@ -251,11 +246,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
     design_path = args.design if args.design.is_absolute() else repo / args.design
     try:
         design_text = design_path.read_text(encoding="utf-8")
-        contract_sources = [
-            path if path.is_absolute() else repo / path
-            for path in args.design_contract_source
-        ]
-        design_errors = validate_design(design_path, args.design_review_evidence, contract_sources)
         matrix = _load_json(args.execution_matrix)
         matrix_paths, matrix_errors = _matrix_paths(matrix, design_text)
         design_hash = hashlib.sha256(design_text.encode("utf-8")).hexdigest()
@@ -272,8 +262,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         }
         candidate_hash = candidate_sha256(candidate_parts)
         evidence = load_review_evidence(args.review_evidence)
-        errors = list(design_errors)
-        errors.extend(matrix_errors)
+        errors = list(matrix_errors)
         errors.extend(_scope_errors(changed_paths, matrix_paths))
         errors.extend(
             review_evidence_errors(

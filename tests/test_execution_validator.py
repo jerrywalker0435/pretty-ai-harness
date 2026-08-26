@@ -14,6 +14,8 @@ from validate_execution import ExecutionEvidence, validate_execution  # noqa: E4
 DESIGN = """# Example Design
 ## 实施影响
 ### TASK-001：返回订单
+- Execution 交付：Java、测试
+- 人工运维产物：无
 """
 
 EXECUTION = """# Example Execution
@@ -138,6 +140,44 @@ class ExecutionValidatorTest(unittest.TestCase):
         self.build["required_kinds"] = []
         self.build["commands"] = []
         self.assertEqual([], self.validate(document))
+
+    def test_ddl_delivery_requires_explicit_non_execution_report(self) -> None:
+        design = DESIGN.replace("Java、测试", "联合索引 DDL 文件")
+        errors = validate_execution(
+            EXECUTION,
+            design,
+            self.design,
+            ExecutionEvidence(self.quality, self.coverage, self.build, self.tests),
+        )
+        self.assertTrue(any("DDL 必须报告" in error for error in errors))
+
+    def test_accepts_explicit_non_execution_ddl_report(self) -> None:
+        design = DESIGN.replace("Java、测试", "联合索引 DDL 文件")
+        document = EXECUTION.replace(
+            "- 路由与审查：独立 reviewer 已完成。",
+            "- DDL：已交付、未执行、未进行数据库验证。\n- 路由与审查：独立 reviewer 已完成。",
+        )
+        self.assertEqual(
+            [],
+            validate_execution(
+                document,
+                design,
+                self.design,
+                ExecutionEvidence(self.quality, self.coverage, self.build, self.tests),
+            ),
+        )
+
+    def test_java_field_change_does_not_require_ddl_report(self) -> None:
+        design = DESIGN.replace("Java、测试", "Java DTO 字段、测试")
+        self.assertEqual(
+            [],
+            validate_execution(
+                EXECUTION,
+                design,
+                self.design,
+                ExecutionEvidence(self.quality, self.coverage, self.build, self.tests),
+            ),
+        )
 
     def test_java_execution_cannot_disable_required_build_kinds(self) -> None:
         self.build["required_kinds"] = []

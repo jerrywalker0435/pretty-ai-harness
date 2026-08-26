@@ -11,6 +11,8 @@ description: Apply an approved Java/Spring Design or explicitly run a non-author
 
 调用本 Skill 即批准当前同目录最新 Design；不追加常规审批，不自动提交、推送、部署或发布。Design 完成后必须存在 `prd.md` 和 `design.md`，否则停止并返回 Design。
 
+调用本 Skill 也授权同一次 Dry Run 或 Apply 创建、更新和清理必要的临时目录、执行矩阵、日志、质量/测试/覆盖率证据和构建中间产物，不逐文件请求确认。正常完成或明确停止后清理；意外中断只保留用于恢复同一次 Apply 的 `.execution-state.json`。该授权不覆盖用户既有文件，不扩大数据库执行、提交、推送、部署、外部系统写入或平台受保护路径权限。
+
 ## 模式边界
 
 ### Apply
@@ -21,9 +23,9 @@ description: Apply an approved Java/Spring Design or explicitly run a non-author
 
 只读取 Design、PRD、仓库事实和有效测试，生成或更新同目录 `execution-preview.md`。Preview 可展示精确 Files/Symbols、核心实现提案和行为测试提案，但不修改生产代码、测试代码、Schema、配置或构建文件；不运行编译、测试、覆盖率、代码生成或数据库命令。只对 Preview 文档和代码块运行机械校验，不调用 `$tdd`，不启动独立 Preview Reviewer。用户自行保证 Preview 是否适用于后续 Apply；Design 和真实仓库事实优先于 Preview。
 
-## 共同输入 Gate
+## 共同输入
 
-1. 读取同目录 `prd.md`、`design.md`，运行 Design 结构和 REQ/AC 追踪；高风险 Design 在本次 Apply 重新取得临时 Reviewer 证据。校验器从 Design 的结构化合同来源字段加载仓库文件，使来源内容参与同一候选摘要。
+1. 直接读取用户批准的同目录 `prd.md`、`design.md` 作为输入合同；不调用 Design 机械校验器，不重新检查 REQ/AC，不读取或重新生成 Design Reviewer receipt。无法读取文件或无法识别执行所需 TASK 时停止，这是输入不可消费，不是重新审批 Design。
 2. 只把 Design TASK 作为结果追踪单元；内部执行步骤可拆分或合并，但不得删除 Design 结果、改变合同、公共验证入口、职责、所有权或观察面。
 3. Preview 存在时可作为输入资料，不验证其新鲜度、不复用其审查证据，也不因 Preview 过期阻断 Apply。
 4. 工作区洁净检查只要求会被编译、测试、运行或部署消费的路径没有未提交变化。PRD、Design、Preview、Execution、Context、Context Map、ADR 和其他说明性文件可脏；不分析改动归属。
@@ -79,12 +81,14 @@ Apply 只写 `execution.md`，按 Design TASK 汇总真实 Files/Symbols、行�
 
 `完成` 状态绑定完整质量、编译、测试、覆盖率和候选摘要证据。`停止`、`返回 PRD`、`返回 Design` 只提交截至停止点已产生的事实、原因和恢复点；不得为了让早停报告通过而伪造尚未产生的最终证据。
 
-Dry Run 只写 `execution-preview.md`，包含非权威声明、受影响职责链路、TASK 提案、精确 Files/Symbols、核心实现提案和测试提案；不写执行结果、覆盖率数字或审查结论。
+Dry Run 只写 `execution-preview.md`，包含非权威声明、受影响职责链路、TASK 提案、精确 Files/Symbols、核心实现提案和测试提案；不写执行结果、覆盖率数字或审查结论。配置数据 DML 不进入 Preview；DDL 只能展示拟交付文件内容，不能展示或运行数据库执行、迁移或验证命令。
 
 ## 红线
 
 - 不创建、读取或追认 `plan.md`，不创建新的 Plan 阶段。
+- 不重新校验、审查或批准 Design；用户调用本 Skill 即表示当前 Design 已完成人工 Review。
 - 不修改 PRD、Design、Context、Context Map、ADR 或项目治理文档；Design 伴随文档由其负责 Skill 维护。
-- 不生成或执行配置数据 DML；DDL 可实现但不自动做数据库验证，并在报告列为未验证范围。
+- 不生成或执行配置数据 DML；事件定义、模板关系、白名单、种子/reference data、配置激活/禁用/回滚均由人工运维处理。
+- 表、字段、索引等结构性 DDL 只能作为代码库文件交付，不得直接执行，也不得通过 Flyway、Liquibase、数据库客户端、应用启动、构建插件、集成测试或其他路径间接执行；报告必须写明“已交付、未执行、未进行数据库验证”。
 - 不伪造测试、覆盖率、Reviewer、RED 或完成证据。
 - 无全局 `$tdd` 时，行为实现停止，不内置降级版。

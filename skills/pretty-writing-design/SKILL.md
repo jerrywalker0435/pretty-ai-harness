@@ -14,6 +14,7 @@ description: Create or revise an approved Java/Spring Design and its implementat
 - 必须完整读取 PRD、适用 Context/Context Map/ADR、构建配置和受影响真实代码。
 - Design 完成后停止并请求用户 Review，不自动进入 Execution。
 - 交付时明确提示两种后续用法：Apply 使用 `$pretty-executing`；Dry Run 使用 `$pretty-executing Dry Run`，只生成 `execution-preview.md`。
+- 调用本 Skill 即授权本次运行创建、更新和清理必要的候选摘要、Reviewer receipt、校验日志及其他临时证据，不逐文件请求确认；正常完成后清理，且不得借此覆盖用户既有文件或扩大外部写入权限。
 
 ## 领域与合同门禁
 
@@ -48,6 +49,8 @@ Design 必须关闭会改变业务结果、外部合同、职责归属、数据�
 - 公共验证入口：<稳定的公开行为入口>
 - 影响锚点：<真实入口、规则所有者、持久化点或外部边界>
 - 验证观察面：<结果、状态、异常、消息或完整边界请求>
+- Execution 交付：<Java、测试、表/字段/索引 DDL，或无>
+- 人工运维产物：<配置数据 DML，或无>
 - 依赖：（按需）
 ```
 
@@ -59,6 +62,8 @@ Design 必须关闭会改变业务结果、外部合同、职责归属、数据�
 - 可以记录真实已存在的关键 Symbol 作为影响锚点；不预测私有辅助方法、fixture 或完整编译闭包。
 - 按可观察结果垂直拆分，不按 Controller/Service/Repository 横向拆分。
 - 纯 DDL 或声明性 TASK 可将不适用字段写明原因；没有可执行结果的 Design 不调用 `$pretty-executing`。
+- 事件定义、模板关系、白名单、种子/reference data、配置激活/禁用/回滚及其他配置数据 DML 都是人工运维产物。Design 可以定义其语义、顺序、前置条件和人工验收，但不得要求 Execution 生成或执行。
+- Execution 只能把 Java、测试及表、字段、索引等结构性 DDL 作为交付物。DDL 仅写入代码库，不得由 Execution 直接或通过迁移工具、应用启动、构建插件、测试间接执行，也不得声明数据库验证成功。
 - 不写完整 Java 生产代码、完整测试代码、执行命令、执行结果、覆盖率数字或质量自评。
 
 ## 成稿前质量预检
@@ -71,17 +76,23 @@ Design 必须关闭会改变业务结果、外部合同、职责归属、数据�
 - 多枚举、多状态和首次/重复/失败组合覆盖行为交互相关子空间，未覆盖组合有等价或不可达依据；
 - 方法长度、参数数量、注释、空值和测试禁用等代码级规则留给 Preview/Apply 机械 Gate，不伪装成已验证。
 
-## 高风险 Design Reviewer
+## Design Reviewer
 
-`验证与风险` 必须结构化声明 `Design 风险级别：低|高`、`Design 风险类型：无|<具体类型>` 和 `合同来源：无|<仓库相对路径列表>`。低风险的类型必须为“无”；高风险必须列出具体类型。合同来源参与 Design Reviewer 候选摘要，Apply 重新校验时从该字段加载同一批路径。公共 API/RPC/MQ/调度合同、DDL/迁移/历史兼容、职责/所有权/依赖方向、事务/并发/幂等/一致性、状态机、不可逆副作用、安全、跨模块公共行为或部署协作必须声明为高风险；否定性文字和单个关键词不直接决定风险级别。
+所有 Design 在机械校验通过后、请求用户 Review 前，必须由一名独立 Reviewer 审查；不按高低风险分流，不由 Design 自我声明审查强度，也不启动第二名 Reviewer 或专项 Reviewer。
 
-机械校验通过后，高风险 Design 先启动独立 Design Reviewer，再请求用户 Review。
+机械校验只负责固定结构、TASK 字段和 REQ/AC 覆盖。Reviewer 信任这些机械结果，不重复检查，只固定审查三个语义风险面：
 
-Reviewer 只审 Design 合同、链路完整性、事实证据、任务覆盖和验证闭合；不审最终 Java 代码质量。候选内容变化后旧证据失效。详细 JSON 证据留在临时目录，不写入 Design。低风险 Design 只运行机械校验并请求用户 Review。由于临时证据不跨运行持久化，后续 Apply 对高风险 Design 重新取得 Design Reviewer 证据；这不是要求用户先执行 Preview。
+- 模块边界：职责与数据所有权、依赖方向、公共入口、外部合同泄漏，以及 Execution 与人工运维的交付归属；必须阻断把配置 DML、数据库执行、发布、激活或回滚错误分配给 Execution，以及交付归属与 TASK 锚点、依赖、观察面不一致；
+- 运行时风险：失败语义、事务、并发、幂等、一致性、状态恢复和不可逆副作用；
+- 行为验证：公共验证入口是否真实可用，观察面能否区分正确、失败和回归行为。
+
+Reviewer 只输出阻断 finding，不输出代码风格、命名偏好、泛化建议或非阻断优化。每个阻断 finding 必须包含位置、风险面、违反的批准合同或事实约束、可观察后果、必须修正的内容和修正后的验证方式。无阻断问题时只确认三个风险面均已检查且 `blocking_findings` 为空。
+
+Writer 根据 finding 修订后，由同一 Reviewer 只复核原阻断项及修订直接引入的问题，不重扫未改动 Design。原 Reviewer 不可用时，新 Reviewer 必须对当前完整候选重新检查三个风险面。临时 receipt 只服务于本次 Design Gate，候选摘要仅绑定 `prd.md + design.md`；receipt 不写入 Design，也不供 Execution 使用。
 
 ## 质量路由与依赖
 
-只加载真实相关的最小专项 Skill。行为测试使用用户全局 `$tdd`，Design 不执行 TDD；领域信号使用全局 `$domain-modeling`。不把这些 Skill 复制进项目或 Pretty Skill 目录。
+Writer 成稿前只加载真实相关的最小专项 Skill。冻结后的正式 Design Review 不启动 `codebase-design`、`java-code-review`、`tdd` 或其他专项 Reviewer；三个固定风险面由同一名独立 Reviewer 完成。行为测试使用用户全局 `$tdd`，Design 不执行 TDD；领域信号使用全局 `$domain-modeling`。不把这些 Skill 复制进项目或 Pretty Skill 目录。
 
 需要质量基线、风险路由或独立审查字段时，读取共享资源：
 
@@ -91,7 +102,7 @@ Reviewer 只审 Design 合同、链路完整性、事实证据、任务覆盖和
 
 ## 校验与交付
 
-运行 `scripts/validate_design.py docs/pretty/<topic>/design.md`。交付 Design 路径、主要结论、领域文档变更、校验/风险审查结果，并请求用户 Review。用户调用 `$pretty-executing` 即批准当前最新 Design。
+先运行 `scripts/validate_design.py docs/pretty/<topic>/design.md`，机械 Gate 通过后启动一名独立 Reviewer，并用 `scripts/validate_design_review.py docs/pretty/<topic>/design.md --review-evidence <temporary-receipt>` 验证冻结候选。交付 Design 路径、主要结论、领域文档变更和未关闭阻断项，并请求用户 Review；不把 Reviewer 过程或结论写入 Design。用户调用 `$pretty-executing` 即批准当前最新 Design。
 
 ## 红线
 

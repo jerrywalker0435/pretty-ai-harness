@@ -23,6 +23,12 @@ FINAL_STATUS = re.compile(
     re.MULTILINE,
 )
 PLACEHOLDER = re.compile(r"<[^>\n]+>|\b(?:TODO|TBD|FIXME)\b|待验证|待审查|执行中|\.\.\.", re.IGNORECASE)
+EXECUTION_DELIVERY = re.compile(r"^-\s*Execution 交付：\s*(\S.+)$", re.MULTILINE)
+DDL_DELIVERY = re.compile(
+    r"\bDDL\b|ALTER\s+TABLE|CREATE\s+(?:TABLE|INDEX)|DROP\s+(?:TABLE|INDEX)",
+    re.IGNORECASE,
+)
+DDL_REPORT = "- DDL：已交付、未执行、未进行数据库验证"
 
 
 @dataclass(frozen=True)
@@ -77,6 +83,28 @@ def _task_errors(document: str, design_text: str) -> list[str]:
     if set(execution_tasks) != set(design_tasks):
         return [f"Execution TASK set must match Design: {design_tasks}"]
     return []
+
+
+def _task_body(document: str, section: str, task: str) -> str:
+    section_text = _section_body(document, section)
+    start = section_text.find(f"### {task}")
+    if start < 0:
+        return ""
+    next_task = section_text.find("### TASK-", start + 1)
+    return section_text[start: next_task if next_task >= 0 else len(section_text)]
+
+
+def _ddl_report_errors(document: str, design_text: str) -> list[str]:
+    if not _complete_status(document):
+        return []
+    errors = []
+    for task in DESIGN_TASK.findall(design_text):
+        delivery = EXECUTION_DELIVERY.search(_task_body(design_text, "实施影响", task))
+        if delivery and DDL_DELIVERY.search(delivery.group(1)):
+            execution_task = _task_body(document, "TASK 结果", task)
+            if DDL_REPORT not in execution_task:
+                errors.append(f"{task} 的 DDL 必须报告为已交付、未执行、未进行数据库验证")
+    return errors
 
 
 def _complete_status(document: str) -> bool:
@@ -206,6 +234,7 @@ def validate_execution(document: str, design_text: str, design_path: Path, evide
     quality, coverage, build, tests = evidence.quality, evidence.coverage, evidence.build, evidence.tests
     errors = _structure_errors(document)
     errors.extend(_task_errors(document, design_text))
+    errors.extend(_ddl_report_errors(document, design_text))
     errors.extend(_gate_errors(document, quality, tests))
     errors.extend(_coverage_errors(document, coverage))
     repo = design_path.resolve().parents[3] if len(design_path.resolve().parents) >= 4 else design_path.parent

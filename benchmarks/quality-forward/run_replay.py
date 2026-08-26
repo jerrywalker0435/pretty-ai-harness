@@ -242,7 +242,7 @@ def _design_prompt(topic: str, evidence: Path) -> str:
 Read and obey .agents/skills/pretty-writing-design/SKILL.md and every resource it directly requires.
 The primary input is docs/pretty/{topic}/design.md; the PRD and Design are approved in this prompt.
 Read Context.md, Context-Map.md, pom.xml, and the real Java source and tests.
-Update only docs/pretty/{topic}/design.md. Put temporary Design Reviewer evidence at {evidence / 'design-review.json'} when the Design declares high risk. Do not create a Plan or implement production code.
+Update only docs/pretty/{topic}/design.md. Every TASK must distinguish Execution deliverables from manual-operations artifacts; configuration-data DML always belongs to manual operations, while Execution may only deliver Java, tests, and structural DDL files that it never executes. After the mechanical Gate passes, use exactly one independent Reviewer for module boundaries, runtime risks, and behavioral validation. The Reviewer must emit only blocking findings and write the transient receipt to {evidence / 'design-review.json'}. Do not create a Plan or implement production code.
 Do not ask questions. Finish after the Design Gate passes and the document requests Apply and Dry Run.
 """
 
@@ -251,7 +251,7 @@ def _execution_prompt(topic: str, evidence: Path) -> str:
     return f"""This is the Apply half of a synthetic forward evaluation. The evaluator explicitly approves the current Design.
 Read and obey .agents/skills/pretty-executing/SKILL.md and every resource it directly requires.
 Implement docs/pretty/{topic}/design.md in the real Java repository with tests. Use an actual independent reviewer agent.
-Use {evidence} for all temporary evidence. Required final files are quality.json, coverage.json, tests.json, build.json there and docs/pretty/{topic}/execution.md in the repo.
+Use {evidence} for all temporary evidence without asking for per-file approval. Required final files are quality.json, coverage.json, tests.json, build.json there and docs/pretty/{topic}/execution.md in the repo. Never generate configuration-data DML or execute structural DDL directly or indirectly.
 Run the supplied quality, coverage, and Execution validators. The coverage build must run tests and create a fresh JaCoCo report.
 Do not commit, push, change approved upstream files, or ask questions. Finish only after the Execution Gate passes.
 """
@@ -300,16 +300,27 @@ def _infrastructure_error(log: Path) -> str | None:
 
 
 def _validate_design(environment: ReplayEnvironment, log: Path) -> int:
-    command = [
-        sys.executable,
-        ".agents/skills/pretty-writing-design/scripts/validate_design.py",
-        f"docs/pretty/{environment.topic}/design.md",
-    ]
-    review = environment.evidence / "design-review.json"
-    if review.is_file():
-        command.extend(["--review-evidence", str(review)])
     return _run(
-        command,
+        [
+            sys.executable,
+            ".agents/skills/pretty-writing-design/scripts/validate_design.py",
+            f"docs/pretty/{environment.topic}/design.md",
+        ],
+        environment.repo,
+        log,
+        timeout=environment.timeout,
+    )
+
+
+def _validate_design_review(environment: ReplayEnvironment, log: Path) -> int:
+    return _run(
+        [
+            sys.executable,
+            ".agents/skills/pretty-writing-design/scripts/validate_design_review.py",
+            f"docs/pretty/{environment.topic}/design.md",
+            "--review-evidence",
+            str(environment.evidence / "design-review.json"),
+        ],
         environment.repo,
         log,
         timeout=environment.timeout,
@@ -390,10 +401,18 @@ def _run_design_stage(
         return AgentGateResult(agent_exit, -1, infrastructure_error)
     gate_log = workspace / "design-gate.log"
     gate_exit = _validate_design(environment, gate_log)
+    if gate_exit != 0:
+        return AgentGateResult(
+            agent_exit,
+            gate_exit,
+            infrastructure_error or _infrastructure_error(gate_log),
+        )
+    review_log = workspace / "design-review-gate.log"
+    gate_exit = _validate_design_review(environment, review_log)
     return AgentGateResult(
         agent_exit,
         gate_exit,
-        infrastructure_error or _infrastructure_error(gate_log),
+        infrastructure_error or _infrastructure_error(review_log),
     )
 
 

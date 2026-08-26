@@ -16,7 +16,7 @@
 共享资源（不注册为 Skill）：
 
 - `skills/pretty-common/references/quality-principles.md`：`pretty-writing-design` 与 `pretty-executing` 必须共同读取的质量基线。
-- `skills/pretty-common/references/quality-routing.md`：风险与唯一专项 Reviewer 的路由表。
+- `skills/pretty-common/references/quality-routing.md`：Apply 风险与专项主审 Skill 的路由表；Design 固定使用一名独立 Reviewer，不按该表拆分 Reviewer。
 - `skills/pretty-common/references/quality-review-protocol.md`：独立审查及证据协议。
 - `skills/pretty-common/scripts/quality_contract_gate.py`：Preview 和 Apply 共用的高确定性 Java 代码质量扫描器。
 - 安装后目标结构必须保持为 `<target-skills-dir>/pretty-common/...`，与三个 Pretty Skill 目录同级；不要把它嵌套进任一 Skill 目录。
