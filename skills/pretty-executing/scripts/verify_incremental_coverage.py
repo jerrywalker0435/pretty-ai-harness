@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import shlex
@@ -22,7 +21,9 @@ COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "script
 if str(COMMON_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPTS))
 
-from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from candidate_contract import quality_bundle_sha256  # type: ignore[import-not-found]
+from evidence_binding import evidence_sha256, file_sha256, self_bound_sha256  # type: ignore[import-not-found]
+from quality_registry import MIN_BRANCH_COVERAGE, MIN_LINE_COVERAGE  # type: ignore[import-not-found]
 from pretty_tmp import (  # type: ignore[import-not-found]
     is_pretty_tmp_path,
     topic_dir_for_document,
@@ -31,8 +32,8 @@ from pretty_tmp import (  # type: ignore[import-not-found]
 )
 
 
-DEFAULT_LINE_THRESHOLD = 90.0
-DEFAULT_BRANCH_THRESHOLD = 80.0
+DEFAULT_LINE_THRESHOLD = MIN_LINE_COVERAGE
+DEFAULT_BRANCH_THRESHOLD = MIN_BRANCH_COVERAGE
 UNMEASURABLE_EXIT = 2
 HUNK_PATTERN = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 STATUS_LABELS = {
@@ -91,6 +92,20 @@ class CoverageResult:
         coverage_payload["status_label"] = STATUS_LABELS[self.status]
         coverage_payload["passed"] = self.status in {"pass", "not_applicable"}
         return coverage_payload
+
+
+@dataclass(frozen=True)
+class CoverageEvidenceRequest:
+    result: CoverageResult
+    reports: Sequence[Path]
+    source_hashes: Mapping[str, str]
+    design_sha256: str
+    start_head: str
+    execution_matrix_sha256: str
+    resolver_sha256: str
+    shared_bundle_sha256: str
+    json_output: Path | None
+    quality_candidate_sha256: str
 
 
 def _percentage(covered: int, total: int) -> float | None:
@@ -460,18 +475,14 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."), help="目标仓库根目录")
     parser.add_argument("--design", type=Path, required=True, help="当前批准的 Design")
+    parser.add_argument("--execution-matrix", type=Path, required=True)
+    parser.add_argument("--resolver", type=Path, required=True)
     parser.add_argument("--base", required=True, help="记录在 Apply 状态中的起始 HEAD")
     parser.add_argument(
         "--changed-manifest",
         type=Path,
         help="可选 TASK 归因；必须与 Git 推导的生产 Java 增量完全一致",
     )
-    parser.add_argument(
-        "--slice-manifest",
-        type=Path,
-        help="可选行为切片范围；必须是当前 Git 生产 Java 增量的非空子集",
-    )
-    parser.add_argument("--slice-id", help="行为切片标识；与 --slice-manifest 一起写入证据")
     parser.add_argument("--report", action="append", type=Path, help="JaCoCo XML；可重复传入")
     parser.add_argument("--run", action="store_true", help="先运行通用 Maven/Gradle 覆盖率任务")
     parser.add_argument("--build-tool", choices=("auto", "maven", "gradle"), default="auto")
@@ -484,7 +495,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         help="未使用 --run 时，JaCoCo 报告不得早于此 Unix 时间",
     )
-    parser.add_argument("--quality-candidate-sha256")
+    parser.add_argument("--quality-candidate-sha256", required=True)
     return parser
 
 
@@ -516,38 +527,29 @@ def _write_json(output_path: Path | None, payload: Mapping[str, object]) -> None
         output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _emit_result(
-    coverage_result: CoverageResult,
-    reports: Sequence[Path],
-    candidate_hash: str,
-    source_hashes: Mapping[str, str],
-    design_sha256: str,
-    start_head: str,
-    json_output: Path | None,
-    quality_candidate_sha256: str | None,
-    slice_id: str | None = None,
-) -> int:
-    payload = coverage_result.as_dict()
-    payload["reports"] = [str(report) for report in reports]
+def _emit_result(request: CoverageEvidenceRequest) -> int:
+    payload = request.result.as_dict()
+    payload["reports"] = [str(report) for report in request.reports]
     payload["report_sha256"] = {
-        str(report): _file_sha256(report)
-        for report in reports
+        str(report): file_sha256(report)
+        for report in request.reports
     }
-    payload["candidate_sha256"] = candidate_hash
-    payload["source_sha256"] = dict(sorted(source_hashes.items()))
-    payload["design_sha256"] = design_sha256
-    payload["start_head"] = start_head
-    payload["quality_candidate_sha256"] = quality_candidate_sha256
-    payload["scope"] = "slice" if slice_id else "final"
-    if slice_id:
-        payload["slice_id"] = slice_id
+    payload["source_sha256"] = dict(sorted(request.source_hashes.items()))
+    payload["design_sha256"] = request.design_sha256
+    payload["start_head"] = request.start_head
+    payload["execution_matrix_sha256"] = request.execution_matrix_sha256
+    payload["resolver_sha256"] = request.resolver_sha256
+    payload["shared_bundle_sha256"] = request.shared_bundle_sha256
+    payload["quality_candidate_sha256"] = request.quality_candidate_sha256
+    payload["scope"] = "final"
     payload["generated_at"] = time.time()
+    payload["candidate_sha256"] = self_bound_sha256(payload)
     payload["evidence_sha256"] = evidence_sha256(payload)
     print(_render_text(coverage_result))
-    _write_json(json_output, payload)
-    if coverage_result.status == "unmeasurable":
+    _write_json(request.json_output, payload)
+    if request.result.status == "unmeasurable":
         return UNMEASURABLE_EXIT
-    return 0 if coverage_result.status in {"pass", "not_applicable"} else 1
+    return 0 if request.result.status in {"pass", "not_applicable"} else 1
 
 
 def _run_requested_build(args: argparse.Namespace, repo: Path, temporary_dir: Path | None) -> None:
@@ -566,23 +568,6 @@ def _load_changed_sources(
     start_head: str,
 ) -> tuple[ChangedSource, ...]:
     actual = collect_changed_sources(repo, start_head)
-    slice_manifest = getattr(args, "slice_manifest", None)
-    if args.changed_manifest and slice_manifest:
-        raise ValueError("--changed-manifest and --slice-manifest cannot be used together")
-    if slice_manifest:
-        declared = load_changed_manifest(slice_manifest)
-        actual_map = {source.path: source.lines for source in actual}
-        declared_map = {source.path: source.lines for source in declared}
-        for path, lines in declared_map.items():
-            actual_lines = actual_map.get(path, frozenset())
-            if path not in actual_map or not lines <= actual_lines:
-                raise ValueError(
-                    "slice manifest production Java scope must be a subset of the Git diff: "
-                    f"path={path}, declared={sorted(lines)}, actual={sorted(actual_lines)}"
-                )
-        if not declared_map:
-            raise ValueError("slice manifest must contain at least one production Java path")
-        return declared
     if not args.changed_manifest:
         return actual
     declared = load_changed_manifest(args.changed_manifest)
@@ -596,40 +581,9 @@ def _load_changed_sources(
     return actual
 
 
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _coverage_candidate_hash(
-    repo: Path,
-    sources: Sequence[ChangedSource],
-    reports: Sequence[Path] = (),
-    line_threshold: float = DEFAULT_LINE_THRESHOLD,
-    branch_threshold: float = DEFAULT_BRANCH_THRESHOLD,
-) -> str:
-    digest = hashlib.sha256()
-    for source in sources:
-        digest.update(source.path.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(",".join(str(line) for line in sorted(source.lines)).encode("ascii"))
-        source_path = repo / source.path
-        if source_path.is_file():
-            digest.update(b"\0")
-            digest.update(source_path.read_bytes())
-    digest.update(b"thresholds\0")
-    digest.update(f"{line_threshold:.12g},{branch_threshold:.12g}".encode("ascii"))
-    for report in sorted(reports, key=lambda path: str(path)):
-        digest.update(b"report\0")
-        digest.update(str(report).encode("utf-8"))
-        digest.update(b"\0")
-        if report.is_file():
-            digest.update(_file_sha256(report).encode("ascii"))
-    return digest.hexdigest()
-
-
 def _source_hashes(repo: Path, sources: Sequence[ChangedSource]) -> dict[str, str]:
     return {
-        source.path: _file_sha256(repo / source.path)
+        source.path: file_sha256(repo / source.path)
         for source in sources
         if (repo / source.path).is_file()
     }
@@ -669,10 +623,10 @@ def _reject_test_skipping(build_arguments: Sequence[str]) -> None:
 
 
 def _validate_thresholds(line_threshold: float, branch_threshold: float) -> None:
-    if not 0 <= line_threshold <= 100:
-        raise ValueError("line threshold must be between 0 and 100")
-    if not 0 <= branch_threshold <= 100:
-        raise ValueError("branch threshold must be between 0 and 100")
+    if not MIN_LINE_COVERAGE <= line_threshold <= 100:
+        raise ValueError(f"line threshold must be between {MIN_LINE_COVERAGE:g} and 100")
+    if not MIN_BRANCH_COVERAGE <= branch_threshold <= 100:
+        raise ValueError(f"branch threshold must be between {MIN_BRANCH_COVERAGE:g} and 100")
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -696,21 +650,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 run_dir = validate_run_dir(topic_dir, manifest_path.parent)
             validate_artifact_path(run_dir, manifest_path)
             args.changed_manifest = manifest_path
-        if args.slice_manifest is not None:
-            slice_manifest_path = (
-                args.slice_manifest
-                if args.slice_manifest.is_absolute()
-                else repo / args.slice_manifest
-            )
-            if run_dir is None:
-                run_dir = validate_run_dir(topic_dir, slice_manifest_path.parent)
-            validate_artifact_path(run_dir, slice_manifest_path)
-            args.slice_manifest = slice_manifest_path
-            if not args.slice_id or not args.slice_id.strip():
-                raise ValueError("--slice-manifest requires a non-empty --slice-id")
-        elif args.slice_id:
-            raise ValueError("--slice-id requires --slice-manifest")
-        design_sha256 = _file_sha256(design_path)
+        matrix_path = args.execution_matrix if args.execution_matrix.is_absolute() else repo / args.execution_matrix
+        resolver_path = args.resolver if args.resolver.is_absolute() else repo / args.resolver
+        if run_dir is None:
+            run_dir = validate_run_dir(topic_dir, matrix_path.parent)
+        validate_artifact_path(run_dir, matrix_path)
+        validate_artifact_path(run_dir, resolver_path)
+        design_sha256 = file_sha256(design_path)
+        matrix_sha256 = file_sha256(matrix_path)
+        resolver_sha256 = file_sha256(resolver_path)
+        shared_bundle_sha256 = quality_bundle_sha256()
         start_head = _run_git(repo, ["rev-parse", "--verify", f"{args.base}^{{commit}}"]).strip()
         _validate_thresholds(args.line_threshold, args.branch_threshold)
         if not args.run and args.report_not_before is None:
@@ -720,21 +669,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         _run_requested_build(args, repo, run_dir)
         reports = _resolve_reports(repo, args.report, report_not_before)
         changed_sources = _load_changed_sources(args, repo, start_head)
-        candidate_hash = _coverage_candidate_hash(
-            repo,
-            changed_sources,
-            reports,
-            args.line_threshold,
-            args.branch_threshold,
-        )
         source_hashes = _source_hashes(repo, changed_sources)
         if not changed_sources:
             coverage_result = calculate_coverage((), {}, args.line_threshold, args.branch_threshold)
-            return _emit_result(
-                coverage_result, (), candidate_hash, source_hashes,
-                design_sha256, start_head, args.json_output,
-                args.quality_candidate_sha256, args.slice_id,
-            )
+            return _emit_result(CoverageEvidenceRequest(
+                coverage_result, (), source_hashes, design_sha256, start_head,
+                matrix_sha256, resolver_sha256, shared_bundle_sha256,
+                args.json_output, args.quality_candidate_sha256,
+            ))
         if not reports:
             raise RuntimeError("未找到 JaCoCo XML 报告；请使用 --report 或 --run")
         stale_sources = _stale_sources(repo, changed_sources, reports)
@@ -747,11 +689,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
             args.line_threshold,
             args.branch_threshold,
         )
-        return _emit_result(
-            coverage_result, reports, candidate_hash, source_hashes,
-            design_sha256, start_head, args.json_output,
-            args.quality_candidate_sha256, args.slice_id,
-        )
+        return _emit_result(CoverageEvidenceRequest(
+            coverage_result, reports, source_hashes, design_sha256, start_head,
+            matrix_sha256, resolver_sha256, shared_bundle_sha256,
+            args.json_output, args.quality_candidate_sha256,
+        ))
     except (OSError, RuntimeError, ValueError, ElementTree.ParseError) as error:
         print(f"覆盖率验证无法验证：{error}", file=sys.stderr)
         return UNMEASURABLE_EXIT

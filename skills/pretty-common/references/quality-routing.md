@@ -10,6 +10,8 @@ Pretty Harness 决定阶段、审批、构建范围、证据格式和完成状�
 
 ## 风险所有权
 
+下表是 `../scripts/quality_registry.py` 中 `RiskSpec` 的人类可读投影，owner 以注册表为唯一机器来源；一致性检查阻止本文与注册表漂移。
+
 | 风险 ID | 触发事实 | 语义归属 Skill |
 | --- | --- | --- |
 | `MODULE_BOUNDARY` | Interface、公共验证入口、Depth、Locality、跨模块规则归属 | `codebase-design` |
@@ -29,7 +31,7 @@ Execution 对所有非平凡生产代码额外执行一次 `clean-code-guard`，
 1. 生成前由 `scripts/quality_resolver.py` 从执行矩阵和仓库事实派生规则与风险；Writer 只消费结果。
 2. Java 生产切片保守命中 `JAVA_OOD`、`JAVA_RUNTIME_RISK` 和 `BEHAVIOR_TEST`，再按观察到的边界、类型和变化轴事实累积其他风险；不确定时取并集。
 3. 每项风险必须绑定具体文件、symbol、调用链或合同事实，并使用表中的语义归属；最终仍由同一名独立 Reviewer 汇总结论。
-4. 候选出现新文件、Symbol、依赖或边界时增量运行 Resolver；完整候选冻结前对真实 Diff 复核一次。
+4. 候选出现新文件、Symbol、依赖或边界时增量运行 Resolver；批准合同内用 Apply `rebind` 更新矩阵与 Resolver 摘要，改变公共合同时返回 Design；完整候选冻结前对真实 Diff 复核一次。
 5. 最终 Reviewer 检查 Resolver 是否漏掉新事实，但不能删除已派生风险；专项结论落实到职责、签名、异常、类型、测试或配置。
 
 普通专项不可用时，按共享基线完成同一语义检查并记录降级；公开 Interface、迁移、并发、安全或高风险架构缺少必要审查能力时停止并返回上游。

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -16,7 +15,7 @@ COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "script
 if str(COMMON_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPTS))
 
-from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from evidence_binding import evidence_sha256, file_sha256, payload_sha256, self_bound_sha256  # type: ignore[import-not-found]
 from pretty_tmp import topic_dir_for_document, validate_artifact_path, validate_run_dir  # type: ignore[import-not-found]
 
 
@@ -44,10 +43,8 @@ class ExecutionEvidence:
     coverage: Mapping[str, object]
     build: Mapping[str, object]
     tests: Mapping[str, object]
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    review: Mapping[str, object] | None = None
+    state: Mapping[str, object] | None = None
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -55,13 +52,6 @@ def _load_json(path: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
-
-
-def evidence_candidate_sha256(payload: Mapping[str, object]) -> str:
-    candidate = dict(payload)
-    candidate.pop("candidate_sha256", None)
-    canonical = json.dumps(candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _section_body(document: str, heading: str) -> str:
@@ -74,9 +64,11 @@ def _section_body(document: str, heading: str) -> str:
     return "\n".join(lines[start:end])
 
 
-def _structure_errors(document: str) -> list[str]:
+def _structure_errors(document: str, state: Mapping[str, object] | None = None) -> list[str]:
     headings = [line[3:].strip() for line in document.splitlines() if line.startswith("## ")]
     errors = []
+    if state is not None and state.get("state_sha256") != payload_sha256(state, {"updated_at", "state_sha256"}):
+        errors.append("execution state integrity hash does not match")
     if headings != list(SECTIONS):
         errors.append(f"sections must be exactly: {', '.join(SECTIONS)}")
     if PLACEHOLDER.search(document):
@@ -173,14 +165,14 @@ def _source_binding_errors(evidence: Mapping[str, object], repo: Path, label: st
     errors = []
     for relative_path, expected_hash in source_hashes.items():
         source_path = repo / str(relative_path)
-        if not source_path.is_file() or _sha256(source_path) != expected_hash:
+        if not source_path.is_file() or file_sha256(source_path) != expected_hash:
             errors.append(f"{label} evidence is stale for {relative_path}")
     return errors
 
 
 def _build_errors(build: Mapping[str, object], design_path: Path, evidence: ExecutionEvidence, require_passes: bool) -> list[str]:
     errors = _evidence_binding_errors(build, design_path, evidence)
-    if build.get("candidate_sha256") != evidence_candidate_sha256(build):
+    if build.get("candidate_sha256") != self_bound_sha256(build):
         errors.append("build evidence candidate_sha256 does not match its content")
     if not isinstance(build.get("commands"), list):
         return errors + ["build evidence commands must be a list"]
@@ -193,6 +185,7 @@ def _evidence_integrity_errors(evidence: ExecutionEvidence) -> list[str]:
     errors = []
     for label, payload in (
         ("quality", evidence.quality),
+        ("build", evidence.build),
         ("coverage", evidence.coverage),
         ("test", evidence.tests),
     ):
@@ -201,6 +194,32 @@ def _evidence_integrity_errors(evidence: ExecutionEvidence) -> list[str]:
             errors.append(f"{label} evidence needs evidence_sha256")
         elif expected != evidence_sha256(payload):
             errors.append(f"{label} evidence evidence_sha256 does not match its content")
+    if evidence.review is not None:
+        expected = evidence.review.get("evidence_sha256")
+        if not isinstance(expected, str) or expected != evidence_sha256(evidence.review):
+            errors.append("review evidence evidence_sha256 does not match its content")
+    return errors
+
+
+def _state_errors(evidence: ExecutionEvidence) -> list[str]:
+    state = evidence.state
+    if state is None:
+        return ["completed Execution report needs execution-state.json"]
+    errors = []
+    if state.get("schema_version") != 4 or state.get("phase") != "promoted" or state.get("status") != "completed":
+        errors.append("completed Execution report needs a promoted Apply state")
+    if state.get("candidate_sha256") != evidence.quality.get("candidate_sha256"):
+        errors.append("execution state does not match quality candidate")
+    gate = state.get("objective_gate")
+    if gate != {
+        "quality_candidate_sha256": evidence.quality.get("candidate_sha256"),
+        "build_candidate_sha256": evidence.build.get("candidate_sha256"),
+        "test_evidence_sha256": evidence.tests.get("evidence_sha256"),
+        "coverage_evidence_sha256": evidence.coverage.get("evidence_sha256"),
+    }:
+        errors.append("execution state objective Gate does not match evidence")
+    if evidence.review is not None and state.get("review_receipt_sha256") != evidence.review.get("evidence_sha256"):
+        errors.append("execution state Reviewer receipt is stale")
     return errors
 
 
@@ -229,13 +248,14 @@ def _evidence_start_heads(evidence: ExecutionEvidence) -> dict[str, object]:
         "quality": evidence.quality.get("start_head"),
         "coverage": evidence.coverage.get("start_head"),
         "build": evidence.build.get("start_head"),
+        "test": evidence.tests.get("start_head"),
     }
 
 
 def _evidence_binding_errors(
     build: Mapping[str, object], design_path: Path, evidence: ExecutionEvidence
 ) -> list[str]:
-    design_hash = _sha256(design_path)
+    design_hash = file_sha256(design_path)
     quality, coverage, tests = evidence.quality, evidence.coverage, evidence.tests
     errors = []
     if build.get("design_sha256") != design_hash:
@@ -251,21 +271,28 @@ def _evidence_binding_errors(
             errors.append(f"{label} evidence does not match the frozen quality candidate")
     candidate_bindings = {
         "quality_candidate_sha256": quality.get("candidate_sha256"),
-        "coverage_evidence_sha256": coverage.get("evidence_sha256"),
-        "test_evidence_sha256": tests.get("evidence_sha256"),
     }
     for field, expected in candidate_bindings.items():
         if not isinstance(expected, str) or not expected:
             errors.append(f"{field.removesuffix('_candidate_sha256')} evidence needs candidate_sha256")
         elif build.get(field) != expected:
             errors.append(f"build evidence has stale {field}")
+    for label, payload in (("quality", quality), ("build", build), ("test", tests), ("coverage", coverage)):
+        if payload.get("execution_matrix_sha256") != quality.get("execution_matrix_sha256"):
+            errors.append(f"{label} evidence has stale execution matrix binding")
+        if payload.get("resolver_sha256") != quality.get("resolver_sha256"):
+            errors.append(f"{label} evidence has stale resolver binding")
+        if payload.get("shared_bundle_sha256") != quality.get("shared_bundle_sha256"):
+            errors.append(f"{label} evidence has stale shared bundle binding")
     return errors
 
 
 def _pre_review_gate_errors(evidence: ExecutionEvidence) -> list[str]:
-    gate = evidence.quality.get("pre_review_gate")
+    if evidence.review is None:
+        return ["completed Apply needs an independent Reviewer receipt"]
+    gate = evidence.review.get("pre_review_gate")
     if not isinstance(gate, dict):
-        return ["quality evidence must bind the objective Gate completed before final Review"]
+        return ["Reviewer receipt must bind the objective Gate"]
     expected = {
         "quality_candidate_sha256": evidence.quality.get("candidate_sha256"),
         "build_candidate_sha256": evidence.build.get("candidate_sha256"),
@@ -278,6 +305,12 @@ def _pre_review_gate_errors(evidence: ExecutionEvidence) -> list[str]:
             errors.append(f"pre-review {field.removesuffix('_candidate_sha256')} evidence needs candidate_sha256")
         elif gate.get(field) != value:
             errors.append(f"final Reviewer started before stable {field}")
+    if evidence.review.get("candidate_sha256") != evidence.quality.get("candidate_sha256"):
+        errors.append("Reviewer receipt does not match the frozen candidate")
+    if evidence.review.get("independent") is not True:
+        errors.append("Reviewer receipt must identify an independent Reviewer")
+    if evidence.review.get("blocking_findings") != []:
+        errors.append("Reviewer receipt contains blocking findings")
     return errors
 
 
@@ -286,36 +319,38 @@ def _required_command_errors(build: Mapping[str, object], evidence: ExecutionEvi
     if not isinstance(commands, list):
         return ["build evidence commands must be a list"]
     errors = []
-    latest = {}
+    satisfied = set()
+    seen_commands = set()
     for index, entry in enumerate(commands):
-        if not isinstance(entry, dict) or not isinstance(entry.get("kind"), str):
+        if not isinstance(entry, dict):
             continue
-        finished = entry.get("finished_at", 0)
-        previous = latest.get(entry["kind"])
-        if previous is None or (finished, index) > (previous[0], previous[1]):
-            latest[entry["kind"]] = (finished, index, entry)
-    required = build.get("required_kinds", ["compile", "new_tests", "regression_tests"])
-    allowed = {"compile", "new_tests", "regression_tests"}
-    if not isinstance(required, list) or any(kind not in allowed for kind in required):
-        return errors + ["build evidence required_kinds must contain only known command kinds"]
+        command_key = json.dumps(entry.get("command"), ensure_ascii=False, sort_keys=True)
+        if command_key in seen_commands:
+            errors.append(f"equivalent build command is duplicated: {entry.get('command')}")
+        seen_commands.add(command_key)
+        kinds = entry.get("satisfies")
+        allowed = {"compile", "new_tests", "regression_tests", "coverage"}
+        if not isinstance(kinds, list) or not kinds or any(kind not in allowed for kind in kinds):
+            errors.append(f"build command {index} has invalid satisfies")
+            continue
+        if entry.get("exit_code") != 0:
+            errors.append(f"build command {index} failed")
+        satisfied.update(kinds)
     mandatory = set()
     if evidence.quality.get("production_java") is True:
         mandatory.update({"compile", "regression_tests"})
     if evidence.tests.get("expected_tests"):
         mandatory.add("new_tests")
-    for missing_kind in sorted(mandatory - set(required)):
-        errors.append(f"build evidence cannot mark applicable command as not required: {missing_kind}")
-    for kind in required:
-        if kind not in latest:
-            errors.append(f"missing build evidence: {kind}")
-        elif latest[kind][2].get("exit_code") != 0:
-            errors.append(f"latest build evidence failed: {kind}")
+    if evidence.coverage.get("status") == "pass":
+        mandatory.add("coverage")
+    for kind in sorted(mandatory - satisfied):
+        errors.append(f"build evidence does not satisfy required command: {kind}")
     return errors
 
 
 def validate_execution(document: str, design_text: str, design_path: Path, evidence: ExecutionEvidence) -> list[str]:
     quality, coverage, build, tests = evidence.quality, evidence.coverage, evidence.build, evidence.tests
-    errors = _structure_errors(document)
+    errors = _structure_errors(document, evidence.state)
     errors.extend(_task_errors(document, design_text))
     errors.extend(_ddl_report_errors(document, design_text))
     errors.extend(_gate_errors(document, quality, tests))
@@ -330,6 +365,7 @@ def validate_execution(document: str, design_text: str, design_path: Path, evide
         errors.extend(_source_binding_errors(tests, repo, "test"))
         errors.extend(_build_errors(build, design_path, evidence, True))
         errors.extend(_pre_review_gate_errors(evidence))
+        errors.extend(_state_errors(evidence))
     final_digest = re.search(r"^-\s*最终 Diff 摘要：\s*`([^`]+)`\s*$", _section_body(document, "结论与恢复点"), re.MULTILINE)
     if complete and (not final_digest or final_digest.group(1) != quality.get("candidate_sha256")):
         errors.append("最终 Diff 摘要必须匹配 quality candidate_sha256")
@@ -344,6 +380,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--coverage-evidence", type=Path)
     parser.add_argument("--build-evidence", type=Path)
     parser.add_argument("--test-evidence", type=Path)
+    parser.add_argument("--review-evidence", type=Path)
+    parser.add_argument("--state", type=Path)
     return parser
 
 
@@ -357,6 +395,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         evidence_paths = (
             args.quality_evidence, args.coverage_evidence,
             args.build_evidence, args.test_evidence,
+            args.review_evidence, args.state,
         )
         run_dirs = {
             path.resolve().parent
@@ -374,11 +413,13 @@ def main(arguments: Sequence[str] | None = None) -> int:
         coverage = _load_json(args.coverage_evidence) if args.coverage_evidence else {}
         build = _load_json(args.build_evidence) if args.build_evidence else {}
         tests = _load_json(args.test_evidence) if args.test_evidence else {}
+        review = _load_json(args.review_evidence) if args.review_evidence else None
+        state = _load_json(args.state) if args.state else None
         errors = validate_execution(
             document,
             design_text,
             design_path,
-            ExecutionEvidence(quality, coverage, build, tests),
+            ExecutionEvidence(quality, coverage, build, tests, review, state),
         )
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"Execution validation failed: {error}", file=sys.stderr)

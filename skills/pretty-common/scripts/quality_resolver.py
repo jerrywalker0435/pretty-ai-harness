@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
@@ -12,7 +11,8 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Sequence
 
-from quality_registry import RISK_OWNERS, RULES
+from evidence_binding import bytes_sha256, payload_sha256  # type: ignore[import-not-found]
+from quality_registry import RISK_BY_CODE, RULES
 from pretty_tmp import is_pretty_tmp_path, topic_dir_for_document, validate_artifact_path, validate_run_dir
 
 
@@ -30,10 +30,6 @@ RUNTIME_SIGNAL = re.compile(
     r"\b(?:[A-Za-z_$][\w$]*)?(?:Gateway|Adapter|Repository|Client|Remote)\b"
 )
 CHANGE_AXIS_SIGNAL = re.compile(r"\b(?:Strategy|Factory|Registry|Provider)\b")
-
-
-def _sha256(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
 
 
 def _run_git(repo: Path, arguments: Sequence[str]) -> str:
@@ -109,7 +105,7 @@ def _path_evidence(repo: Path, paths: Iterable[str]) -> tuple[list[str], str, bo
             evidence.append(relative_path)
             continue
         raw = path.read_bytes()
-        content_parts.append(f"{relative_path}\0{_sha256(raw)}")
+        content_parts.append(f"{relative_path}\0{bytes_sha256(raw)}")
         text = raw.decode("utf-8", errors="replace")
         symbols = JAVA_TYPE.findall(text) if is_java else []
         evidence.extend(f"{relative_path}#{symbol}" for symbol in symbols[:8])
@@ -141,12 +137,38 @@ def resolve_slice(repo: Path, slice_id: str, paths: Iterable[str]) -> dict[str, 
         "paths": safe_paths,
         "rules": [rule.code for rule in RULES],
         "risks": [
-            {"id": risk, "owner": RISK_OWNERS[risk], "evidence": evidence or safe_paths}
+            {
+                "id": risk,
+                "owner": RISK_BY_CODE[risk].owner,
+                "description": RISK_BY_CODE[risk].description,
+                "evidence": evidence or safe_paths,
+            }
             for risk in sorted(risks)
         ],
         "guards": ["clean-code-guard"] if has_production_java else [],
-        "scope_sha256": _sha256(("\n".join(safe_paths) + "\0" + content).encode("utf-8")),
+        "scope_sha256": bytes_sha256(("\n".join(safe_paths) + "\0" + content).encode("utf-8")),
     }
+
+
+def freshness_errors(repo: Path, resolver: Mapping[str, object]) -> list[str]:
+    """Detect route output that no longer matches the current repository files."""
+    slices = resolver.get("slices")
+    if not isinstance(slices, list):
+        return ["quality resolver slices must be a list"]
+    errors: list[str] = []
+    for item in slices:
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            errors.append("quality resolver contains an invalid slice")
+            continue
+        paths = item.get("paths")
+        if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+            errors.append(f"quality resolver slice {item['id']} has invalid paths")
+            continue
+        expected = resolve_slice(repo, item["id"], paths)
+        for field in ("paths", "rules", "risks", "guards", "scope_sha256"):
+            if item.get(field) != expected[field]:
+                errors.append(f"quality resolver slice {item['id']} is stale for {field}")
+    return sorted(set(errors))
 
 
 def resolve(
@@ -159,15 +181,13 @@ def resolve(
     resolved = [resolve_slice(repo, slice_id, paths) for slice_id, paths in sorted(slices.items())]
     payload: dict[str, object] = {
         "schema_version": 1,
-        "design_sha256": _sha256(design_bytes),
+        "design_sha256": bytes_sha256(design_bytes),
         "shared_rules": [rule.code for rule in RULES],
         "slices": resolved,
     }
     if base:
         payload["start_head"] = _run_git(repo, ["rev-parse", "--verify", f"{base}^{{commit}}"]).strip()
-    payload["resolver_sha256"] = _sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    )
+    payload["resolver_sha256"] = payload_sha256(payload, {"resolver_sha256"})
     return payload
 
 

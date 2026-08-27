@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Writing Design"
   short_description: "为 Java/Spring Design 明确技术合同、实施影响和结果 TASK"
-  default_prompt: "Use $pretty-writing-design to create an executable Design from the approved PRD, then show both $pretty-executing Apply and Dry Run options."
+  default_prompt: "Use $pretty-writing-design to create an executable Design from the approved PRD, then stop for user Review. Apply only after the user invokes $pretty-executing."

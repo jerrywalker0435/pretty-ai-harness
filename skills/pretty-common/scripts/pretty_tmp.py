@@ -10,6 +10,7 @@ from typing import Iterable
 
 RUN_ID = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
 TOPIC = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+CANDIDATE_NAME = "candidate"
 
 
 def validate_topic_dir(topic_dir: Path) -> Path:
@@ -59,6 +60,21 @@ def validate_artifact_path(run_dir: Path, artifact: Path) -> Path:
     return resolved_artifact
 
 
+def candidate_lane_path(run_dir: Path) -> Path:
+    resolved_run = validate_run_dir(topic_dir_for_run(run_dir), run_dir)
+    return resolved_run / CANDIDATE_NAME
+
+
+def validate_candidate_lane(run_dir: Path, lane: Path) -> Path:
+    expected = candidate_lane_path(run_dir)
+    resolved_lane = lane.resolve()
+    if resolved_lane != expected:
+        raise ValueError(f"Candidate Lane must be {expected}: {lane}")
+    if resolved_lane.exists() and (not resolved_lane.is_dir() or not (resolved_lane / ".git").is_file()):
+        raise ValueError(f"Candidate Lane is not a detached Git worktree: {lane}")
+    return resolved_lane
+
+
 def is_pretty_tmp_path(path: str) -> bool:
     parts = PurePosixPath(path.replace("\\", "/")).parts
     return any(
@@ -78,7 +94,13 @@ def registered_artifact_names(names: Iterable[object]) -> set[str]:
 
 def assert_cleanup_scope(run_dir: Path, manifest_name: str, artifacts: Iterable[object]) -> set[str]:
     allowed = registered_artifact_names([manifest_name, *artifacts])
-    unexpected = sorted(path.name for path in run_dir.iterdir() if path.name not in allowed)
+    unexpected = []
+    for path in run_dir.iterdir():
+        if path.name not in allowed:
+            unexpected.append(path.name)
+        elif path.name == CANDIDATE_NAME:
+            validate_candidate_lane(run_dir, path)
+    unexpected.sort()
     if unexpected:
         raise ValueError(f"Pretty temporary run contains unregistered files: {', '.join(unexpected)}")
     return allowed
@@ -103,6 +125,10 @@ def _unlink_registered(run_dir: Path, names: set[str], manifest_name: str) -> li
     for name in sorted(names - {manifest_name}) + [manifest_name]:
         path = validate_artifact_path(run_dir, run_dir / name)
         if not path.exists() and not path.is_symlink():
+            continue
+        if name == CANDIDATE_NAME:
+            if path.exists():
+                raise ValueError(f"Candidate Lane must be removed by git worktree first: {path}")
             continue
         if path.is_dir() and not path.is_symlink():
             raise ValueError(f"Pretty cleanup refuses a directory artifact: {path}")

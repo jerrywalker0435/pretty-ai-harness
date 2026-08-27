@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Executing"
-  short_description: "Apply 或预演已批准的 Java/Spring Design"
-  default_prompt: "Use $pretty-executing to apply the approved Design, or use Dry Run to create execution-preview.md without changing executable project files."
+  short_description: "Apply an approved Java/Spring Design"
+  default_prompt: "Use $pretty-executing to apply the approved Java/Spring Design in an isolated Candidate Lane and pass its evidence-bound quality gates."

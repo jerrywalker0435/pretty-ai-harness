@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import time
@@ -18,7 +17,8 @@ if str(COMMON_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPTS))
 
 from disabled_test_scope import repository_meta_disabled_names, scan_paths, targeted_findings  # type: ignore[import-not-found]
-from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from candidate_contract import quality_bundle_sha256, run_git  # type: ignore[import-not-found]
+from evidence_binding import evidence_sha256, file_sha256, self_bound_sha256  # type: ignore[import-not-found]
 from pretty_tmp import topic_dir_for_document, validate_artifact_path, validate_run_dir  # type: ignore[import-not-found]
 
 
@@ -32,6 +32,12 @@ class TestExecutionRequest:
     new_test_sources: Sequence[str] = ()
     design_sha256: str | None = None
     quality_candidate_sha256: str | None = None
+    start_head: str | None = None
+    execution_matrix_sha256: str | None = None
+    resolver_sha256: str | None = None
+    shared_bundle_sha256: str | None = None
+    scope: str = "final"
+    slice_id: str | None = None
 
 
 def _safe_relative_path(relative_path: str) -> bool:
@@ -98,23 +104,6 @@ def verify_expected_tests(
     return executed, errors
 
 
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _candidate_hash(source_hashes: Mapping[str, str], reports: Sequence[Path], expected: Sequence[str]) -> str:
-    digest = hashlib.sha256()
-    for name, content_hash in sorted({**source_hashes, **{str(path): _sha256(path) for path in reports}}.items()):
-        digest.update(name.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(content_hash.encode("ascii"))
-        digest.update(b"\0")
-    for identifier in sorted(expected):
-        digest.update(identifier.encode("utf-8"))
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
 def verify(request: TestExecutionRequest) -> dict[str, object]:
     executable_reports, errors = _fresh_reports(request)
     errors.extend(_missing_test_source_errors(request))
@@ -141,9 +130,14 @@ def verify(request: TestExecutionRequest) -> dict[str, object]:
     source_hashes = _test_source_hashes(request)
     status = "fail" if errors else "not_applicable" if not request.expected_tests else "pass"
     payload = {
-        "candidate_sha256": _candidate_hash(source_hashes, executable_reports, request.expected_tests),
         "quality_candidate_sha256": request.quality_candidate_sha256,
         "design_sha256": request.design_sha256,
+        "start_head": request.start_head,
+        "execution_matrix_sha256": request.execution_matrix_sha256,
+        "resolver_sha256": request.resolver_sha256,
+        "shared_bundle_sha256": request.shared_bundle_sha256,
+        "scope": request.scope,
+        "slice_id": request.slice_id if request.scope == "slice" else None,
         "source_sha256": source_hashes,
         "reports": [str(path) for path in executable_reports],
         "expected_tests": list(request.expected_tests),
@@ -154,6 +148,7 @@ def verify(request: TestExecutionRequest) -> dict[str, object]:
         "errors": errors,
         "generated_at": time.time(),
     }
+    payload["candidate_sha256"] = self_bound_sha256(payload)
     payload["evidence_sha256"] = evidence_sha256(payload)
     return payload
 
@@ -207,7 +202,7 @@ def _verify_execution(
 
 def _test_source_hashes(request: TestExecutionRequest) -> dict[str, str]:
     return {
-        path: _sha256(request.repo / path)
+        path: file_sha256(request.repo / path)
         for path in sorted(set(request.test_sources) | set(request.new_test_sources))
         if (request.repo / path).is_file()
     }
@@ -222,7 +217,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report", action="append", type=Path, default=[])
     parser.add_argument("--report-not-before", type=float, required=True)
     parser.add_argument("--design", type=Path, required=True)
-    parser.add_argument("--quality-candidate-sha256")
+    parser.add_argument("--base", required=True)
+    parser.add_argument("--execution-matrix", type=Path, required=True)
+    parser.add_argument("--resolver", type=Path, required=True)
+    parser.add_argument("--scope", choices=("slice", "final"), required=True)
+    parser.add_argument("--slice-id")
+    parser.add_argument("--quality-candidate-sha256", required=True)
     parser.add_argument("--json-output", type=Path, required=True)
     return parser
 
@@ -232,10 +232,19 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         repo = args.repo.resolve()
         design = args.design if args.design.is_absolute() else repo / args.design
+        matrix = args.execution_matrix if args.execution_matrix.is_absolute() else repo / args.execution_matrix
+        resolver = args.resolver if args.resolver.is_absolute() else repo / args.resolver
         output = args.json_output if args.json_output.is_absolute() else repo / args.json_output
         topic_dir = topic_dir_for_document(design)
         run_dir = validate_run_dir(topic_dir, output.parent)
         output = validate_artifact_path(run_dir, output)
+        validate_artifact_path(run_dir, matrix)
+        validate_artifact_path(run_dir, resolver)
+        if args.scope == "slice" and not args.slice_id:
+            raise ValueError("slice scope requires --slice-id")
+        if args.scope == "final" and args.slice_id:
+            raise ValueError("final scope does not accept --slice-id")
+        start_head = str(run_git(repo, ["rev-parse", "--verify", f"{args.base}^{{commit}}"])).strip()
         payload = verify(TestExecutionRequest(
             repo=repo,
             test_sources=args.test_source,
@@ -243,8 +252,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
             reports=args.report,
             report_not_before=args.report_not_before,
             new_test_sources=args.new_test_source,
-            design_sha256=_sha256(design),
+            design_sha256=file_sha256(design),
             quality_candidate_sha256=args.quality_candidate_sha256,
+            start_head=start_head,
+            execution_matrix_sha256=file_sha256(matrix),
+            resolver_sha256=file_sha256(resolver),
+            shared_bundle_sha256=quality_bundle_sha256(),
+            scope=args.scope,
+            slice_id=args.slice_id,
         ))
         output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except (OSError, ValueError) as error:

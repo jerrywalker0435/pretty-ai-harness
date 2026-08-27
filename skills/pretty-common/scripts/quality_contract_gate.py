@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Scan Java source with the shared Pretty quality rule registry."""
+"""Run a diagnostic Java scan with the shared Pretty quality rule registry.
+
+Formal Apply evidence is produced only by ``verify_quality_contract.py``.  This
+module remains the reusable scanner and reviewer-finding validator; its CLI is
+intentionally source-scoped diagnostics and never emits formal evidence.
+"""
 
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -14,6 +18,7 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from disabled_test_scope import annotation_findings
+from evidence_binding import bytes_sha256, candidate_sha256
 
 from quality_registry import (  # type: ignore[import-not-found]
     ERROR,
@@ -40,7 +45,7 @@ class QualityFinding:
     @property
     def fingerprint(self) -> str:
         payload = f"{self.code}|{self.source}|{self.symbol}|{self.line}|{self.message}"
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        return bytes_sha256(payload.encode("utf-8"))
 
     def as_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -854,16 +859,6 @@ def _multi_code_assertion_findings(context: JavaScanContext) -> list[QualityFind
     return []
 
 
-def candidate_sha256(parts: Mapping[str, str]) -> str:
-    digest = hashlib.sha256()
-    for name, content in sorted(parts.items()):
-        digest.update(name.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(content.encode("utf-8"))
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
 def load_review_evidence(path: Path) -> dict[str, object]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -1090,8 +1085,6 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("source", nargs="?", type=Path)
     parser.add_argument("--changed-line", type=int, action="append", default=[])
     parser.add_argument("--test-source", action="store_true")
-    parser.add_argument("--review-evidence", type=Path)
-    parser.add_argument("--scan-only", action="store_true")
     parser.add_argument("--json-output", type=Path)
     parser.add_argument("--run-dir", type=Path, help="Pretty topic tmp run directory for evidence output")
     parser.add_argument("--list-rules", action="store_true")
@@ -1107,12 +1100,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print("source is required unless --list-rules is used", file=sys.stderr)
         return 2
     try:
-        if args.run_dir is None and (args.json_output or args.review_evidence):
+        if args.run_dir is None and args.json_output:
             raise ValueError("Pretty evidence paths require --run-dir under docs/pretty/<topic>/tmp/<run-id>")
         if args.run_dir is not None:
             run_dir = validate_run_dir(args.run_dir.parent.parent, args.run_dir)
             args.run_dir = run_dir
-            for attribute in ("json_output", "review_evidence"):
+            for attribute in ("json_output",):
                 artifact = getattr(args, attribute)
                 if artifact is not None:
                     normalized = artifact.resolve()
@@ -1125,26 +1118,23 @@ def main(arguments: Sequence[str] | None = None) -> int:
             changed_lines=frozenset(args.changed_line) if args.changed_line else None,
             production=not args.test_source,
         )
-        candidate_hash = candidate_sha256({str(args.source): source})
-        evidence = load_review_evidence(args.review_evidence) if args.review_evidence else None
-        errors = (
-            [
-                f"{finding.code} at {finding.source}:{finding.line}"
-                for finding in findings
-                if finding.severity == ERROR
-            ]
-            if args.scan_only
-            else review_evidence_errors(evidence, candidate_hash, findings)
-        )
+        scan_hash = candidate_sha256({str(args.source): source})
+        errors = [
+            f"{finding.code} at {finding.source}:{finding.line}"
+            for finding in findings
+            if finding.severity == ERROR
+        ]
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print(f"quality scan failed: {error}", file=sys.stderr)
         return 2
     for finding in findings:
         print(_render_finding(finding))
     _write_json(args.json_output, {
-        "candidate_sha256": candidate_hash,
+        "scan_sha256": scan_hash,
+        "scope": "diagnostic-source",
+        "formal_evidence": False,
         "findings": [finding.as_dict() for finding in findings],
-        "review_pending": args.scan_only and any(finding.severity == REVIEW for finding in findings),
+        "review_pending": any(finding.severity == REVIEW for finding in findings),
         "passed": not errors,
         "errors": errors,
     })

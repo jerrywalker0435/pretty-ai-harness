@@ -1,6 +1,6 @@
 # Java 代码与设计质量基线
 
-本文件定义 Execution Preview 代码提案与 Apply 真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，运行授权见 [runtime-authorization.md](runtime-authorization.md)，机械规则及阈值以 `../scripts/quality_registry.py` 的注册表为唯一来源。
+本文件定义 Apply 生成代码与真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，运行授权见 [runtime-authorization.md](runtime-authorization.md)，机械规则及阈值以 `../scripts/quality_registry.py` 的注册表为唯一来源。
 
 ## QP-01 完整链路与规则归属
 
@@ -25,7 +25,7 @@
 
 ## QP-03 约定优先
 
-在用户已明确当前任务边界后，规范优先级依次为：已批准 PRD / Design、Pretty 共享质量规则、专项 Skill 的非强制建议、真实仓库既有惯例、AGENTS、Trellis。该顺序只解决真实冲突，不决定风险路由、审查强度或适用规则；共享规则始终适用，风险路由由 Quality Resolver 根据 Design 与仓库事实派生，Writer 不得自报、删除或降级。Design 是 Execution 的唯一业务与技术合同，Preview 只是可选输入资料；Design 中的普通实现偏好不能伪装成业务合同覆盖共享规则，外部或遗留合同确需例外时必须绑定具体 Symbol、不可修改原因和测试、Schema 或签名证据。真实 API、Schema、依赖版本和运行结果是不可伪造的事实约束，不参与普通排序竞争；既有实现方式是低优先级惯例，不能压过 Pretty 规则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
+在用户已明确当前任务边界后，规范优先级依次为：已批准 PRD / Design、Pretty 共享质量规则、专项 Skill 的非强制建议、真实仓库既有惯例、AGENTS、Trellis。该顺序只解决真实冲突，不决定风险路由、审查强度或适用规则；共享规则始终适用，风险路由由 Quality Resolver 根据 Design 与仓库事实派生，Writer 不得自报、删除或降级。Design 是 Execution 的唯一业务与技术合同；Design 中的普通实现偏好不能伪装成业务合同覆盖共享规则，外部或遗留合同确需例外时必须绑定具体 Symbol、不可修改原因和测试、Schema 或签名证据。真实 API、Schema、依赖版本和运行结果是不可伪造的事实约束，不参与普通排序竞争；既有实现方式是低优先级惯例，不能压过 Pretty 规则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
 
 ## QP-04 正常流与失败流
 
@@ -67,7 +67,7 @@
 
 ## QP-10 行为测试
 
-测试通过 Design 已批准的公共验证入口观察业务结果、状态、异常或完整边界请求。只替换数据库、网络、时间和随机等系统边界，不 mock 自有内部协作者，不测试 private 方法，不复制实现算法生成期望值，不以调用次数代替主要行为证据。不得在 `@Disabled`、`@Ignore`、元注解或条件禁用范围新增业务测试，也不得通过构建参数、过滤器或测试发现配置跳过测试；最终报告必须由新鲜测试报告证明新增/修改测试实际执行。表、字段和索引等 DDL 只作为代码库文件交付，不生成测试，不直接执行，也不通过迁移工具、应用启动、构建插件或测试间接执行；Java 与 DDL 混合变更只测试 Java 可观察行为，并在 Execution 报告中明确写明 DDL 已交付、未执行、未进行数据库验证。配置数据 DML 始终由人工运维处理，不属于 Preview 或 Apply 交付物。
+测试通过 Design 已批准的公共验证入口观察业务结果、状态、异常或完整边界请求。只替换数据库、网络、时间和随机等系统边界，不 mock 自有内部协作者，不测试 private 方法，不复制实现算法生成期望值，不以调用次数代替主要行为证据。不得在 `@Disabled`、`@Ignore`、元注解或条件禁用范围新增业务测试，也不得通过构建参数、过滤器或测试发现配置跳过测试；最终报告必须由新鲜测试报告证明新增/修改测试实际执行。表、字段和索引等 DDL 只作为代码库文件交付，不生成测试，不直接执行，也不通过迁移工具、应用启动、构建插件或测试间接执行；Java 与 DDL 混合变更只测试 Java 可观察行为，并在 Execution 报告中明确写明 DDL 已交付、未执行、未进行数据库验证。配置数据 DML 始终由人工运维处理，不属于 Apply 交付物。
 
 ## QP-11 AI 生成完整性
 

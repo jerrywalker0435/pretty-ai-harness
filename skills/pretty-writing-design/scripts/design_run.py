@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -27,6 +26,7 @@ from pretty_tmp import (  # type: ignore[import-not-found]
     validate_artifact_path,
     validate_run_dir,
 )
+from evidence_binding import bytes_sha256, candidate_sha256, canonical_json_bytes, file_sha256  # type: ignore[import-not-found]
 from validate_design import validate_design
 
 
@@ -66,26 +66,8 @@ SOURCE_SUFFIXES = {
 }
 
 
-def sha256_bytes(content: bytes) -> str:
-    return hashlib.sha256(content).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
-
-
-def canonical_json(payload: object) -> bytes:
-    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-
-
 def design_candidate_hash(design: str, prd: str) -> str:
-    digest = hashlib.sha256()
-    for name, content in (("design.md", design), ("prd.md", prd)):
-        digest.update(name.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(content.encode("utf-8"))
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return candidate_sha256({"design.md": design, "prd.md": prd})
 
 
 def now() -> str:
@@ -154,7 +136,7 @@ def skill_files() -> list[Path]:
 
 def file_records(paths: Iterable[Path], root: Path) -> list[dict[str, str]]:
     return [
-        {"path": relative(path, root), "sha256": sha256_file(path)}
+        {"path": relative(path, root), "sha256": file_sha256(path)}
         for path in sorted({path.resolve() for path in paths})
     ]
 
@@ -163,14 +145,14 @@ def _manifest_hash(manifest: Mapping[str, object]) -> str:
     without_runtime_hash = {
         key: payload for key, payload in manifest.items() if key not in {"created_at", "manifest_sha256"}
     }
-    return sha256_bytes(canonical_json(without_runtime_hash))
+    return bytes_sha256(canonical_json_bytes(without_runtime_hash))
 
 
 def _design_record(design_path: Path | None, root: Path) -> dict[str, str | None]:
     exists = design_path is not None and design_path.is_file()
     return {
         "path": relative(design_path, root) if design_path else None,
-        "sha256": sha256_file(design_path) if exists else None,
+        "sha256": file_sha256(design_path) if exists else None,
     }
 
 
@@ -190,7 +172,7 @@ def _new_manifest(
         "status": "frozen",
         "created_at": now(),
         "repo_root": str(root),
-        "prd": {"path": relative(prd_path, root), "sha256": sha256_file(prd_path)},
+        "prd": {"path": relative(prd_path, root), "sha256": file_sha256(prd_path)},
         "design": _design_record(design_path, root),
         "design_frozen": False,
         "instruction_files": instruction_files,
@@ -255,7 +237,7 @@ def _current_records(records: object, root: Path) -> list[str]:
         path = root / record["path"]
         if not path.is_file():
             errors.append(f"文件不存在：{record['path']}")
-        elif record.get("sha256") != sha256_file(path):
+        elif record.get("sha256") != file_sha256(path):
             errors.append(f"输入已变化：{record['path']}")
     return errors
 
@@ -272,7 +254,7 @@ def frozen_input_errors(manifest: Mapping[str, object]) -> list[str]:
         path = root / str(record["path"])
         if not path.is_file():
             errors.append(f"{label} 不存在：{record['path']}")
-        elif record.get("sha256") != sha256_file(path):
+        elif record.get("sha256") != file_sha256(path):
             errors.append(f"{label} 已变化：{record['path']}")
     errors.extend(_current_records(manifest.get("instruction_files"), root))
     errors.extend(_current_records(manifest.get("skill_files"), root))
@@ -345,7 +327,7 @@ def _repository_evidence(root: Path) -> dict[str, list[dict[str, object]]]:
     external_interfaces = [match for path in files for match in _snippets(path, EXTERNAL_MARKERS, root)]
     ports = [match for path in files for match in _snippets(path, PORT_MARKERS, root)]
     schemas = [
-        {"path": relative(path, root), "sha256": sha256_file(path)}
+        {"path": relative(path, root), "sha256": file_sha256(path)}
         for path in files
         if _looks_like_schema(path)
     ]
@@ -381,7 +363,7 @@ def build_evidence_summary(
     repository = _repository_evidence(root)
     source_paths = _evidence_source_paths(repository)
     source_hashes = {
-        path: sha256_file(root / path)
+        path: file_sha256(root / path)
         for path in source_paths
         if (root / path).is_file()
     }
@@ -467,7 +449,7 @@ def _source_hash_errors(source_hashes: Mapping[object, object], root: Path) -> l
         candidate = root / str(source_path)
         if not candidate.is_file():
             errors.append(f"证据来源已删除：{source_path}")
-        elif expected_hash != sha256_file(candidate):
+        elif expected_hash != file_sha256(candidate):
             errors.append(f"证据来源已变化：{source_path}")
     return errors
 
@@ -475,7 +457,7 @@ def _source_hash_errors(source_hashes: Mapping[object, object], root: Path) -> l
 def write_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_bytes(canonical_json(payload) + b"\n")
+    temporary.write_bytes(canonical_json_bytes(payload) + b"\n")
     temporary.replace(path)
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single source of truth for Pretty quality rules and risk ownership."""
+"""Single source of truth for Pretty quality rules, risks, and thresholds."""
 
 from __future__ import annotations
 
@@ -16,6 +16,17 @@ class RuleSpec:
     severity: str
     description: str
     threshold: int | None = None
+
+
+@dataclass(frozen=True)
+class RiskSpec:
+    code: str
+    owner: str
+    description: str
+
+
+MIN_LINE_COVERAGE = 90.0
+MIN_BRANCH_COVERAGE = 80.0
 
 
 # Every mechanical rule is registered exactly once.  Prose references use these IDs.
@@ -51,15 +62,17 @@ RULES = (
 )
 RULE_BY_CODE = {rule.code: rule for rule in RULES}
 
-RISK_OWNERS = {
-    "MODULE_BOUNDARY": "codebase-design",
-    "JAVA_OOD": "121-java-object-oriented-design",
-    "FOCUSED_SOLID": "solid-principles",
-    "TYPE_DESIGN": "122-java-type-design",
-    "CHANGE_AXIS": "design-patterns",
-    "JAVA_RUNTIME_RISK": "java-code-review",
-    "BEHAVIOR_TEST": "tdd",
-}
+RISKS = (
+    RiskSpec("MODULE_BOUNDARY", "codebase-design", "public interfaces, depth, locality, and module ownership"),
+    RiskSpec("JAVA_OOD", "121-java-object-oriented-design", "Java responsibilities, encapsulation, and object contracts"),
+    RiskSpec("FOCUSED_SOLID", "solid-principles", "one specifically evidenced SOLID principle"),
+    RiskSpec("TYPE_DESIGN", "122-java-type-design", "domain types, precision, hierarchies, and signature contrast"),
+    RiskSpec("CHANGE_AXIS", "design-patterns", "an existing second implementation or approved variation axis"),
+    RiskSpec("JAVA_RUNTIME_RISK", "java-code-review", "null, exception, concurrency, resource, performance, and API risks"),
+    RiskSpec("BEHAVIOR_TEST", "tdd", "observable behavior, assertions, and system-boundary substitutes"),
+)
+RISK_BY_CODE = {risk.code: risk for risk in RISKS}
+RISK_OWNERS = {risk.code: risk.owner for risk in RISKS}
 
 
 PRECEDENCE = (
@@ -84,4 +97,13 @@ def registry_errors() -> list[str]:
             errors.append(f"unknown severity for {rule.code}: {rule.severity}")
         if not rule.description.strip():
             errors.append(f"quality rule {rule.code} needs a description")
+    risk_codes = [risk.code for risk in RISKS]
+    duplicate_risks = sorted({code for code in risk_codes if risk_codes.count(code) > 1})
+    if duplicate_risks:
+        errors.append(f"duplicate quality risk IDs: {duplicate_risks}")
+    for risk in RISKS:
+        if not risk.owner.strip() or not risk.description.strip():
+            errors.append(f"quality risk {risk.code} needs an owner and description")
+    if not 0 <= MIN_LINE_COVERAGE <= 100 or not 0 <= MIN_BRANCH_COVERAGE <= 100:
+        errors.append("coverage thresholds must be between 0 and 100")
     return errors
