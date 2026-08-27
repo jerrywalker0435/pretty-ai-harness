@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Executing Plan"
-  short_description: "执行 Java/Spring Plan，逐用例 TDD 并渐进关闭代码质量问题"
-  default_prompt: "Use $pretty-executing-plan to implement an approved Java/Spring Plan and produce its execution evidence."
+  short_description: "按批准 Plan 执行 Java/Spring 变更并验证增量质量"
+  default_prompt: "Use $pretty-executing-plan to implement or resume an approved Java/Spring Plan, verify the real diff, and report exact incremental line and branch coverage in execution.md."

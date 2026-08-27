@@ -1,0 +1,83 @@
+{
+  "review_status": "REQUEST_CHANGES",
+  "counts": {
+    "P0": 0,
+    "P1": 4,
+    "P2": 0,
+    "P3": 0
+  },
+  "blocked": true,
+  "items": [
+    {
+      "severity": "P1",
+      "file": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "line": 671,
+      "title": "整文件删除不会进入 Java 变更范围",
+      "description": "`parse_touched_java_lines` 用 `not new_line` 判断是否位于 hunk；整文件删除的标准 hunk 头是 `@@ -1,N +0,0 @@`，此时 `new_line == 0`，后续所有删除行都会在设置 `saw_deletion` 前被跳过。定向验证对完整删除 `src/main/java/S.java` 的 diff 返回了空字典。",
+      "impact": "删除的生产 Java 文件不会出现在 `changed_java_files`，也不会参与 Plan 范围校验、生产代码判定或 `clean-code-guard` 强制检查；未计划的生产文件删除因此可能获得通过结论，违反 Execution Gate 对真实 Diff 和 Plan Files 一致性的要求。",
+      "fix_suggestion": "使用显式 `in_hunk` 状态而不是以新行号的真假判断 hunk，并为 `+0,0` 的整文件删除增加回归测试；删除文件至少要保留路径、生产/测试分类和范围校验证据。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "line": 128,
+      "title": "宽泛 catch 内出现嵌套块时 fallback 规则失效",
+      "description": "`BROAD_FALLBACK` 的主体匹配在遇到第一个 `}` 时停止，因此 catch 中只要先有 `if`、`try` 或其他嵌套块，后面的 `return true/false/empty` 就不会命中。定向验证 `catch (Exception e) { if (retryable(e)) { audit(); } return true; }` 得到零 finding。",
+      "impact": "本应属于机械 `error` 的“异常转成功/空结果”可以被常见控制流绕过，独立审查证据在没有该 finding 的情况下仍可能放行，导致失败被静默伪装为成功。",
+      "fix_suggestion": "不要用遇到首个右花括号即结束的正则解析 catch 主体；复用花括号配对逻辑提取完整 catch span，再在完整主体上检测 fallback return，并覆盖嵌套 if/try/lambda 的测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-common/scripts/quality_contract_gate.py",
+      "line": 103,
+      "title": "全限定可空注解被当作未声明 null 合同",
+      "description": "方法注解模式只接受不含点号的简单名，`NULLABLE` 也只识别 `@Nullable`/`@CheckForNull`。合法的 `@org.springframework.lang.Nullable` 方法会被重新从方法声明行匹配为 `nullable=False`，其 `return null` 随后产生不可豁免的 `NULL-RETURN` error；定向验证已复现。",
+      "impact": "明确且合法的框架可空合同会被硬阻断，而协议规定机械 error 不能由 Reviewer 接受，使用全限定注解的 Java/Spring 项目将无法完成质量 Gate。",
+      "fix_suggestion": "让注解解析支持限定名及常见 type-use 位置，并以注解简单名判断 Nullable/CheckForNull；增加 Spring、javax/jakarta 全限定注解和带参数注解的回归测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-executing-plan/scripts/verify_quality_contract.py",
+      "line": 111,
+      "title": "范围校验不检查 Plan 中漏实现的 Java 文件",
+      "description": "`_scope_errors` 只遍历 `changed_paths - planned_paths`，没有检查 Plan 声明的 Create/Modify/Delete Java 路径是否实际出现在变更集中。定向调用 `changed={A.java}`、`planned={A.java,B.java}` 返回空错误。",
+      "impact": "执行只实现 Plan 的一部分时仍可生成 `passed=true` 的质量证据，后续 `validate_execution.py` 也不重新比对 `changed_java_files` 与 Plan，最终可能把缺少文件或 TASK 的不完整实现声明为完成。",
+      "fix_suggestion": "按 FILE_ENTRY 的操作语义校验双向一致性：Create/Modify/Delete 的 Java 路径应有对应 Diff 证据，额外路径必须有 scope extension；若允许无操作条目，应要求独立、结构化的原因并在最终证据中记录。"
+    }
+  ],
+  "removal_plan": {
+    "safe_now": [],
+    "defer_with_plan": []
+  },
+  "scope": {
+    "files_reviewed": [
+      "skills/pretty-common/references/quality-principles.md",
+      "skills/pretty-common/references/quality-review-protocol.md",
+      "skills/pretty-common/references/quality-routing.md",
+      "skills/pretty-common/scripts/quality_contract_gate.py",
+      "skills/pretty-executing-plan/references/quality-contract-gates.md",
+      "skills/pretty-executing-plan/scripts/verify_quality_contract.py",
+      "tests/test_quality_contract_gate.py"
+    ],
+    "changed_lines": 1459,
+    "uncovered": [
+      "未在一个真实 Java Git 仓库中执行完整 `verify_quality_contract.py` 端到端流程；已用单元测试、语法编译和定向函数反例覆盖关键结论。"
+    ],
+    "residual_risks": [
+      "依赖 trace 由 dep-scan 从全局 scope 提取到 `FencedBlock`，对本模块实际 Python 调用关系命中为 0；已用仓库内 rg 补查 `quality_contract_gate`、`verify_quality_contract`、`review_evidence_errors` 和 `parse_touched_java_lines` 的调用点。",
+      "正则 Java 扫描器仍可能存在未覆盖的现代 Java 语法边界；本次仅报告已能稳定复现且会改变 Gate 结论的问题。"
+    ],
+    "policy_state": "normal",
+    "policy_file": "/Users/jerry.zhang/Workspace/pretty-ai-harness/.code-review/config.yml"
+  },
+  "token_usage": {
+    "mode": "estimated",
+    "total": 28000,
+    "main_source": "reviewer_agent 上下文估算",
+    "note": "包含公共/项目规则、五条 removal-plan 规则、目标文件、diff、trace、调用点和验证输出。"
+  },
+  "next_steps": [
+    "修复 4 个 P1 后，补充整文件删除、嵌套 catch、全限定 Nullable 和 Plan 漏文件的回归测试。",
+    "重新运行质量契约单元测试、全量 tests discovery、py_compile，并用临时 Java 仓库执行一次 verify_quality_contract.py 端到端验证。"
+  ]
+}

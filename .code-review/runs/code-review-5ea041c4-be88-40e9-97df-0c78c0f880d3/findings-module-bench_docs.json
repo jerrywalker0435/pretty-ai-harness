@@ -1,0 +1,83 @@
+{
+  "review_status": "REQUEST_CHANGES",
+  "counts": {
+    "P0": 0,
+    "P1": 1,
+    "P2": 3,
+    "P3": 0
+  },
+  "blocked": false,
+  "items": [
+    {
+      "severity": "P1",
+      "file": "benchmarks/quality-forward/run_replay.py",
+      "line": 216,
+      "title": "Replay 的通过条件没有独立验证场景行为",
+      "description": "`_semantic_errors` 只检查 Plan/生产代码中是否出现若干字符串 token，以及 execution.md 是否包含完成和覆盖率文案；场景的真实输入输出合同没有由 evaluator 自己执行。Agent 可以写出错误实现和与之相符的测试，只要代码中出现要求的 token、Agent 生成的 Gate 证据通过，最终 `passed` 仍可能为 true。现有测试也只覆盖 `_infrastructure_error`，没有覆盖任一场景的真阳性/假阳性判定。",
+      "impact": "这个基准可能把不满足 requirement/design 的实现计为成功，导致质量前向评估产生假阳性，核心评估结论不可作为回归门禁依据。",
+      "fix_suggestion": "为每个 scenario 增加 evaluator-owned 的验收测试或结果 oracle，并在 Agent 结束后从其不可修改的位置注入和执行；将该命令退出码纳入 `ReplayResult.passed`。至少覆盖每个场景的边界、失败语义和不变量，并增加一个“仅包含 token 但行为错误”的负向单测证明不会通过。"
+    },
+    {
+      "severity": "P2",
+      "file": "benchmarks/quality-forward/run_replay.py",
+      "line": 123,
+      "title": "外部命令无法启动或挂起时不会形成 infrastructure_error 结果",
+      "description": "`_run` 直接调用无 timeout 的 `subprocess.run`，没有捕获 `FileNotFoundError`、`OSError` 或 `TimeoutExpired`。实测传入不存在的命令会在 line 123 抛出 `FileNotFoundError`；在线程池中任一 job 抛异常会让 `executor.map` 整体退出，`summary.json` 也不会生成。命令永久挂起时则整个 benchmark 永久等待。这与 README 所述“Agent 运行时无法初始化会单独标记为 infrastructure_error”不一致。",
+      "impact": "缺少 `codex`/`git`、进程启动失败或 Agent 卡死会丢失其他已完成场景的结果，且用户无法得到承诺的 infrastructure_error 分类和汇总证据。",
+      "fix_suggestion": "给 Agent/Gate 命令配置可调整的 timeout，捕获启动与超时异常并写入对应日志；让 `_run_job` 把环境异常转换为带 `infrastructure_error` 的 `ReplayResult`，保证其余 job 和 summary 仍能完成。为缺失可执行文件、超时及部分 job 失败补测试。"
+    },
+    {
+      "severity": "P2",
+      "file": "install/CODEX_INSTALL_PROMPT.template.md",
+      "line": 70,
+      "title": "共享资源更新在复制成功前删除最后一个可用版本",
+      "description": "更新脚本验证远端源文件后立即 `rm -rf` 目标 `pretty-common`，再执行 `cp -R`。如果复制因磁盘、权限或中断失败，旧版本已经不可恢复；而 Plan/Execution 的 SKILL.md 当前强依赖该目录中的三个 reference 和扫描器。",
+      "impact": "一次更新失败会把原本可工作的安装破坏成缺少共享依赖的半安装状态，后续 Plan/Execution 无法按合同运行。",
+      "fix_suggestion": "先把源目录复制到目标父目录下的唯一 staging 目录并完整校验，再以可回滚的 rename/swap 替换；替换失败时保留或恢复旧目录。删除动作前还应校验目标是选定 skills 目录下精确的 `pretty-common` 子目录。"
+    },
+    {
+      "severity": "P2",
+      "file": "install/CODEX_INSTALL_PROMPT.template.md",
+      "line": 36,
+      "title": "16→14 的升级路径不会处理已移除的两个 Skill",
+      "description": "模板从安装目录中删除了 `refactor` 与 `verification-before-completion`，但更新流程只检查和安装当前 14 个名称，也只替换 `pretty-common`；既有用户按旧模板安装的两个目录不会被识别、提示或清理。验证步骤同样只确认 14 个必需项存在，因此升级后目标目录仍可注册 16 个 Skill，却会报告当前 14-Skill 组合更新成功。",
+      "impact": "实际可发现能力与 README/安装报告描述不一致，已从 Harness 依赖中移除的 Skill 继续影响发现和手动调用；本次删除也缺少明确迁移结论。",
+      "fix_suggestion": "增加 legacy 迁移步骤：检测这两个旧目录，明确告知它们已不再属于 Harness，并在获得单独删除确认后移除；若出于非破坏性策略选择保留，则在最终报告中列为保留的额外 Skill，且不要声称目标集合已收敛为 14 个。"
+    }
+  ],
+  "removal_plan": {
+    "safe_now": [],
+    "defer_with_plan": []
+  },
+  "scope": {
+    "files_reviewed": [
+      "README.md",
+      "ai-harness-skill-orchestration-guide.md",
+      "install/CODEX_INSTALL_PROMPT.template.md",
+      "benchmarks/quality-forward/README.md",
+      "benchmarks/quality-forward/run_replay.py",
+      "benchmarks/quality-forward/scenarios.json",
+      "tests/test_quality_forward_replay.py",
+      ".idea/git_toolbox_prj.xml"
+    ],
+    "changed_lines": 583,
+    "uncovered": [],
+    "residual_risks": [
+      "未运行默认 8 场景 × 2 次的真实 Codex replay；该命令会消耗外部 Agent 额度并执行多次 Maven 构建。",
+      "未执行真实远程安装更新；网络访问和对用户 skill 目录的破坏性写入不属于本次只读审查授权。"
+    ],
+    "policy_state": "normal",
+    "policy_file": "/Users/jerry.zhang/Workspace/pretty-ai-harness/.code-review/config.yml"
+  },
+  "token_usage": {
+    "mode": "estimated",
+    "total": 32000,
+    "main_source": "reviewer context estimate",
+    "note": "根据已加载的 scope、diff、20 个公共规则文件、8 个当前文件及验证输出估算。"
+  },
+  "next_steps": [
+    "先用 evaluator-owned 场景 oracle 消除 replay 假阳性，再把外部进程异常和 timeout 纳入 per-job infrastructure_error。",
+    "将 pretty-common 更新改为可回滚替换，并为两个移除的 legacy Skill 明确保留或清理策略。",
+    "补充上述负向/异常路径测试后，重新运行全部 Python 单测和至少一个受控单场景 replay。"
+  ]
+}

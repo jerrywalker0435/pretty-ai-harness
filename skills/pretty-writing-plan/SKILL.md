@@ -1,48 +1,80 @@
 ---
 name: pretty-writing-plan
-description: Use when creating, revising, or reviewing a Pretty plan.md for a Java/Spring change before implementation begins.
+description: Create, revise, or review a Java/Spring implementation Plan from an approved Design, its PRD, domain context, and real repository code.
 ---
 
-# 编写 Java/Spring Plan
+# 编写 Java/Spring Implementation Plan
 
-## 目标
+把已批准 Design 转成可审查、可落地的核心代码实施方案。Plan 是唯一最终产物，也是 Execution 的规范实现基线；本阶段只读，不修改或编译项目代码。
 
-把用户目标、可用设计和真实源码整理成可执行的实施步骤。Plan 只说明怎么改、改动边界和主要依赖，不实施代码。
+## 优先级与范围
 
-**REQUIRED SUB-SKILL：** 使用 `pretty-java-spring-core` 的共享约定、Plan 模板和 Java/Spring 质量参考。本 Skill 负责 Plan 阶段的工作方式。
+依次遵守：用户当前明确要求、已批准 PRD/Design、Pretty 共享质量规则、真实仓库既有惯例、`AGENTS.md`、Trellis 质量规范。真实 API、Schema、依赖版本和调用链是不可伪造的事实；既有坏实践不是新代码范本。下层规则与上层明确合同冲突时以上层为准，事实使合同不可实现时返回 Design，不得猜测接口或强行落地。
+
+`AGENTS.md`、Trellis、ADR、规范索引和业务导航只作只读上下文，不能自行扩大 Files 或 TASK。除非用户明确要求修改项目治理文档，不得生成 `.trellis`、ADR、`business-map` 或类似同步任务。
+
+配置数据由人工处理。Plan 不分析或生成种子数据、白名单、事件定义等配置值及其 `INSERT`、`UPDATE`、`DELETE` 或 upsert；只可在约束中注明“相关配置数据由人工准备，不属于本 Plan”。表、字段和索引等 Schema DDL 仍纳入真实影响范围，但不为其生成测试或数据库验证。
+
+## 输入 Gate
+
+主输入是 `docs/pretty/<topic>/design.md`。创建或修订前必须：
+
+1. 同目录存在 `prd.md`，且用户在当前对话明确批准 PRD 与 Design 进入 Plan。
+2. 完整读取 `design.md` 和 `prd.md`。
+3. 查找并读取仓库中适用的 Context、Context Map 和相关 ADR；使用仓库真实文件名（如 `Context.md`、`Context-Map.md` 或仓库约定的全大写形式），不存在时不伪造也不阻断。
+4. 读取构建版本和真实代码，验证调用链、类型、API、Schema 与协议事实；不盘点或推导配置数据值。
+5. 不存在会改变业务结果、外部合同、Interface、所有权、依赖方向或长期扩展点的未决问题。
+
+业务语义不明返回 PRD，技术合同不明返回 Design。只接受 `docs/pretty/<topic>/plan.md`，topic 使用小写 kebab-case。
+
+## 唯一共享规则
+
+创建、修订和审查都完整读取：
+
+- [共享质量基线](../pretty-common/references/quality-principles.md)
+- [质量路由](../pretty-common/references/quality-routing.md)
+- [独立审查协议](../pretty-common/references/quality-review-protocol.md)
+
+逻辑 TASK 还读取 `tdd`；不可用时读取 [测试设计](references/test-design.md)。不调用额外草稿 Skill，不复制共享规则到本文件或 Plan。
 
 ## 工作流
 
-### 1. 确认模式与输入
+1. **确认合同**：提取批准结果、非目标、外部行为和不可改变边界。
+2. **一次代码盘点**：广度查找入口、caller、callee、Adapter、消费者、注册点、Schema、协议和测试；范围止于受影响链路，并复用已确认的路径、symbol 和合同事实，不重复全仓扫描。
+3. **深读实现**：确认规则归属、数据所有权、异常和副作用顺序、事务、并发、幂等及兼容限制。不能把存量实现默认当作正确设计。
+4. **完整路由**：按共享路由为每个有证据的风险分配唯一主审 Skill，不限制风险维度数量；新风险增量路由。
+5. **一次成稿**：按可观察领域结果垂直切分 TASK，展示完整变更 symbol、必要声明内容和核心行为测试；不写配置数据、项目治理文档同步、重复调用链或不会改变实现决策的样板说明。
+6. **机械 Gate 与自审**：对完整候选运行一次 `scripts/validate_plan.py --scan-only`，集中修复全部 `error`，再按 findings 完成 Writer 自审。
+7. **一次独立审查**：候选稳定后，Reviewer 按共享协议审查完整候选和路由完整性。修复后只复核 findings 涉及的增量，最终证据仍绑定完整候选摘要；Reviewer 超时不创建重复审查任务或继续串行空等。
+8. **交付**：只写最终 `plan.md` 并请求用户 Review；不执行编译、测试、覆盖率或 Git 动作。
 
-宣布使用 `pretty-writing-plan`。用户要求评估、检查或 Review 时只读处理；用户要求创建或修订时进入写作模式。
+## Plan 合同
 
-优先读取同目录可用的 `prd.md`、`design.md`、领域上下文、仓库规则、相关源码、调用方和构建配置。缺失或互相矛盾时说明需要补充的内容；仓库事实自行调查。Plan 不修改代码文件，也不生成 Execution。
+最终文档只包含标题、按需的受影响链路和实施任务。任务编号从 `TASK-001` 连续递增，并按以下顺序组织：
 
-### 2. 先确定整体职责
+1. `约束`：只写代码无法直接表达的外部合同、归属或兼容限制；人工配置前置条件不携带具体值或脚本。
+2. `Files`：列出真实仓库相对路径及 Create、Modify、Test 或 Delete；不得包含配置数据脚本或未经用户授权的项目治理文档。
+3. `修改`：逻辑 TASK 展示完整核心生产 symbol；声明 TASK 展示完整声明内容。
+4. `测试`：Java 逻辑 TASK 展示公共行为入口、真实输入、边界替身和结果断言。
+5. `DDL`：表、字段和索引变更只展示必要声明及顺序，不附带测试、数据库验证或验证命令；Java 与 DDL 混合 TASK 只测试 Java 可观察行为。
+6. `依赖`：只在 TASK 顺序确实受影响时保留。
 
-在拆分实施步骤前，合并阅读所有拟议变化，先确定最终职责、依赖方向、公共接口和规则归属。同一生产类涉及多个变化时，先检查组合后的形状，避免把不同职责堆在同一个类中。发现需要改变技术方案时回到 Design。
+核心代码必须让人看出输入输出、异常合同、不变量边界、正常与失败流、副作用顺序、规则唯一归属和类型约束。每个外部类型、方法和注解都从真实源码或当前依赖版本确认。代码以命名和结构自释义，不生成复述步骤的注释或强制 JavaDoc；只有代码无法表达的外部原因才使用简短英文注释。不得生成手工墙钟计时、`durationMs` 耗时日志、占位符、伪代码、省略号、行号范围、个人绝对路径、质量自评、Skill 名称、执行状态或验证结果。
 
-### 3. 编写实施步骤
+Execution 默认遵守核心代码表达的职责、公共签名、异常合同、数据所有权、测试边界和外部行为。只有语义不变的编译或集成调整可以继续；改变上述基线必须返回 Plan。
 
-使用共享模板，以可读的自然语言标题拆分步骤，不使用固定编号。每个步骤说明：
+## 校验
 
-- 要达到的结果和不能改变的既有行为；
-- 关键文件、类型或方法（按需列出，不制作完整路径映射表）；
-- 生产代码的主要改法、必要的机械变更和依赖调整；
-- 会影响其他步骤的共享事实或实现规则。
+候选审查时运行：
 
-代码片段只在能澄清非显然的职责或接口时保留，不把 Plan 写成完整补丁。纯文档、配置、迁移、改名或批量机械变更直接描述变更方式。
+```bash
+python3 <pretty-writing-plan>/scripts/validate_plan.py \
+  docs/pretty/<topic>/plan.md --scan-only
 
-编写生产代码提案时按实际风险使用 `clean-code-guard`、`121-java-object-oriented-design`、`122-java-type-design`、`solid-principles`、`codebase-design`、`design-patterns`、`java-code-review` 或 `refactor`；不创建能力清单。
+python3 <pretty-writing-plan>/scripts/validate_plan.py \
+  docs/pretty/<topic>/plan.md --review-evidence /tmp/<run>/plan-review.json
+```
 
-### 4. 收尾
+只有用户明确要求修改项目治理文档时，以上命令才可增加 `--allow-project-governance`；AGENTS、Trellis 或 Reviewer 的要求不能授权该开关。
 
-替换全部占位内容，确认步骤之间的顺序、职责和改动范围清楚。告知文档路径和主要实施步骤，请求用户 Review 后停止，不自动进入 Execution。
-
-## 红线
-
-- 不虚构源码、API、命令或结果。
-- 不把 Plan 写成逐文件完整补丁。
-- 不在 Plan 阶段修改代码文件。
-- 不以当前仓库的坏样例为理由复制职责、重复规则或不必要的抽象。
+校验器只验证可机械证明的结构、代码规则和审查证据，不代替独立语义 Reviewer。

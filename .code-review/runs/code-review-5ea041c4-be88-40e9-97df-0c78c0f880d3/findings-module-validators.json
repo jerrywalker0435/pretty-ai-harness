@@ -1,0 +1,68 @@
+{
+  "review_status": "REQUEST_CHANGES",
+  "counts": {
+    "P0": 0,
+    "P1": 2,
+    "P2": 0,
+    "P3": 0
+  },
+  "blocked": false,
+  "items": [
+    {
+      "severity": "P1",
+      "file": "skills/pretty-writing-plan/scripts/validate_plan.py",
+      "line": 208,
+      "title": "空代码块会被当成完整的 Plan 核心代码和测试提案",
+      "description": "`_blocks_between` 只判断围栏块是否存在，`_task_errors` 和 `_logic_task_errors` 都没有检查块内容是否非空。已稳定复现：`修改` 使用空的 `text` 围栏，或逻辑 TASK 的 `测试` 使用空的 `java` 围栏时，`validate_plan` 均返回空错误列表。",
+      "impact": "机械 Gate 会放行没有任何实现内容或行为测试的 Plan，Execution 随后缺少规范实现基线，可能在未固定预期行为的情况下进入生产代码实施并被声明完成。",
+      "fix_suggestion": "让 `_blocks_between` 仅返回内容 `strip()` 后非空的块，或在两个调用点显式校验 `segment[block.content_start:block.content_end].strip()`；增加空 `修改` 块和空 `测试` Java 块的回归测试。"
+    },
+    {
+      "severity": "P1",
+      "file": "skills/pretty-executing-plan/scripts/validate_execution.py",
+      "line": 212,
+      "title": "较早的成功记录可以掩盖同类命令最后一次执行失败",
+      "description": "`_build_errors` 把任意 `exit_code == 0` 的命令种类收集进集合，只检查三种必需 kind 是否曾经成功。已稳定复现：在通过的 `compile` 记录之后追加一条更新鲜、`exit_code: 1` 的 `compile` 记录，完成态 `validate_execution` 仍返回空错误列表。",
+      "impact": "最终一次编译或测试已经失败时，Execution Gate 仍可接受 `完成` 状态，直接造成失败构建或失败回归测试被错误交付。",
+      "fix_suggestion": "按 `finished_at` 选择每个必需 kind 的最新记录并要求其 `exit_code == 0`；同时校验每条命令的 `exit_code` 类型。增加“先成功、后失败必须拒绝”和“先失败、修复后成功可通过”测试。"
+    }
+  ],
+  "removal_plan": {
+    "safe_now": [],
+    "defer_with_plan": []
+  },
+  "scope": {
+    "files_reviewed": [
+      "skills/pretty-executing-plan/SKILL.md",
+      "skills/pretty-executing-plan/agents/openai.yaml",
+      "skills/pretty-executing-plan/assets/execution.md",
+      "skills/pretty-executing-plan/scripts/validate_execution.py",
+      "skills/pretty-executing-plan/scripts/verify_incremental_coverage.py",
+      "skills/pretty-writing-plan/SKILL.md",
+      "skills/pretty-writing-plan/agents/openai.yaml",
+      "skills/pretty-writing-plan/assets/plan.md",
+      "skills/pretty-writing-plan/scripts/validate_plan.py",
+      "tests/test_coverage_gate.py",
+      "tests/test_execution_validator.py",
+      "tests/test_plan_validator.py"
+    ],
+    "changed_lines": 2157,
+    "uncovered": [],
+    "residual_risks": [
+      "依赖轨迹以 diff 首个符号 FencedBlock 为扫描目标且三类均 no-hit；本次另以相关脚本导入和调用点做了局部契约核对。",
+      "未在真实 Maven/Gradle 多模块项目中端到端执行覆盖率采集。"
+    ],
+    "policy_state": "normal",
+    "policy_file": "/Users/jerry.zhang/Workspace/pretty-ai-harness/.code-review/config.yml"
+  },
+  "token_usage": {
+    "mode": "estimated",
+    "total": 30000,
+    "main_source": "reviewer context estimate",
+    "note": "运行环境未提供精确 reviewer token 计数。"
+  },
+  "next_steps": [
+    "修复空 Plan 代码块的非空校验并补回归测试。",
+    "按每个 build kind 的最新执行结果判定完成态并补顺序测试。"
+  ]
+}
