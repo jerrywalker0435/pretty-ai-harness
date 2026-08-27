@@ -19,6 +19,7 @@ if str(COMMON_SCRIPTS) not in sys.path:
 
 from disabled_test_scope import repository_meta_disabled_names, scan_paths, targeted_findings  # type: ignore[import-not-found]
 from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from pretty_tmp import topic_dir_for_document, validate_artifact_path, validate_run_dir  # type: ignore[import-not-found]
 
 
 @dataclass(frozen=True)
@@ -231,6 +232,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         repo = args.repo.resolve()
         design = args.design if args.design.is_absolute() else repo / args.design
+        output = args.json_output if args.json_output.is_absolute() else repo / args.json_output
+        topic_dir = topic_dir_for_document(design)
+        run_dir = validate_run_dir(topic_dir, output.parent)
+        output = validate_artifact_path(run_dir, output)
         payload = verify(TestExecutionRequest(
             repo=repo,
             test_sources=args.test_source,
@@ -241,7 +246,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             design_sha256=_sha256(design),
             quality_candidate_sha256=args.quality_candidate_sha256,
         ))
-        args.json_output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except (OSError, ValueError) as error:
         print(f"test execution verification failed: {error}", file=sys.stderr)
         return 2

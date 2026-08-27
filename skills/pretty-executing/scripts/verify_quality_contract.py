@@ -29,6 +29,12 @@ from quality_contract_gate import (  # type: ignore[import-not-found]
 from quality_registry import RISK_OWNERS, RULES  # type: ignore[import-not-found]
 from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
 from execution_contract import contract_preflight_errors
+from pretty_tmp import (  # type: ignore[import-not-found]
+    is_pretty_tmp_path,
+    topic_dir_for_document,
+    validate_artifact_path,
+    validate_run_dir,
+)
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -57,6 +63,8 @@ def _is_test_path(path: str) -> bool:
 
 
 def _is_explanatory_path(path: str) -> bool:
+    if is_pretty_tmp_path(path):
+        return True
     normalized = path.replace(chr(92), "/").lower().lstrip("/")
     parts = PurePosixPath(normalized).parts
     name = parts[-1] if parts else ""
@@ -76,7 +84,7 @@ def _is_explanatory_path(path: str) -> bool:
     return (
         normalized.startswith(("docs/", ".code-review/"))
         or (parts and parts[0] in {"context", "contexts", "adr", "adrs"})
-        or name in {"agents.md", "business-map.md", ".execution-state.json"}
+        or name in {"agents.md", "business-map.md", "execution-state.json"}
         or PurePosixPath(name).suffix in {".md", ".adoc", ".rst"}
     )
 
@@ -102,7 +110,7 @@ def _read_manifest(path: Path) -> dict[str, frozenset[int]]:
 
 def _untracked_paths(repo: Path) -> set[str]:
     output = _run_git(repo, ["ls-files", "--others", "--exclude-standard"])
-    return {path for path in output.splitlines() if path}
+    return {path for path in output.splitlines() if path and not is_pretty_tmp_path(path)}
 
 
 def _untracked_java(repo: Path, paths: set[str] | None = None) -> dict[str, frozenset[int]]:
@@ -122,7 +130,7 @@ def _changed_scope(
     diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, "--"])
     changed_paths = set(_run_git(repo, ["diff", "--name-only", base, "--"]).splitlines())
     untracked_paths = _untracked_paths(repo)
-    changed_paths.update(untracked_paths)
+    changed_paths.update(path for path in untracked_paths if not is_pretty_tmp_path(path))
     changed_paths = {path for path in changed_paths if not _is_explanatory_path(path)}
     java_changed = parse_touched_java_lines(diff)
     java_changed.update(_untracked_java(repo, untracked_paths))
@@ -395,7 +403,54 @@ def main(arguments: Sequence[str] | None = None) -> int:
     design_path = args.design if args.design.is_absolute() else repo / args.design
     try:
         design_text = design_path.read_text(encoding="utf-8")
-        matrix = _load_json(args.execution_matrix)
+        matrix_path = args.execution_matrix if args.execution_matrix.is_absolute() else repo / args.execution_matrix
+        topic_dir = topic_dir_for_document(design_path)
+        run_dir = validate_run_dir(topic_dir, matrix_path.parent)
+        output_path = validate_artifact_path(
+            run_dir,
+            args.json_output if args.json_output.is_absolute() else repo / args.json_output,
+        )
+        evidence_paths = (
+            args.changed_manifest, args.review_evidence, args.build_evidence,
+            args.test_evidence, args.coverage_evidence,
+        )
+        for evidence_path in evidence_paths:
+            if evidence_path is not None:
+                candidate = evidence_path if evidence_path.is_absolute() else repo / evidence_path
+                validate_artifact_path(run_dir, candidate)
+        args.execution_matrix = matrix_path
+        args.json_output = output_path
+        if args.changed_manifest is not None:
+            args.changed_manifest = (
+                args.changed_manifest
+                if args.changed_manifest.is_absolute()
+                else repo / args.changed_manifest
+            )
+        if args.review_evidence is not None:
+            args.review_evidence = (
+                args.review_evidence
+                if args.review_evidence.is_absolute()
+                else repo / args.review_evidence
+            )
+        if args.build_evidence is not None:
+            args.build_evidence = (
+                args.build_evidence
+                if args.build_evidence.is_absolute()
+                else repo / args.build_evidence
+            )
+        if args.test_evidence is not None:
+            args.test_evidence = (
+                args.test_evidence
+                if args.test_evidence.is_absolute()
+                else repo / args.test_evidence
+            )
+        if args.coverage_evidence is not None:
+            args.coverage_evidence = (
+                args.coverage_evidence
+                if args.coverage_evidence.is_absolute()
+                else repo / args.coverage_evidence
+            )
+        matrix = _load_json(matrix_path)
         matrix_paths, matrix_errors = _matrix_paths(matrix, design_text)
         for error in contract_preflight_errors(design_text, matrix):
             if error not in matrix_errors:
@@ -479,7 +534,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         "generated_at": time.time(),
     }
     payload["evidence_sha256"] = evidence_sha256(payload)
-    _write_json(args.json_output, payload)
+    _write_json(output_path, payload)
     for finding in findings:
         print(f"{finding.severity}: {finding.code} {finding.source}:{finding.line} [{finding.symbol}]")
     for error in errors:

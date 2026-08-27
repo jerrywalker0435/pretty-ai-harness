@@ -42,6 +42,13 @@ class CoverageGateTest(unittest.TestCase):
             changed,
         )
 
+    def test_diff_ignores_pretty_topic_tmp_java(self) -> None:
+        diff = """+++ b/docs/pretty/orders/tmp/run-1/Fake.java
+@@ -0,0 +1,1 @@
++class Fake {}
+"""
+        self.assertEqual({}, parse_changed_diff(diff))
+
     def test_multimodule_duplicate_names_match_the_correct_report(self) -> None:
         changed = (
             ChangedSource("orders/src/main/java/example/Service.java", frozenset({10})),
@@ -106,6 +113,31 @@ class CoverageGateTest(unittest.TestCase):
             args = argparse.Namespace(changed_manifest=manifest)
 
             with self.assertRaisesRegex(ValueError, "must exactly match the Git diff"):
+                _load_changed_sources(args, repo, base)
+
+    def test_slice_manifest_must_be_a_non_empty_subset_of_git_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary) / "repo"
+            repo.mkdir()
+            source = repo / "src/main/java/example/Service.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class Service { int value; }\n", encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=repo, check=True)
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            source.write_text("class Service { int value; int changed; }\n", encoding="utf-8")
+            manifest = repo / "slice.json"
+            manifest.write_text('{"src/main/java/example/Service.java": [1]}\n', encoding="utf-8")
+            args = argparse.Namespace(changed_manifest=None, slice_manifest=manifest)
+
+            sources = _load_changed_sources(args, repo, base)
+            self.assertEqual(("src/main/java/example/Service.java",), tuple(s.path for s in sources))
+
+            manifest.write_text('{"src/main/java/example/Service.java": [99]}\n', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "subset of the Git diff"):
                 _load_changed_sources(args, repo, base)
 
     def test_detects_report_older_than_matching_source(self) -> None:

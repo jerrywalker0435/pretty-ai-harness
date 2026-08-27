@@ -23,6 +23,12 @@ if str(COMMON_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPTS))
 
 from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from pretty_tmp import (  # type: ignore[import-not-found]
+    is_pretty_tmp_path,
+    topic_dir_for_document,
+    validate_artifact_path,
+    validate_run_dir,
+)
 
 
 DEFAULT_LINE_THRESHOLD = 90.0
@@ -94,6 +100,8 @@ def _percentage(covered: int, total: int) -> float | None:
 
 
 def _is_production_java(path: str) -> bool:
+    if is_pretty_tmp_path(path):
+        return False
     normalized = f"/{path.replace(chr(92), '/').lower().lstrip('/')}"
     excluded = (
         "/src/test/",
@@ -145,6 +153,8 @@ def _untracked_sources(repo: Path) -> dict[str, frozenset[int]]:
     output = _run_git(repo, ["ls-files", "--others", "--exclude-standard"])
     sources: dict[str, frozenset[int]] = {}
     for relative_path in output.splitlines():
+        if is_pretty_tmp_path(relative_path):
+            continue
         if not _is_production_java(relative_path):
             continue
         source_path = repo / relative_path
@@ -420,10 +430,18 @@ def _gradle_coverage_command(
     ]
 
 
-def run_coverage_build(repo: Path, build_tool: str, build_arguments: Sequence[str]) -> tuple[int, list[str]]:
+def run_coverage_build(
+    repo: Path,
+    build_tool: str,
+    build_arguments: Sequence[str],
+    temporary_dir: Path | None = None,
+) -> tuple[int, list[str]]:
     if build_tool == "maven":
         return _run_build_command(repo, _maven_coverage_command(repo, build_arguments))
-    with tempfile.NamedTemporaryFile("w", suffix=".gradle", encoding="utf-8") as init_file:
+    if temporary_dir is None:
+        raise ValueError("Gradle coverage requires a topic tmp run directory")
+    temporary_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", suffix=".gradle", dir=temporary_dir, encoding="utf-8") as init_file:
         init_file.write(_gradle_init_script())
         init_file.flush()
         command = _gradle_coverage_command(repo, build_arguments, Path(init_file.name))
@@ -448,6 +466,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="可选 TASK 归因；必须与 Git 推导的生产 Java 增量完全一致",
     )
+    parser.add_argument(
+        "--slice-manifest",
+        type=Path,
+        help="可选行为切片范围；必须是当前 Git 生产 Java 增量的非空子集",
+    )
+    parser.add_argument("--slice-id", help="行为切片标识；与 --slice-manifest 一起写入证据")
     parser.add_argument("--report", action="append", type=Path, help="JaCoCo XML；可重复传入")
     parser.add_argument("--run", action="store_true", help="先运行通用 Maven/Gradle 覆盖率任务")
     parser.add_argument("--build-tool", choices=("auto", "maven", "gradle"), default="auto")
@@ -501,6 +525,7 @@ def _emit_result(
     start_head: str,
     json_output: Path | None,
     quality_candidate_sha256: str | None,
+    slice_id: str | None = None,
 ) -> int:
     payload = coverage_result.as_dict()
     payload["reports"] = [str(report) for report in reports]
@@ -513,6 +538,9 @@ def _emit_result(
     payload["design_sha256"] = design_sha256
     payload["start_head"] = start_head
     payload["quality_candidate_sha256"] = quality_candidate_sha256
+    payload["scope"] = "slice" if slice_id else "final"
+    if slice_id:
+        payload["slice_id"] = slice_id
     payload["generated_at"] = time.time()
     payload["evidence_sha256"] = evidence_sha256(payload)
     print(_render_text(coverage_result))
@@ -522,12 +550,12 @@ def _emit_result(
     return 0 if coverage_result.status in {"pass", "not_applicable"} else 1
 
 
-def _run_requested_build(args: argparse.Namespace, repo: Path) -> None:
+def _run_requested_build(args: argparse.Namespace, repo: Path, temporary_dir: Path | None) -> None:
     if not args.run:
         return
     _reject_test_skipping(args.build_arg)
     build_tool = _find_build_tool(repo, args.build_tool)
-    build_exit, command = run_coverage_build(repo, build_tool, args.build_arg)
+    build_exit, command = run_coverage_build(repo, build_tool, args.build_arg, temporary_dir)
     if build_exit != 0:
         raise RuntimeError(f"Coverage build failed ({build_exit}): {shlex.join(command)}")
 
@@ -538,6 +566,23 @@ def _load_changed_sources(
     start_head: str,
 ) -> tuple[ChangedSource, ...]:
     actual = collect_changed_sources(repo, start_head)
+    slice_manifest = getattr(args, "slice_manifest", None)
+    if args.changed_manifest and slice_manifest:
+        raise ValueError("--changed-manifest and --slice-manifest cannot be used together")
+    if slice_manifest:
+        declared = load_changed_manifest(slice_manifest)
+        actual_map = {source.path: source.lines for source in actual}
+        declared_map = {source.path: source.lines for source in declared}
+        for path, lines in declared_map.items():
+            actual_lines = actual_map.get(path, frozenset())
+            if path not in actual_map or not lines <= actual_lines:
+                raise ValueError(
+                    "slice manifest production Java scope must be a subset of the Git diff: "
+                    f"path={path}, declared={sorted(lines)}, actual={sorted(actual_lines)}"
+                )
+        if not declared_map:
+            raise ValueError("slice manifest must contain at least one production Java path")
+        return declared
     if not args.changed_manifest:
         return actual
     declared = load_changed_manifest(args.changed_manifest)
@@ -635,6 +680,36 @@ def main(arguments: Sequence[str] | None = None) -> int:
     repo = args.repo.resolve()
     try:
         design_path = args.design if args.design.is_absolute() else repo / args.design
+        topic_dir = topic_dir_for_document(design_path)
+        run_dir = None
+        if args.json_output is not None:
+            output_path = args.json_output if args.json_output.is_absolute() else repo / args.json_output
+            run_dir = validate_run_dir(topic_dir, output_path.parent)
+            args.json_output = validate_artifact_path(run_dir, output_path)
+        if args.changed_manifest is not None:
+            manifest_path = (
+                args.changed_manifest
+                if args.changed_manifest.is_absolute()
+                else repo / args.changed_manifest
+            )
+            if run_dir is None:
+                run_dir = validate_run_dir(topic_dir, manifest_path.parent)
+            validate_artifact_path(run_dir, manifest_path)
+            args.changed_manifest = manifest_path
+        if args.slice_manifest is not None:
+            slice_manifest_path = (
+                args.slice_manifest
+                if args.slice_manifest.is_absolute()
+                else repo / args.slice_manifest
+            )
+            if run_dir is None:
+                run_dir = validate_run_dir(topic_dir, slice_manifest_path.parent)
+            validate_artifact_path(run_dir, slice_manifest_path)
+            args.slice_manifest = slice_manifest_path
+            if not args.slice_id or not args.slice_id.strip():
+                raise ValueError("--slice-manifest requires a non-empty --slice-id")
+        elif args.slice_id:
+            raise ValueError("--slice-id requires --slice-manifest")
         design_sha256 = _file_sha256(design_path)
         start_head = _run_git(repo, ["rev-parse", "--verify", f"{args.base}^{{commit}}"]).strip()
         _validate_thresholds(args.line_threshold, args.branch_threshold)
@@ -642,7 +717,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             raise ValueError("--report-not-before is required unless --run is used")
         report_not_before = time.time() if args.run else args.report_not_before
         assert report_not_before is not None
-        _run_requested_build(args, repo)
+        _run_requested_build(args, repo, run_dir)
         reports = _resolve_reports(repo, args.report, report_not_before)
         changed_sources = _load_changed_sources(args, repo, start_head)
         candidate_hash = _coverage_candidate_hash(
@@ -658,7 +733,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             return _emit_result(
                 coverage_result, (), candidate_hash, source_hashes,
                 design_sha256, start_head, args.json_output,
-                args.quality_candidate_sha256,
+                args.quality_candidate_sha256, args.slice_id,
             )
         if not reports:
             raise RuntimeError("未找到 JaCoCo XML 报告；请使用 --report 或 --run")
@@ -675,7 +750,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         return _emit_result(
             coverage_result, reports, candidate_hash, source_hashes,
             design_sha256, start_head, args.json_output,
-            args.quality_candidate_sha256,
+            args.quality_candidate_sha256, args.slice_id,
         )
     except (OSError, RuntimeError, ValueError, ElementTree.ParseError) as error:
         print(f"覆盖率验证无法验证：{error}", file=sys.stderr)

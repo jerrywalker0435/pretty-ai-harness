@@ -22,6 +22,7 @@ from quality_registry import (  # type: ignore[import-not-found]
     RULE_BY_CODE,
     RISK_OWNERS,
 )
+from pretty_tmp import validate_artifact_path, validate_run_dir
 
 
 @dataclass(frozen=True)
@@ -1092,6 +1093,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--review-evidence", type=Path)
     parser.add_argument("--scan-only", action="store_true")
     parser.add_argument("--json-output", type=Path)
+    parser.add_argument("--run-dir", type=Path, help="Pretty topic tmp run directory for evidence output")
     parser.add_argument("--list-rules", action="store_true")
     return parser
 
@@ -1105,6 +1107,17 @@ def main(arguments: Sequence[str] | None = None) -> int:
         print("source is required unless --list-rules is used", file=sys.stderr)
         return 2
     try:
+        if args.run_dir is None and (args.json_output or args.review_evidence):
+            raise ValueError("Pretty evidence paths require --run-dir under docs/pretty/<topic>/tmp/<run-id>")
+        if args.run_dir is not None:
+            run_dir = validate_run_dir(args.run_dir.parent.parent, args.run_dir)
+            args.run_dir = run_dir
+            for attribute in ("json_output", "review_evidence"):
+                artifact = getattr(args, attribute)
+                if artifact is not None:
+                    normalized = artifact.resolve()
+                    validate_artifact_path(run_dir, normalized)
+                    setattr(args, attribute, normalized)
         source = args.source.read_text(encoding="utf-8")
         findings = scan_java_source(
             source,

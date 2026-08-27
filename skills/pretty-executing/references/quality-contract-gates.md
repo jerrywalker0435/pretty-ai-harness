@@ -4,7 +4,7 @@
 
 - 当前主题的 `prd.md`、`design.md` 可读取，且 Design TASK 可载入执行矩阵；Execution 不重新运行 Design 校验或审查；
 - 运行相关路径（源码、测试、构建配置、运行时资源、Schema、迁移、生成输入和构建脚本）没有未提交变化；说明性文档可脏；
-- 已建立 `.execution-state.json`，或恢复状态与登记文件摘要完全匹配；
+- 已在同一 `docs/pretty/<topic>/tmp/<run-id>/` 建立 `execution-matrix.json` 与 `execution-state.json`，或恢复状态与登记文件摘要完全匹配；
 - 最小相关基线已运行并能区分历史失败；
 - 目标测试文件已扫描 `@Disabled`、`@Ignore`、元注解和条件禁用；新增测试不进入禁用作用域；
 - Design TASK、公共验证入口、影响锚点和验证观察面已载入临时执行矩阵；
@@ -18,7 +18,24 @@ Java 行为 TASK 的每个 `behavior_slices` 条目至少记录：`id`、`paths`
 
 `coverage_obligations` 按生产 Symbol 或分支记录正常、失败和边界路径、对应测试入口及必须断言的业务结果。切片只有在目标测试实际执行且当前增量覆盖率闭环后才能冻结；关键业务组合不能仅凭总体百分比跳过。
 
-执行矩阵不拥有真实变更范围。质量扫描和覆盖率必须以 `.execution-state.json` 中的 `start_head` 计算 Git Diff，并包含所有新增、修改、删除和未跟踪的运行相关路径；`changed-manifest` 只能作为 TASK 行归因资料，存在时必须覆盖 Git 推导的全部 Java 路径并使用相同变更行，覆盖率部分必须与生产 Java 路径和行集合完全一致，不能缩小扫描范围。
+对包含 Java 行为切片的 Apply，执行矩阵使用顶层 `coverage_policy`（最低为行 90%、分支 80%，缺省即该值；且两个逐切片 Gate 必须为 `true`）：
+
+```json
+{
+  "coverage_policy": {
+    "line_threshold": 90,
+    "branch_threshold": 80,
+    "gate_each_slice": true,
+    "gate_before_next_slice": true
+  }
+}
+```
+
+Apply 开始时先记录基线覆盖率；基线失败只说明历史状态，不阻断本次任务。随后行为切片必须按矩阵顺序串行闭环：为当前切片生成生产 Java 行 manifest，使用 `verify_incremental_coverage.py --slice-manifest <manifest> --slice-id <id>` 运行新鲜 JaCoCo，先执行 `apply_run.py checkpoint` 固定当前切片范围，再以 `apply_run.py slice-coverage` 登记通过证据。切片证据必须绑定同一 `start_head`、Design 摘要和策略阈值，行/分支低于门槛、报告过期、证据缺失或状态不是 `pass` 时，机械阻断进入下一切片和候选冻结。只有全部切片关闭后，才按完整 Git Diff 重新运行最终增量覆盖率；最终 Gate 仍不可由切片结果替代。
+
+禁止在前一个切片未通过覆盖率 Gate 前并行扩展应用层、基础设施层或适配层；全部切片关闭后运行路径冻结，直到最终候选冻结。可并行的仅是互不修改工作区的验证命令；任何新增生产代码都必须先有对应行为测试和当前切片覆盖率证据。
+
+执行矩阵不拥有真实变更范围。质量扫描和覆盖率必须以 `execution-state.json` 中的 `start_head` 计算 Git Diff，并包含所有新增、修改、删除和未跟踪的运行相关路径；topic tmp 内容必须排除在 Diff 和覆盖率范围外。`changed-manifest` 只能作为 TASK 行归因资料，存在时必须覆盖 Git 推导的全部 Java 路径并使用相同变更行，覆盖率部分必须与生产 Java 路径和行集合完全一致，不能缩小扫描范围。
 
 生成质量采用两层 Gate：每个行为切片完成后立即运行共享机械扫描、目标测试和切片覆盖率，冻结候选前再对完整 Git Diff 运行一次机械扫描和正式增量覆盖率。前者用于尽早反馈和阻止坏代码继续扩散，后者用于绑定最终真实候选；两者不重复承担对方的证据职责。
 
@@ -49,7 +66,7 @@ Java 行为 TASK 的每个 `behavior_slices` 条目至少记录：`id`、`paths`
 ```json
 {
   "candidate_sha256": "<移除本字段后按 UTF-8 canonical JSON 计算的 SHA-256>",
-  "start_head": "<与 .execution-state.json 相同的完整 Git SHA>",
+  "start_head": "<与 execution-state.json 相同的完整 Git SHA>",
   "design_sha256": "<Design 摘要>",
   "quality_candidate_sha256": "<quality.json 候选摘要>",
   "coverage_evidence_sha256": "<coverage.json evidence_sha256>",
@@ -76,20 +93,28 @@ Java 行为 TASK 的每个 `behavior_slices` 条目至少记录：`id`、`paths`
 
 表、字段和索引等结构性 DDL 只能作为代码库文件实现，不得直接执行，也不得通过 Flyway、Liquibase、数据库客户端、应用启动、构建插件、集成测试或其他路径间接执行。最终报告写明“已交付、未执行、未进行数据库验证”。配置数据 DML 由人工运维处理，Preview 和 Apply 都不生成或执行。
 
-`.execution-state.json` 的最小形状：
+`execution-state.json` 的最小形状：
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "mode": "apply",
   "topic": "<topic>",
   "start_head": "<git-sha>",
   "design_sha256": "<sha256>",
   "execution_matrix_sha256": "<sha256>",
   "contract_preflight": {"status": "passed", "areas": ["module_boundaries", "runtime_semantics", "verification_surface", "delivery_ownership"]},
+  "coverage_policy": {"line_threshold": 90, "branch_threshold": 80, "gate_each_slice": true, "gate_before_next_slice": true},
+  "slice_order": ["SLICE-001", "SLICE-002"],
+  "active_slice": "SLICE-001",
+  "slice_coverage": {},
+  "slice_runtime_paths": {"SLICE-001": ["src/main/java/example/Service.java", "src/test/java/example/ServiceTest.java"]},
   "registered_runtime_paths": {"<relative-path>": "<resume-sha256>"},
+  "temporary_artifacts": ["execution-matrix.json"],
+  "run_dir": "docs/pretty/<topic>/tmp/<run-id>",
+  "state_file": "execution-state.json",
   "status": "in_progress"
 }
 ```
 
-此状态只用于判断能否恢复同一次 Apply。首次编辑前写入；意外中断时保留；完成或明确停止时删除。任何字段或登记摘要不匹配都停止，不尝试自动修复工作区。
+此状态只用于判断能否恢复同一次 Apply。首次编辑前写入；其他脚本写入证据前先用 `apply_run.py register` 登记。意外中断时保留；完成或明确停止时由 `apply_run.py cleanup` 删除。任何字段、路径或摘要不匹配都停止，不尝试自动修复工作区，也不直接使用 `rm -rf`。

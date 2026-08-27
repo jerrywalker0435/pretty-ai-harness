@@ -17,6 +17,7 @@ if str(COMMON_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPTS))
 
 from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from pretty_tmp import topic_dir_for_document, validate_artifact_path, validate_run_dir  # type: ignore[import-not-found]
 
 
 SECTIONS = ("执行起点", "基线", "TASK 结果", "最终门禁", "未验证范围", "结论与恢复点")
@@ -141,6 +142,8 @@ def _coverage_summary(coverage: Mapping[str, object]) -> str:
 def _coverage_errors(document: str, coverage: Mapping[str, object]) -> list[str]:
     expected = f"- 测试覆盖率：{_coverage_summary(coverage)}"
     errors = [] if expected in _section_body(document, "结论与恢复点") else [f"结论必须包含覆盖率证据：{expected}"]
+    if coverage.get("scope") == "slice":
+        errors.append("Execution 最终结论不能引用切片覆盖率作为最终覆盖率")
     if _complete_status(document) and coverage.get("status") not in {"pass", "not_applicable"}:
         errors.append("完成状态需要通过或不适用的增量覆盖率")
     return errors
@@ -347,8 +350,26 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(arguments: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(arguments)
     try:
-        document = args.execution.read_text(encoding="utf-8")
-        design_text = args.design.read_text(encoding="utf-8")
+        execution_path = args.execution.resolve()
+        design_path = args.design.resolve()
+        document = execution_path.read_text(encoding="utf-8")
+        design_text = design_path.read_text(encoding="utf-8")
+        evidence_paths = (
+            args.quality_evidence, args.coverage_evidence,
+            args.build_evidence, args.test_evidence,
+        )
+        run_dirs = {
+            path.resolve().parent
+            for path in evidence_paths
+            if path is not None
+        }
+        if run_dirs:
+            if len(run_dirs) != 1:
+                raise ValueError("Execution evidence must share one topic tmp run directory")
+            run_dir = validate_run_dir(topic_dir_for_document(design_path), next(iter(run_dirs)))
+            for evidence_path in evidence_paths:
+                if evidence_path is not None:
+                    validate_artifact_path(run_dir, evidence_path.resolve())
         quality = _load_json(args.quality_evidence) if args.quality_evidence else {}
         coverage = _load_json(args.coverage_evidence) if args.coverage_evidence else {}
         build = _load_json(args.build_evidence) if args.build_evidence else {}
@@ -356,7 +377,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         errors = validate_execution(
             document,
             design_text,
-            args.design,
+            design_path,
             ExecutionEvidence(quality, coverage, build, tests),
         )
     except (OSError, ValueError, json.JSONDecodeError) as error:

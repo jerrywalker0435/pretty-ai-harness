@@ -16,6 +16,10 @@ Pretty AI Harness 提供 3 个 Java/Spring 研发流程 Skills。安装 Prompt �
 
 `pretty-common` 不是独立 Skill，不会出现在 `Selected`/`Installed` 列表中；它必须与三个核心 Skill 位于同一 `skills` 目录下，供 `pretty-writing-design` 和 `pretty-executing` 的相对引用使用。
 
+Design/Apply 的运行期证据统一写入当前主题的 `docs/pretty/<topic>/tmp/<run-id>/`，不使用 `/private/tmp`；正常完成或明确停止时由对应脚本按登记清单清理，构建工具自己的 `target/`、`build/` 输出除外。
+
+Apply 的行为切片按顺序闭环：每个切片先有测试，再以新鲜 JaCoCo 达到至少行 90%、分支 80% 门槛，才允许推进或冻结；最终仍按完整 Diff 重新计算覆盖率并由唯一独立 Reviewer 审查。
+
 安装需要 `git`、Node.js/npm/npx，以及访问内部 Pretty GitLab 仓库的凭证。
 
 ## 验证
@@ -29,5 +33,7 @@ npx skills@1.5.22 add . --list --full-depth
 - `pretty-common/references/quality-principles.md`
 - `pretty-common/references/quality-routing.md`
 - `pretty-common/references/quality-review-protocol.md`
+- `pretty-common/references/runtime-authorization.md`
 - `pretty-common/scripts/disabled_test_scope.py`
 - `pretty-common/scripts/quality_contract_gate.py`
+- `pretty-common/scripts/pretty_tmp.py`

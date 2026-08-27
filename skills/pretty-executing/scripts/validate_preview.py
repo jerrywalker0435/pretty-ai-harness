@@ -23,6 +23,7 @@ from quality_contract_gate import (  # type: ignore[import-not-found]
     method_spans,
     scan_java_source,
 )
+from pretty_tmp import topic_dir_for_document, validate_artifact_path, validate_run_dir  # type: ignore[import-not-found]
 
 
 TITLE = re.compile(r"^#\s+.+\s+Execution Preview\s*$")
@@ -472,12 +473,16 @@ def main(arguments: Sequence[str] | None = None) -> int:
             args.preview,
             allow_project_governance=args.allow_project_governance,
         )
+        output = args.json_output
+        if output is not None:
+            run_dir = validate_run_dir(topic_dir_for_document(args.preview), output.resolve().parent)
+            output = validate_artifact_path(run_dir, output)
     except (OSError, ValueError) as error:
         print(f"Preview validation failed: {error}", file=sys.stderr)
         return 2
     for finding in findings:
         print(f"{finding.severity}: {finding.code} {finding.source}:{finding.line} [{finding.symbol}]")
-    _write_json(args.json_output, {
+    _write_json(output, {
         "candidate_sha256": preview_candidate_hash(preview_text),
         "findings": [finding.as_dict() for finding in findings],
         "passed": not errors,

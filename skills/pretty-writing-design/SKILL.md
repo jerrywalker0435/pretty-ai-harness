@@ -10,10 +10,10 @@ description: Create or revise an evidence-backed Java/Spring Design contract fro
 ## 输入、证据与交付
 
 - 读取同目录 `prd.md`、适用 Context/Context Map/ADR、构建配置和受影响真实代码；仓库事实必须有来源，不猜测 API、Schema 或依赖。
-- 首次调查前用 `scripts/design_run.py freeze` 冻结 PRD、AGENTS、Skill 和共享协议版本；随后一次 `evidence`，成稿后 `bind-candidate`，最后 `freshness` 与 `preflight`。具体参数以脚本帮助为准。
+- 首次调查前用 `scripts/design_run.py freeze` 冻结 PRD、AGENTS、Skill 和共享协议版本；随后一次 `evidence`，成稿后 `bind-candidate`，最后 `freshness` 与 `preflight`。所有运行证据必须位于 `docs/pretty/<topic>/tmp/<run-id>/`，具体参数以脚本帮助为准。
 - 默认写入 `docs/pretty/<topic>/design.md`，topic 使用小写 kebab-case。完成后停止，请用户 Review；后续由用户选择 `$pretty-executing` Apply 或 `$pretty-executing Dry Run`。
 - 交付只能声明“已通过机械、证据和新鲜度检查，等待用户 Review”；不生成 Design Reviewer receipt，也不启动独立 Reviewer。真实实现质量只在 Apply 最终 Gate 证明。
-- 临时文件和本地命令按 [运行授权](../pretty-common/references/runtime-authorization.md) 执行。
+- 临时文件和本地命令按 [运行授权](../pretty-common/references/runtime-authorization.md) 执行；正常交付后用 `design_run.py cleanup` 清理登记产物，中断时保留 run 目录供恢复。
 
 ## Design 合同门禁
 

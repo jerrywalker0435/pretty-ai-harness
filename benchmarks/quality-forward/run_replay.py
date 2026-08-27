@@ -9,7 +9,7 @@ import json
 import shutil
 import subprocess
 import sys
-import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -201,15 +201,15 @@ def _prepare_repo(
     timeout: float = DEFAULT_COMMAND_TIMEOUT,
 ) -> tuple[Path, Path]:
     repo = workspace / "repo"
-    evidence = workspace / "evidence"
     repo.mkdir(parents=True)
-    evidence.mkdir()
     _write(repo / "pom.xml", POM)
     _write(repo / "src/main/java/benchmark/PolicyService.java", SERVICE)
     _write(repo / "src/test/java/benchmark/PolicyServiceTest.java", TEST)
     topic = str(scenario["id"])
+    evidence = repo / f"docs/pretty/{topic}/tmp/benchmark-{uuid.uuid4().hex}"
     _write(repo / f"docs/pretty/{topic}/prd.md", f"# PRD\n\n{scenario['requirement']}\n")
     _write(repo / f"docs/pretty/{topic}/design.md", f"# Design\n\n{scenario['design']}\n")
+    _write(repo / f"docs/pretty/{topic}/.gitignore", "tmp/\n")
     _write(repo / "Context.md", f"# Context\n\n{scenario['context']}\n")
     _write(repo / "Context-Map.md", f"# Context Map\n\n{scenario['context_map']}\n")
     for skill in SKILLS:
@@ -219,10 +219,11 @@ def _prepare_repo(
     _git(repo, "config", "user.email", "benchmark@example.invalid", timeout=timeout)
     _git(repo, "add", ".", timeout=timeout)
     _git(repo, "commit", "-q", "-m", "synthetic baseline", timeout=timeout)
+    evidence.mkdir(parents=True)
     return repo, evidence
 
 
-def _codex_command(repo: Path, evidence: Path, prompt: str) -> list[str]:
+def _codex_command(repo: Path, prompt: str) -> list[str]:
     return [
         "codex",
         "exec",
@@ -231,13 +232,11 @@ def _codex_command(repo: Path, evidence: Path, prompt: str) -> list[str]:
         "workspace-write",
         "--cd",
         str(repo),
-        "--add-dir",
-        str(evidence),
         prompt,
     ]
 
 
-def _design_prompt(topic: str, evidence: Path) -> str:
+def _design_prompt(topic: str) -> str:
     return f"""This is a synthetic forward evaluation with explicit approval to finalize the Design.
 Read and obey .agents/skills/pretty-writing-design/SKILL.md and every resource it directly requires.
 The primary input is docs/pretty/{topic}/design.md; the PRD and Design are approved in this prompt.
@@ -251,7 +250,7 @@ def _execution_prompt(topic: str, evidence: Path) -> str:
     return f"""This is the Apply half of a synthetic forward evaluation. The evaluator explicitly approves the current Design.
 Read and obey .agents/skills/pretty-executing/SKILL.md and every resource it directly requires.
 Implement docs/pretty/{topic}/design.md in the real Java repository with tests. Before editing, perform the Execution contract preflight; use one actual independent reviewer agent only after all objective Apply Gates pass.
-Use {evidence} for all temporary evidence without asking for per-file approval. Required final files are quality.json, coverage.json, tests.json, build.json there and docs/pretty/{topic}/execution.md in the repo. Never generate configuration-data DML or execute structural DDL directly or indirectly.
+Use {evidence} for all temporary evidence without asking for per-file approval; register each output with apply_run.py before writing it. Required final files are quality.json, coverage.json, tests.json, build.json there and docs/pretty/{topic}/execution.md in the repo. Never generate configuration-data DML or execute structural DDL directly or indirectly.
 Run the supplied quality, coverage, and Execution validators. The coverage build must run tests and create a fresh JaCoCo report.
 Do not commit, push, change approved upstream files, or ask questions. Finish only after the Execution Gate passes.
 """
@@ -370,12 +369,11 @@ def _run_design_stage(
     environment: ReplayEnvironment,
     workspace: Path,
 ) -> AgentGateResult:
-    agent_log = workspace / "design-agent.log"
+    agent_log = environment.evidence / "design-agent.log"
     agent_exit = _run(
         _codex_command(
             environment.repo,
-            environment.evidence,
-            _design_prompt(environment.topic, environment.evidence),
+            _design_prompt(environment.topic),
         ),
         environment.repo,
         agent_log,
@@ -384,7 +382,7 @@ def _run_design_stage(
     infrastructure_error = _infrastructure_error(agent_log)
     if agent_exit != 0:
         return AgentGateResult(agent_exit, -1, infrastructure_error)
-    gate_log = workspace / "design-gate.log"
+    gate_log = environment.evidence / "design-gate.log"
     gate_exit = _validate_design(environment, gate_log)
     if gate_exit != 0:
         return AgentGateResult(
@@ -403,11 +401,10 @@ def _run_execution_stage(
     environment: ReplayEnvironment,
     workspace: Path,
 ) -> AgentGateResult:
-    agent_log = workspace / "execution-agent.log"
+    agent_log = environment.evidence / "execution-agent.log"
     agent_exit = _run(
         _codex_command(
             environment.repo,
-            environment.evidence,
             _execution_prompt(environment.topic, environment.evidence),
         ),
         environment.repo,
@@ -417,7 +414,7 @@ def _run_execution_stage(
     infrastructure_error = _infrastructure_error(agent_log)
     if agent_exit != 0:
         return AgentGateResult(agent_exit, -1, infrastructure_error)
-    gate_log = workspace / "execution-gate.log"
+    gate_log = environment.evidence / "execution-gate.log"
     gate_exit = _validate_execution(environment, gate_log)
     return AgentGateResult(
         agent_exit,
@@ -445,7 +442,7 @@ def run_one(
     )
     oracle_exit = -1
     if execution_stage.agent_exit == 0 and execution_stage.gate_exit == 0:
-        oracle_log = workspace / "behavior-oracle.log"
+        oracle_log = evidence / "behavior-oracle.log"
         oracle_exit = _run_behavior_oracle(environment, scenario, oracle_log)
         infrastructure_error = infrastructure_error or _infrastructure_error(oracle_log)
     semantic_errors = [] if infrastructure_error else list(_semantic_errors(repo, scenario))
@@ -525,7 +522,9 @@ def main(arguments: Sequence[str] | None = None) -> int:
         raise ValueError("--workers must be positive")
     if args.command_timeout <= 0:
         raise ValueError("--command-timeout must be positive")
-    output_root = args.output_root or Path(tempfile.mkdtemp(prefix="pretty-quality-forward-"))
+    output_root = args.output_root or (
+        ROOT / "benchmarks/quality-forward/tmp" / uuid.uuid4().hex
+    )
     output_root.mkdir(parents=True, exist_ok=True)
     scenarios = _load_scenarios(set(args.scenario))
     jobs = [

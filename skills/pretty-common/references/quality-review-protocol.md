@@ -11,7 +11,7 @@
 
 ## 审查范围
 
-Reviewer 读取从 `.execution-state.json` 起始 HEAD 推导的完整运行相关 Diff、当前 Design、完整调用链、执行矩阵及 build/tests/coverage 证据，检查：
+Reviewer 读取从 topic tmp run 内 `execution-state.json` 起始 HEAD 推导的完整运行相关 Diff、当前 Design、完整调用链、执行矩阵及 build/tests/coverage 证据，检查：
 
 - Design 合同与真实实现是否一致：TASK、公共入口、结果、失败语义、观察面、职责、数据所有权和依赖方向；
 - 状态、事务、并发、幂等、恢复、不可逆副作用、类型、异常、日志和边界替身；
