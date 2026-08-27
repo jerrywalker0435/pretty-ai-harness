@@ -9,62 +9,19 @@ import json
 import re
 import sys
 from dataclasses import asdict, dataclass
+from itertools import chain
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from disabled_test_scope import annotation_findings
 
-
-ERROR = "error"
-REVIEW = "review_required"
-
-
-@dataclass(frozen=True)
-class RuleSpec:
-    code: str
-    severity: str
-    description: str
-    threshold: int | None = None
-
-
-RULES = (
-    RuleSpec("EMPTY-CATCH", ERROR, "empty catch silently ignores a failure"),
-    RuleSpec("BROAD-CATCH-FALLBACK", ERROR, "broad catch returns null, empty, or success"),
-    RuleSpec("FIELD-INJECTION", ERROR, "production dependency uses field injection"),
-    RuleSpec("NULL-RETURN", ERROR, "method returns null without an explicit nullable contract"),
-    RuleSpec("NULL-OR-ELSE", ERROR, "Optional is converted to an undeclared null"),
-    RuleSpec("NULL-TERNARY", ERROR, "ternary expression propagates undeclared null"),
-    RuleSpec("CONTROL-FLOW-SKIP", REVIEW, "continue requires control-flow review"),
-    RuleSpec("WILDCARD-IMPORT", REVIEW, "wildcard import requires repository-style review"),
-    RuleSpec("GENERIC-RESULT-SHAPE", REVIEW, "generic success/code/message/data result shape"),
-    RuleSpec("COMPLEX-TERNARY", REVIEW, "statement contains nested or multiple ternaries"),
-    RuleSpec("METHOD-LOC", REVIEW, "method exceeds the effective-line target", 20),
-    RuleSpec("METHOD-PARAMETERS", REVIEW, "method exceeds the parameter target", 4),
-    RuleSpec("METHOD-COMPLEXITY", REVIEW, "method exceeds the complexity target", 10),
-    RuleSpec("METHOD-NESTING", REVIEW, "method exceeds the nesting target", 5),
-    RuleSpec("BOOLEAN-FLAG", REVIEW, "boolean parameter may hide two commands"),
-    RuleSpec("OPTIONAL-GET", REVIEW, "Optional isPresent/get pair requires contract review"),
-    RuleSpec("EXCESSIVE-LOGGING", REVIEW, "method has many log calls", 2),
-    RuleSpec("BRANCH-LOGGING", REVIEW, "multiple branches log independently"),
-    RuleSpec("MANUAL-DURATION-LOGGING", ERROR, "manual wall-clock timing must not be used for logs"),
-    RuleSpec("COMMENT-JUSTIFICATION", REVIEW, "production comment must explain a non-obvious reason"),
-    RuleSpec("NORMALIZATION-OWNERSHIP", REVIEW, "input normalization needs an explicit boundary contract"),
-    RuleSpec("AMBIGUOUS-BUCKET-NAME", REVIEW, "relative bucket name needs a defined opposite and partition rule"),
-    RuleSpec("DISABLED-TEST", ERROR, "new or changed test is disabled or conditionally skipped"),
-    RuleSpec("REQUIRED-INPUT-EMPTY-FALLBACK", REVIEW, "missing input may be disguised as an empty query result"),
-    RuleSpec("BOUNDARY-ANY-WITHOUT-CAPTOR", REVIEW, "boundary stub uses any() without request capture"),
-    RuleSpec("MULTI-CODE-NO-OUTPUT-ASSERTION", REVIEW, "multiple event or status codes need matching output assertions"),
+from quality_registry import (  # type: ignore[import-not-found]
+    ERROR,
+    REVIEW,
+    RULES,
+    RULE_BY_CODE,
+    RISK_OWNERS,
 )
-RULE_BY_CODE = {rule.code: rule for rule in RULES}
-RISK_OWNERS = {
-    "MODULE_BOUNDARY": "codebase-design",
-    "JAVA_OOD": "121-java-object-oriented-design",
-    "FOCUSED_SOLID": "solid-principles",
-    "TYPE_DESIGN": "122-java-type-design",
-    "CHANGE_AXIS": "design-patterns",
-    "JAVA_RUNTIME_RISK": "java-code-review",
-    "BEHAVIOR_TEST": "tdd",
-}
 
 
 @dataclass(frozen=True)
@@ -94,6 +51,7 @@ class QualityFinding:
 @dataclass(frozen=True)
 class MethodSpan:
     name: str
+    owner: str
     symbol: str
     start: int
     body_start: int
@@ -182,8 +140,31 @@ HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 NORMALIZATION_CALL = re.compile(
     r"\.\s*(?:trim|strip|stripLeading|stripTrailing|toLowerCase|toUpperCase)\s*\("
 )
+METHOD_INVOCATION = re.compile(
+    r"(?:(?P<owner>[A-Za-z_$][\w$]*)\s*\.\s*)?"
+    r"(?P<name>[A-Za-z_$][\w$]*)\s*\("
+)
+METHOD_REFERENCE = re.compile(
+    r"(?P<owner>[A-Za-z_$][\w$]*)\s*::\s*"
+    r"(?P<name>[A-Za-z_$][\w$]*)\b"
+)
 JAVA_IDENTIFIER = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*\b")
 RELATIVE_BUCKET_TOKENS = frozenset({"normal", "special"})
+GENERIC_NORMALIZATION_VERBS = frozenset({
+    "canonicalise", "canonicalize", "clean", "normalise", "normalize", "sanitize", "strip", "trim",
+})
+GENERIC_TEXT_TOKENS = frozenset({
+    "blank", "data", "empty", "field", "input", "null", "space", "string", "text", "to", "value", "whitespace",
+})
+GENERIC_NORMALIZATION_OWNERS = frozenset({
+    "canonicalizer", "cleaner", "common", "helper", "input", "normalization", "normalizer",
+    "sanitizer", "string", "support", "text", "trimmer", "util", "utils", "value",
+})
+GENERIC_NULL_FALLBACK_NAMES = frozenset({
+    ("blank", "to", "null"),
+    ("empty", "to", "null"),
+    ("null", "to", "empty"),
+})
 
 
 def _blank_token(match: re.Match[str]) -> str:
@@ -250,6 +231,7 @@ def _method_from_match(
     symbol = f"{source_name}#{owner}#{match.group('name')}/{arity}"
     return MethodSpan(
         match.group("name"),
+        owner,
         symbol,
         match.start(),
         body_start,
@@ -385,19 +367,43 @@ def _null_findings(
     source_name: str,
     methods: Sequence[MethodSpan],
     eligible_lines: frozenset[int] | None,
+    allow_declared_nullable: bool,
 ) -> list[QualityFinding]:
     checks = (
-        (re.compile(r"\breturn\s+null\s*;"), "NULL-RETURN", "return null needs @Nullable"),
+        (re.compile(r"\breturn\s+null\s*;"), "NULL-RETURN", "return null needs an independently proven external contract"),
         (re.compile(r"\.orElse\s*\(\s*null\s*\)"), "NULL-OR-ELSE", "orElse(null) hides absence"),
         (re.compile(r"\?[^:;]*\bnull\b[^;]*:|\?[^:;]*:[^;]*\bnull\b"), "NULL-TERNARY", "ternary propagates null"),
     )
     findings = []
     for pattern, code, message in checks:
         for match in pattern.finditer(masked_source):
-            if _nullable_contract(methods, match.start()):
+            if code == "NULL-RETURN" and allow_declared_nullable and _nullable_contract(methods, match.start()):
                 continue
             if _position_is_eligible(source, match.start(), eligible_lines):
                 findings.append(_finding(code, message, source, source_name, match.start(), methods))
+    return findings
+
+
+def _repeated_null_guard_findings(context: JavaScanContext) -> list[QualityFinding]:
+    findings = []
+    for method in context.methods:
+        if not _position_is_eligible(context.source, method.start, context.eligible_lines):
+            continue
+        body = context.masked_source[method.body_start:method.end]
+        guards: dict[str, list[int]] = {}
+        for match in re.finditer(r"\b([A-Za-z_$][\w$]*)\s*(?:==|!=)\s*null\b", body):
+            guards.setdefault(match.group(1), []).append(method.body_start + match.start())
+        for identifier, positions in guards.items():
+            if len(positions) < 2:
+                continue
+            findings.append(_finding(
+                "REPEATED-NULL-GUARD",
+                f"'{identifier}' is checked against null {len(positions)} times; establish its invariant once",
+                context.source,
+                context.source_name,
+                positions[0],
+                (method,),
+            ))
     return findings
 
 
@@ -593,10 +599,98 @@ def _normalization_findings(
     return findings
 
 
-def _identifier_tokens(identifier: str) -> frozenset[str]:
+def _identifier_parts(identifier: str) -> tuple[str, ...]:
     snake_case = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", identifier)
     snake_case = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake_case)
-    return frozenset(part.lower() for part in re.split(r"[_$]+", snake_case) if part)
+    return tuple(part.lower() for part in re.split(r"[_$]+", snake_case) if part)
+
+
+def _is_generic_normalization_name(name: str) -> bool:
+    parts = _identifier_parts(name)
+    if parts in GENERIC_NULL_FALLBACK_NAMES:
+        return True
+    return bool(
+        parts
+        and parts[0] in GENERIC_NORMALIZATION_VERBS
+        and (len(parts) == 1 or all(part in GENERIC_TEXT_TOKENS for part in parts[1:]))
+    )
+
+
+def _is_generic_normalization_owner(owner: str) -> bool:
+    parts = _identifier_parts(owner)
+    return bool(parts) and all(part in GENERIC_NORMALIZATION_OWNERS for part in parts)
+
+
+def _generic_normalization_declaration(method: MethodSpan) -> bool:
+    parts = _identifier_parts(method.name)
+    return _is_generic_normalization_name(method.name) and (
+        len(parts) > 1 or _is_generic_normalization_owner(method.owner)
+    )
+
+
+def _generic_normalization_usage(usage: re.Match[str]) -> bool:
+    name = usage.group("name")
+    if not _is_generic_normalization_name(name):
+        return False
+    parts = _identifier_parts(name)
+    owner = usage.group("owner")
+    if len(parts) > 1:
+        return True
+    if owner is None or not _is_generic_normalization_owner(owner):
+        return False
+    owner_parts = _identifier_parts(owner)
+    return owner[0].isupper() or len(owner_parts) > 1
+
+
+def _generic_normalization_declaration_finding(
+    context: JavaScanContext,
+    method: MethodSpan,
+) -> QualityFinding | None:
+    if not _generic_normalization_declaration(method):
+        return None
+    return _finding(
+        "GENERIC-NORMALIZATION-HELPER",
+        f"'{method.name}' is a generic normalization helper; establish the invariant at a named trust boundary",
+        context.source,
+        context.source_name,
+        method.start,
+        (method,),
+    )
+
+
+def _generic_normalization_usage_findings(
+    context: JavaScanContext,
+    method: MethodSpan,
+) -> list[QualityFinding]:
+    findings = []
+    body = context.masked_source[method.body_start:method.end]
+    for usage in chain(METHOD_INVOCATION.finditer(body), METHOD_REFERENCE.finditer(body)):
+        if _generic_normalization_usage(usage):
+            findings.append(_finding(
+                "GENERIC-NORMALIZATION-HELPER",
+                f"'{usage.group('name')}' delegates normalization to a generic helper",
+                context.source,
+                context.source_name,
+                method.body_start + usage.start(),
+                (method,),
+            ))
+    return findings
+
+
+def _generic_normalization_helper_findings(context: JavaScanContext) -> list[QualityFinding]:
+    findings = []
+    for method in context.methods:
+        if not _position_is_eligible(context.source, method.start, context.eligible_lines):
+            continue
+        declaration = _generic_normalization_declaration_finding(context, method)
+        if declaration:
+            findings.append(declaration)
+        findings.extend(_generic_normalization_usage_findings(context, method))
+    return findings
+
+
+def _identifier_tokens(identifier: str) -> frozenset[str]:
+    return frozenset(_identifier_parts(identifier))
 
 
 def _ambiguous_bucket_finding(
@@ -642,13 +736,18 @@ def scan_java_source(
     source_name: str = "<java>",
     changed_lines: frozenset[int] | None = None,
     production: bool = True,
+    allow_declared_nullable: bool = False,
 ) -> list[QualityFinding]:
     masked_source = mask_java_non_code(source)
     methods = method_spans(masked_source, source_name)
     eligible = _eligible_lines(source, methods, changed_lines)
     context = JavaScanContext(source, masked_source, source_name, methods, eligible)
     findings = _base_findings(context)
-    findings.extend(_production_findings(context) if production else _test_contract_findings(context))
+    findings.extend(
+        _production_findings(context, allow_declared_nullable)
+        if production
+        else _test_contract_findings(context)
+    )
     findings.extend(_method_metric_findings(source, masked_source, source_name, methods, eligible))
     findings.extend(_method_structure_findings(source, masked_source, source_name, methods, eligible))
     findings.extend(_ambiguous_bucket_name_findings(context))
@@ -659,7 +758,7 @@ def _base_findings(context: JavaScanContext) -> list[QualityFinding]:
     checks = (
         (EMPTY_CATCH, "EMPTY-CATCH", "empty catch ignores a failure"),
         (WILDCARD_IMPORT, "WILDCARD-IMPORT", "wildcard import needs style review"),
-        (re.compile(r"\bcontinue\s*;"), "CONTROL-FLOW-SKIP", "continue needs flow review"),
+        (re.compile(r"\bcontinue\s*;"), "CONTROL-FLOW-SKIP", "continue is prohibited in delivered code"),
         (GENERIC_RESULT, "GENERIC-RESULT-SHAPE", "generic result shape needs boundary review"),
     )
     findings = []
@@ -671,13 +770,15 @@ def _base_findings(context: JavaScanContext) -> list[QualityFinding]:
     return findings + _broad_catch_findings(context)
 
 
-def _production_findings(context: JavaScanContext) -> list[QualityFinding]:
+def _production_findings(context: JavaScanContext, allow_declared_nullable: bool) -> list[QualityFinding]:
     scan_arguments = (context.source, context.masked_source, context.source_name, context.methods, context.eligible_lines)
     findings = _pattern_findings(FIELD_INJECTION, "FIELD-INJECTION", "use constructor injection", *scan_arguments)
-    findings.extend(_null_findings(*scan_arguments))
+    findings.extend(_null_findings(*scan_arguments, allow_declared_nullable))
     findings.extend(_comment_justification_findings(context.source, context.source_name, context.methods, context.eligible_lines))
     findings.extend(_manual_duration_logging_findings(context))
+    findings.extend(_generic_normalization_helper_findings(context))
     findings.extend(_normalization_findings(context))
+    findings.extend(_repeated_null_guard_findings(context))
     findings.extend(_pattern_findings(
         REQUIRED_INPUT_EMPTY_FALLBACK,
         "REQUIRED-INPUT-EMPTY-FALLBACK",
@@ -775,10 +876,11 @@ def review_evidence_errors(
     findings: Iterable[QualityFinding],
     *,
     require_clean_guard: bool = False,
+    pre_review_gate: Mapping[str, object] | None = None,
 ) -> list[str]:
     if evidence is None:
         return ["independent review evidence is required"]
-    errors = _review_header_errors(evidence, candidate_hash, require_clean_guard)
+    errors = _review_header_errors(evidence, candidate_hash, require_clean_guard, pre_review_gate)
     errors.extend(_review_finding_errors(evidence, findings))
     return errors
 
@@ -787,6 +889,7 @@ def _review_header_errors(
     evidence: Mapping[str, object],
     candidate_hash: str,
     require_clean_guard: bool,
+    pre_review_gate: Mapping[str, object] | None,
 ) -> list[str]:
     errors = []
     if evidence.get("candidate_sha256") != candidate_hash:
@@ -800,6 +903,12 @@ def _review_header_errors(
         guards = evidence.get("guards")
         if not isinstance(guards, list) or "clean-code-guard" not in guards:
             errors.append("production diff requires clean-code-guard evidence")
+    if pre_review_gate is not None:
+        actual_gate = evidence.get("pre_review_gate")
+        if actual_gate != dict(pre_review_gate):
+            errors.append("review evidence does not match the objective pre-review Gate")
+        if any(not isinstance(value, str) or not value for value in pre_review_gate.values()):
+            errors.append("objective pre-review Gate needs quality/build candidate and test/coverage evidence hashes")
     errors.extend(_risk_errors(evidence.get("risks")))
     return errors
 
@@ -845,6 +954,7 @@ def _accepted_fingerprints(
     if not isinstance(entries, list):
         return {}, ["review evidence accepted_findings must be a list"]
     accepted = {}
+    reasons: dict[str, str] = {}
     errors = []
     for index, entry in enumerate(entries):
         fingerprint, reason, entry_errors = _accepted_finding_entry(
@@ -852,6 +962,13 @@ def _accepted_fingerprints(
         )
         errors.extend(entry_errors)
         if fingerprint:
+            if reason and reason in reasons:
+                errors.append(
+                    f"accepted finding reason must be specific; generic reason reused by "
+                    f"{reasons[reason]} and {fingerprint}"
+                )
+            elif reason:
+                reasons[reason] = fingerprint
             accepted[fingerprint] = reason
     return accepted, errors
 

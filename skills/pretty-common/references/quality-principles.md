@@ -1,6 +1,6 @@
 # Java 代码与设计质量基线
 
-本文件定义 Execution Preview 代码提案与 Apply 真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，机械规则及阈值以 `../scripts/quality_contract_gate.py` 的规则注册表为准。
+本文件定义 Execution Preview 代码提案与 Apply 真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，运行授权见 [runtime-authorization.md](runtime-authorization.md)，机械规则及阈值以 `../scripts/quality_registry.py` 的注册表为唯一来源。
 
 ## QP-01 完整链路与规则归属
 
@@ -16,14 +16,16 @@
 
 - 在值首次进入信任域时建立不变量，内部代码信任已经成立的合同。
 - `trim`、大小写折叠和默认值等规范化只能放在首个信任边界，并由协议、Schema 或既有公共合同证明；内部方法不得为假想脏数据重复规范化，也不得悄悄改变标识符和值对象语义。
+- 禁止创建或调用 `normalizeText`、`normalizeString`、`cleanText`、`trimText`、`trimToNull` 及同类无领域归属的通用文本规范化 Helper；规范化、默认值、容错恢复和校验不得合并成模糊操作。确需转换时，由首个信任边界的领域类型、协议类型或兼容 Adapter 以具体合同命名并建立一次不变量。`GENERIC-NORMALIZATION-HELPER` 是不可豁免的机械错误；领域边界内的直接规范化仍由 `NORMALIZATION-OWNERSHIP` 审查合同与值语义。
 - 区分必填、可选、可默认、外部不可信、持久化记录和内部值。
 - 查询缺失、数据损坏与外部故障使用不同语义；业务方法默认不返回 `null`。
 - 只有明确的框架、遗留或外部可空合同允许 `null`，并由注解、文档和测试共同证明。
 - 配置缺失、依赖缺失和非法外部输入在对应边界快速失败，不用空值或默认成功掩盖。
+- 同一输入的不变量只在首个信任边界建立一次；内部不得对同一必填对象重复 `== null` 防御，也不得用逐字段空值映射伪造查询未命中。
 
 ## QP-03 约定优先
 
-在用户已明确当前任务边界后，规范优先级依次为：已批准 PRD/Design、Pretty 共享质量规则、专项 Skill 的非强制建议、真实仓库既有惯例、AGENTS、Trellis。Design 是 Execution 的唯一规范合同；Preview 只是可选输入资料。风险路由所有权属于 Pretty 共享质量规则内部，只决定由哪个专项 Skill 主审，不改变这套优先级，也不产生第二套冲突排序。真实 API、Schema、依赖版本和运行结果是不可伪造的事实约束，不参与普通排序竞争；既有实现方式是低优先级惯例，不能压过 Pretty 规则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
+在用户已明确当前任务边界后，规范优先级依次为：已批准 PRD / Design、Pretty 共享质量规则、专项 Skill 的非强制建议、真实仓库既有惯例、AGENTS、Trellis。该顺序只解决真实冲突，不决定风险路由、审查强度或适用规则；共享规则始终适用，风险路由由 Quality Resolver 根据 Design 与仓库事实派生，Writer 不得自报、删除或降级。Design 是 Execution 的唯一业务与技术合同，Preview 只是可选输入资料；Design 中的普通实现偏好不能伪装成业务合同覆盖共享规则，外部或遗留合同确需例外时必须绑定具体 Symbol、不可修改原因和测试、Schema 或签名证据。真实 API、Schema、依赖版本和运行结果是不可伪造的事实约束，不参与普通排序竞争；既有实现方式是低优先级惯例，不能压过 Pretty 规则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 必须以真实构建配置和已安装版本为准。
 
 ## QP-04 正常流与失败流
 
@@ -31,7 +33,7 @@
 - 只捕获能够恢复或映射的具体异常，保留 cause；不解析异常消息控制流程。
 - 不把异常、数据损坏或外部故障转换为 `null`、空集合、状态码或成功。
 - 外部状态码在 Adapter 一次映射，不能以裸 `int`、`String` 或 `boolean` 跨层分派业务行为。
-- 控制流首先追求清楚；复杂跳转、嵌套和三元表达式必须接受结构审查。
+- 控制流首先追求清楚；交付增量禁止 `continue`，复杂跳转、嵌套和三元表达式必须接受结构审查。
 
 ## QP-05 查询与命令
 
@@ -39,7 +41,7 @@
 
 ## QP-06 命名、注释与实现事实
 
-类、方法、参数和变量使用领域词汇并表达意图。避免无领域限定的 `execute`、`resolve`、`handle`、`process`、`data`、`result`、`helper`、`manager` 等弱名称；`normal`、`special` 等相对分类词必须能指出互斥分类、划分规则和业务含义，否则改用具体领域状态。代码以命名和结构自释义，不生成复述查询、判断、调用或保存步骤的注释，也不强制普通实现或测试声明添加 JavaDoc。只有代码无法表达的外部原因、兼容限制或算法依据才保留简短英文注释；仓库注释惯例和 AGENTS/Trellis 要求不能扩大该范围。
+类、方法、参数和变量使用领域词汇并表达意图。禁止无领域限定的 `execute`、`resolve`、`handle`、`process`、`data`、`result`、`helper`、`manager` 等弱名称；`normal`、`special` 等相对分类词必须能指出互斥分类、划分规则和业务含义，否则改用具体领域状态。代码以命名和结构自释义，不生成复述查询、判断、调用或保存步骤的注释，也不强制普通实现或测试声明添加 JavaDoc。只有代码无法表达的外部原因、兼容限制或算法依据才保留简短英文注释；仓库注释惯例和 AGENTS/Trellis 要求不能扩大该范围。
 
 事实证据顺序为：
 
@@ -70,3 +72,5 @@
 ## QP-11 AI 生成完整性
 
 生成代码前读取目标文件、相邻实现和真实依赖版本。AGENTS、Trellis、ADR 和项目治理文档只作上下文，不能自行触发同步任务或扩大写集。禁止臆造 API、硬编码成功、生产 fixture、半实现、无调用者的抽象、无价值新依赖以及从相似代码复制后猜测语义。边界、空值、范围和顺序问题必须从合同重新推导并由测试固定。
+
+生成质量与候选证明是两项职责：Writer 在首次落笔和每个行为切片中主动满足本基线，机械扫描用于即时反馈，不得等最终 Gate 才集中清理；冻结后的完整 Git Diff Gate、真实测试和独立 Reviewer 只证明最终候选，不替代生成过程中的质量控制。

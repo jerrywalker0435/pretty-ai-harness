@@ -18,6 +18,7 @@ if str(COMMON_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPTS))
 
 from disabled_test_scope import repository_meta_disabled_names, scan_paths, targeted_findings  # type: ignore[import-not-found]
+from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class TestExecutionRequest:
     report_not_before: float
     new_test_sources: Sequence[str] = ()
     design_sha256: str | None = None
+    quality_candidate_sha256: str | None = None
 
 
 def _safe_relative_path(relative_path: str) -> bool:
@@ -137,8 +139,9 @@ def verify(request: TestExecutionRequest) -> dict[str, object]:
     errors.extend(execution_errors)
     source_hashes = _test_source_hashes(request)
     status = "fail" if errors else "not_applicable" if not request.expected_tests else "pass"
-    return {
+    payload = {
         "candidate_sha256": _candidate_hash(source_hashes, executable_reports, request.expected_tests),
+        "quality_candidate_sha256": request.quality_candidate_sha256,
         "design_sha256": request.design_sha256,
         "source_sha256": source_hashes,
         "reports": [str(path) for path in executable_reports],
@@ -150,6 +153,8 @@ def verify(request: TestExecutionRequest) -> dict[str, object]:
         "errors": errors,
         "generated_at": time.time(),
     }
+    payload["evidence_sha256"] = evidence_sha256(payload)
+    return payload
 
 
 def _missing_test_source_errors(request: TestExecutionRequest) -> list[str]:
@@ -202,7 +207,7 @@ def _verify_execution(
 def _test_source_hashes(request: TestExecutionRequest) -> dict[str, str]:
     return {
         path: _sha256(request.repo / path)
-        for path in sorted(set(request.test_sources))
+        for path in sorted(set(request.test_sources) | set(request.new_test_sources))
         if (request.repo / path).is_file()
     }
 
@@ -216,6 +221,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--report", action="append", type=Path, default=[])
     parser.add_argument("--report-not-before", type=float, required=True)
     parser.add_argument("--design", type=Path, required=True)
+    parser.add_argument("--quality-candidate-sha256")
     parser.add_argument("--json-output", type=Path, required=True)
     return parser
 
@@ -233,6 +239,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             report_not_before=args.report_not_before,
             new_test_sources=args.new_test_source,
             design_sha256=_sha256(design),
+            quality_candidate_sha256=args.quality_candidate_sha256,
         ))
         args.json_output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except (OSError, ValueError) as error:

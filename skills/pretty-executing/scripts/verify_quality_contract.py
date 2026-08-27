@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path, PurePosixPath
-from typing import Mapping, Sequence
+from typing import Iterable, Mapping, Sequence
 
 
 COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
@@ -26,6 +26,9 @@ from quality_contract_gate import (  # type: ignore[import-not-found]
     review_evidence_errors,
     scan_java_source,
 )
+from quality_registry import RISK_OWNERS, RULES  # type: ignore[import-not-found]
+from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+from execution_contract import contract_preflight_errors
 
 
 def _load_json(path: Path) -> dict[str, object]:
@@ -91,6 +94,8 @@ def _read_manifest(path: Path) -> dict[str, frozenset[int]]:
             raise ValueError(f"changed manifest path must be repository-relative: {source_path}")
         if any(not isinstance(line, int) or line < 1 for line in line_numbers):
             raise ValueError(f"invalid changed line for {source_path}")
+        if source_path.endswith(".java") and not line_numbers:
+            raise ValueError(f"changed manifest Java entry must contain changed lines: {source_path}")
         changed[source_path] = frozenset(line_numbers)
     return changed
 
@@ -112,17 +117,8 @@ def _untracked_java(repo: Path, paths: set[str] | None = None) -> dict[str, froz
 
 def _changed_scope(
     repo: Path,
-    base: str | None,
-    manifest: Path | None,
+    base: str,
 ) -> tuple[dict[str, frozenset[int]], set[str], str]:
-    if manifest:
-        manifest_content = manifest.read_text(encoding="utf-8")
-        all_changed = _read_manifest(manifest)
-        java_changed = {path: lines for path, lines in all_changed.items() if path.endswith(".java")}
-        relevant_paths = {path for path in all_changed if not _is_explanatory_path(path)}
-        java_changed = {path: lines for path, lines in java_changed.items() if path in relevant_paths}
-        return java_changed, relevant_paths, manifest_content
-    assert base is not None
     diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, "--"])
     changed_paths = set(_run_git(repo, ["diff", "--name-only", base, "--"]).splitlines())
     untracked_paths = _untracked_paths(repo)
@@ -132,6 +128,50 @@ def _changed_scope(
     java_changed.update(_untracked_java(repo, untracked_paths))
     java_changed = {path: lines for path, lines in java_changed.items() if path in changed_paths}
     return java_changed, changed_paths, diff
+
+
+def _manifest_scope_errors(
+    manifest: Path | None,
+    actual_java: Mapping[str, frozenset[int]],
+    actual_paths: set[str],
+) -> list[str]:
+    if manifest is None:
+        return []
+    declared = _read_manifest(manifest)
+    declared_paths = {path for path in declared if not _is_explanatory_path(path)}
+    errors = _manifest_path_errors(declared_paths, actual_java, actual_paths)
+    errors.extend(_manifest_line_errors(declared, actual_java))
+    return errors
+
+
+def _manifest_path_errors(
+    declared_paths: set[str],
+    actual_java: Mapping[str, frozenset[int]],
+    actual_paths: set[str],
+) -> list[str]:
+    missing_java = sorted(set(actual_java) - declared_paths)
+    extra = sorted(declared_paths - actual_paths)
+    errors = []
+    if missing_java:
+        errors.append(f"changed manifest omits Java paths from Git diff: {missing_java}")
+    if extra:
+        errors.append(f"changed manifest contains paths outside Git diff: {extra}")
+    return errors
+
+
+def _manifest_line_errors(
+    declared: Mapping[str, frozenset[int]],
+    actual_java: Mapping[str, frozenset[int]],
+) -> list[str]:
+    errors = []
+    for path, actual_lines in sorted(actual_java.items()):
+        declared_lines = declared.get(path)
+        if declared_lines is not None and declared_lines != actual_lines:
+            errors.append(
+                f"changed manifest lines do not match Git diff for {path}: "
+                f"{sorted(declared_lines)} != {sorted(actual_lines)}"
+            )
+    return errors
 
 
 def _matrix_paths(matrix: Mapping[str, object], design_text: str) -> tuple[set[str], list[str]]:
@@ -156,9 +196,97 @@ def _matrix_paths(matrix: Mapping[str, object], design_text: str) -> tuple[set[s
                     errors.append(f"execution matrix path must be repository-relative: {declared_path}")
                 else:
                     paths.add(declared_path)
+        errors.extend(_matrix_behavior_errors(task, index))
     if actual_tasks != expected_tasks:
         errors.append(f"execution matrix TASK set must match Design: {sorted(expected_tasks)}")
     return paths, errors
+
+
+def _matrix_behavior_errors(task: Mapping[str, object], index: int) -> list[str]:
+    java_paths = _matrix_java_paths(task)
+    slices = task.get("behavior_slices")
+    if not isinstance(slices, list):
+        return [f"execution matrix task {index} behavior_slices must be a list"]
+    if not slices:
+        reason = task.get("non_behavior_reason")
+        return [] if isinstance(reason, str) and reason.strip() else [
+            f"execution matrix task {index} without behavior_slices needs non_behavior_reason"
+        ]
+    if not java_paths:
+        return [f"execution matrix task {index} has behavior_slices without Java files"]
+    errors = []
+    for slice_index, behavior_slice in enumerate(slices):
+        errors.extend(_behavior_slice_errors(behavior_slice, index, slice_index))
+    return errors
+
+
+def _behavior_slice_errors(
+    behavior_slice: object,
+    task_index: int,
+    slice_index: int,
+) -> list[str]:
+    prefix = f"execution matrix task {task_index} behavior slice {slice_index}"
+    if not isinstance(behavior_slice, dict):
+        return [f"{prefix} must be an object"]
+    errors = []
+    if not isinstance(behavior_slice.get("id"), str) or not behavior_slice["id"].strip():
+        errors.append(f"{prefix} needs an id")
+    if not isinstance(behavior_slice.get("test_entry"), str) or not behavior_slice["test_entry"].strip():
+        errors.append(f"{prefix} needs a test_entry")
+    list_fields = (
+        "paths", "production_symbols", "input_invariants", "boundary_substitutes",
+        "result_assertions", "nearest_neighbors", "coverage_obligations",
+        "resolver_rules", "depends_on",
+    )
+    for field in list_fields:
+        values = behavior_slice.get(field)
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value.strip() for value in values):
+            errors.append(f"{prefix} {field} must be a string list")
+    for field in ("paths", "production_symbols", "result_assertions", "coverage_obligations", "resolver_rules"):
+        if behavior_slice.get(field) == []:
+            errors.append(f"{prefix} {field} must not be empty")
+    expected_rules = {rule.code for rule in RULES}
+    actual_rules = behavior_slice.get("resolver_rules")
+    if isinstance(actual_rules, list) and set(actual_rules) != expected_rules:
+        errors.append(f"{prefix} resolver_rules must contain the complete shared registry")
+    errors.extend(_resolver_risk_errors(behavior_slice.get("resolver_risks"), prefix))
+    return errors
+
+
+def _resolver_risk_errors(risks: object, prefix: str) -> list[str]:
+    if not isinstance(risks, list):
+        return [f"{prefix} resolver_risks must be a list"]
+    errors = []
+    seen = set()
+    for index, risk in enumerate(risks):
+        if not isinstance(risk, dict):
+            errors.append(f"{prefix} resolver risk {index} must be an object")
+            continue
+        risk_id = risk.get("id")
+        owner = risk.get("owner")
+        evidence = risk.get("evidence")
+        if risk_id not in RISK_OWNERS:
+            errors.append(f"{prefix} resolver risk {index} has unknown id")
+        elif risk_id in seen:
+            errors.append(f"{prefix} resolver risk id must be unique: {risk_id}")
+        else:
+            seen.add(risk_id)
+            if owner != RISK_OWNERS[risk_id]:
+                errors.append(f"{prefix} resolver risk {risk_id} has the wrong owner")
+        if not isinstance(evidence, list) or not evidence or any(
+            not isinstance(item, str) or not item.strip() for item in evidence
+        ):
+            errors.append(f"{prefix} resolver risk {index} needs concrete evidence")
+    return errors
+
+
+def _matrix_java_paths(task: Mapping[str, object]) -> list[str]:
+    paths = []
+    for field in ("production_files", "test_files"):
+        declared = task.get(field)
+        if isinstance(declared, list):
+            paths.extend(path for path in declared if isinstance(path, str) and path.endswith(".java"))
+    return paths
 
 
 def _scope_errors(
@@ -199,6 +327,7 @@ def _candidate_file_parts(
 def _scan_sources(
     repo: Path,
     changed: Mapping[str, frozenset[int]],
+    declared_nullable_paths: frozenset[str] = frozenset(),
 ) -> tuple[list[QualityFinding], dict[str, str], bool]:
     findings, source_parts, has_production = [], {}, False
     for relative_path, line_numbers in sorted(changed.items()):
@@ -217,9 +346,22 @@ def _scan_sources(
                 source_name=relative_path,
                 changed_lines=line_numbers,
                 production=production,
+                allow_declared_nullable=relative_path in declared_nullable_paths,
             )
         )
     return findings, source_parts, has_production
+
+
+def _paths_without_new_nullable_annotations(diff: str, changed_paths: Iterable[str]) -> frozenset[str]:
+    current_path = None
+    added_nullable: set[str] = set()
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current_path = line[6:]
+        elif current_path and line.startswith("+") and not line.startswith("+++"):
+            if re.search(r"@(?:[A-Za-z_$][\w$]*\.)*(?:Nullable|CheckForNull)\b", line):
+                added_nullable.add(current_path)
+    return frozenset(set(changed_paths) - added_nullable)
 
 
 def _write_json(path: Path | None, payload: Mapping[str, object]) -> None:
@@ -230,12 +372,19 @@ def _write_json(path: Path | None, payload: Mapping[str, object]) -> None:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."))
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--base")
-    source.add_argument("--changed-manifest", type=Path)
+    parser.add_argument("--base", required=True, help="recorded Apply start HEAD")
+    parser.add_argument(
+        "--changed-manifest",
+        type=Path,
+        help="optional TASK attribution that must cover the Git-derived Java scope exactly",
+    )
     parser.add_argument("--design", type=Path, required=True)
     parser.add_argument("--execution-matrix", type=Path, required=True)
-    parser.add_argument("--review-evidence", type=Path, required=True)
+    parser.add_argument("--review-evidence", type=Path)
+    parser.add_argument("--build-evidence", type=Path)
+    parser.add_argument("--test-evidence", type=Path)
+    parser.add_argument("--coverage-evidence", type=Path)
+    parser.add_argument("--scan-only", action="store_true", help="form the objective pre-review candidate")
     parser.add_argument("--json-output", type=Path, required=True)
     return parser
 
@@ -248,46 +397,88 @@ def main(arguments: Sequence[str] | None = None) -> int:
         design_text = design_path.read_text(encoding="utf-8")
         matrix = _load_json(args.execution_matrix)
         matrix_paths, matrix_errors = _matrix_paths(matrix, design_text)
+        for error in contract_preflight_errors(design_text, matrix):
+            if error not in matrix_errors:
+                matrix_errors.append(error)
         design_hash = hashlib.sha256(design_text.encode("utf-8")).hexdigest()
         if matrix.get("design_sha256") != design_hash:
             matrix_errors.append("execution matrix does not match the current Design")
-        changed_java, changed_paths, _ = _changed_scope(repo, args.base, args.changed_manifest)
-        findings, _, has_production = _scan_sources(repo, changed_java)
+        start_head = _run_git(repo, ["rev-parse", "--verify", f"{args.base}^{{commit}}"]).strip()
+        changed_java, changed_paths, diff = _changed_scope(repo, start_head)
+        scope_errors = _manifest_scope_errors(args.changed_manifest, changed_java, changed_paths)
+        findings, _, has_production = _scan_sources(
+            repo,
+            changed_java,
+            _paths_without_new_nullable_annotations(diff, changed_java),
+        )
         candidate_files, changed_source_hashes = _candidate_file_parts(repo, changed_paths)
         candidate_parts = {
             "design.md": design_text,
             "execution-matrix.json": json.dumps(matrix, ensure_ascii=False, sort_keys=True),
+            "start-head": start_head,
             "runtime-change-scope.json": json.dumps(sorted(changed_paths), ensure_ascii=False),
             **candidate_files,
         }
         candidate_hash = candidate_sha256(candidate_parts)
-        evidence = load_review_evidence(args.review_evidence)
         errors = list(matrix_errors)
+        errors.extend(scope_errors)
         errors.extend(_scope_errors(changed_paths, matrix_paths))
-        errors.extend(
-            review_evidence_errors(
-                evidence,
-                candidate_hash,
-                findings,
-                require_clean_guard=has_production,
+        evidence: Mapping[str, object] = {}
+        pre_review_gate: Mapping[str, object] | None = None
+        if args.scan_only:
+            errors.extend(
+                f"{finding.code} at {finding.source}:{finding.line}"
+                for finding in findings
+                if finding.severity == "error"
             )
-        )
+        else:
+            evidence_paths = (
+                args.review_evidence, args.build_evidence,
+                args.test_evidence, args.coverage_evidence,
+            )
+            if any(path is None for path in evidence_paths):
+                raise ValueError(
+                    "final quality verification needs review, build, test, and coverage evidence"
+                )
+            evidence = load_review_evidence(args.review_evidence)
+            build_evidence = _load_json(args.build_evidence)
+            test_evidence = _load_json(args.test_evidence)
+            coverage_evidence = _load_json(args.coverage_evidence)
+            pre_review_gate = {
+                "quality_candidate_sha256": candidate_hash,
+                "build_candidate_sha256": build_evidence.get("candidate_sha256"),
+                "test_evidence_sha256": test_evidence.get("evidence_sha256"),
+                "coverage_evidence_sha256": coverage_evidence.get("evidence_sha256"),
+            }
+            errors.extend(
+                review_evidence_errors(
+                    evidence,
+                    candidate_hash,
+                    findings,
+                    require_clean_guard=has_production,
+                    pre_review_gate=pre_review_gate,
+                )
+            )
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(f"quality verification failed: {error}", file=sys.stderr)
         return 2
     payload = {
         "candidate_sha256": candidate_hash,
+        "start_head": start_head,
         "design_sha256": design_hash,
         "changed_files": sorted(changed_paths),
         "changed_java_files": sorted(changed_java),
         "source_sha256": changed_source_hashes,
         "production_java": has_production,
         "findings": [finding.as_dict() for finding in findings],
+        "mode": "scan_only" if args.scan_only else "final",
         "reviewer": evidence.get("reviewer"),
+        "pre_review_gate": pre_review_gate,
         "passed": not errors,
         "errors": errors,
         "generated_at": time.time(),
     }
+    payload["evidence_sha256"] = evidence_sha256(payload)
     _write_json(args.json_output, payload)
     for finding in findings:
         print(f"{finding.severity}: {finding.code} {finding.source}:{finding.line} [{finding.symbol}]")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,8 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills/pretty-common/scripts"))
 sys.path.insert(0, str(ROOT / "skills/pretty-executing/scripts"))
 
-from quality_contract_gate import RISK_OWNERS, candidate_sha256, parse_touched_java_lines, review_evidence_errors, scan_java_source  # noqa: E402
-from verify_quality_contract import _candidate_file_parts, _read_manifest, _scan_sources, _scope_errors  # noqa: E402
+from quality_contract_gate import RULES, RISK_OWNERS, candidate_sha256, parse_touched_java_lines, review_evidence_errors, scan_java_source  # noqa: E402
+from verify_quality_contract import (  # noqa: E402
+    _candidate_file_parts,
+    _changed_scope,
+    _manifest_scope_errors,
+    _matrix_paths,
+    _read_manifest,
+    _scan_sources,
+    _scope_errors,
+)
 from verify_test_execution import TestExecutionRequest, scan_disabled_annotations, verify, verify_expected_tests  # noqa: E402
 
 
@@ -25,6 +34,46 @@ class QualityContractGateTest(unittest.TestCase):
     def test_detects_high_confidence_production_errors(self) -> None:
         codes = {finding.code for finding in scan_java_source("class Service { String load() { return null; } }")}
         self.assertIn("NULL-RETURN", codes)
+
+    def test_continue_is_a_non_waivable_error(self) -> None:
+        findings = [
+            finding for finding in scan_java_source("class Service { void run() { continue; } }")
+            if finding.code == "CONTROL-FLOW-SKIP"
+        ]
+        self.assertEqual(["error"], [finding.severity for finding in findings])
+
+    def test_nullable_annotation_cannot_self_authorize_null_return(self) -> None:
+        source = "class Service { @Nullable String load() { return null; } }"
+        self.assertIn("NULL-RETURN", {finding.code for finding in scan_java_source(source)})
+
+    def test_rejects_repeated_nullable_builder_mapping(self) -> None:
+        source = """
+class Service {
+    Criteria build(Query query) {
+        return Criteria.builder()
+            .storeCode(query == null ? null : query.getStoreCode())
+            .pointCode(query == null ? null : query.getPointCode())
+            .build();
+    }
+}
+"""
+        findings = scan_java_source(source)
+        severities = {finding.code: finding.severity for finding in findings}
+        self.assertEqual("error", severities["NULL-TERNARY"])
+        self.assertEqual("review_required", severities["REPEATED-NULL-GUARD"])
+
+    def test_nullable_return_contract_does_not_allow_internal_null_propagation(self) -> None:
+        source = """
+class Service {
+    @Nullable
+    Criteria build(Query query) {
+        return Criteria.builder()
+            .storeCode(query == null ? null : query.getStoreCode())
+            .build();
+    }
+}
+"""
+        self.assertIn("NULL-TERNARY", {finding.code for finding in scan_java_source(source)})
 
     def test_comment_content_is_not_scanned_as_code_but_comment_needs_review(self) -> None:
         source = """
@@ -71,6 +120,86 @@ class Service {
 }
 """
         self.assertIn("NORMALIZATION-OWNERSHIP", {finding.code for finding in scan_java_source(source)})
+
+    def test_generic_normalization_helper_declaration_is_a_non_waivable_error(self) -> None:
+        source = """
+class TextSupport {
+    private String normalizeText(String value) {
+        return value == null ? null : value.trim();
+    }
+}
+"""
+        findings = [finding for finding in scan_java_source(source) if finding.code == "GENERIC-NORMALIZATION-HELPER"]
+        self.assertEqual(["error"], [finding.severity for finding in findings])
+
+    def test_generic_normalization_helper_aliases_are_blocked(self) -> None:
+        names = ("normalizeString", "cleanText", "trimText", "trimToNull")
+        for name in names:
+            with self.subTest(name=name):
+                source = f"""
+class TextSupport {{
+    String {name}(String value) {{
+        return value.trim();
+    }}
+}}
+"""
+                codes = {finding.code for finding in scan_java_source(source)}
+                self.assertIn("GENERIC-NORMALIZATION-HELPER", codes)
+
+    def test_generic_normalization_helper_call_is_blocked(self) -> None:
+        source = """
+class EventService {
+    String duplicateKey(String value) {
+        return normalizeText(value);
+    }
+}
+"""
+        findings = [finding for finding in scan_java_source(source) if finding.code == "GENERIC-NORMALIZATION-HELPER"]
+        self.assertEqual(["error"], [finding.severity for finding in findings])
+
+    def test_generic_normalization_support_call_is_blocked(self) -> None:
+        source = """
+class EventService {
+    String duplicateKey(String value) {
+        return textSupport.normalize(value);
+    }
+}
+"""
+        self.assertIn(
+            "GENERIC-NORMALIZATION-HELPER",
+            {finding.code for finding in scan_java_source(source)},
+        )
+
+    def test_generic_normalization_method_reference_is_blocked(self) -> None:
+        source = """
+class EventService {
+    Function<String, String> normalizer() {
+        return this::normalizeText;
+    }
+}
+"""
+        self.assertIn(
+            "GENERIC-NORMALIZATION-HELPER",
+            {finding.code for finding in scan_java_source(source)},
+        )
+
+    def test_domain_specific_normalizer_method_is_not_name_only_error(self) -> None:
+        source = """
+class LegacyEventIdAdapter {
+    String normalize(String rawEventId) {
+        return rawEventId.trim();
+    }
+}
+
+class EventService {
+    String eventId(String rawEventId) {
+        return legacyEventIdAdapter.normalize(rawEventId);
+    }
+}
+"""
+        findings = scan_java_source(source)
+        self.assertNotIn("GENERIC-NORMALIZATION-HELPER", {finding.code for finding in findings})
+        self.assertIn("NORMALIZATION-OWNERSHIP", {finding.code for finding in findings})
 
     def test_required_query_input_cannot_fall_back_to_empty(self) -> None:
         source = """
@@ -150,6 +279,65 @@ class Service {{
         evidence = {"candidate_sha256": candidate, "reviewer": "reviewer-1", "independent": True, "risks": [], "accepted_findings": "none", "blocking_findings": []}
         self.assertIn("review evidence accepted_findings must be a list", review_evidence_errors(evidence, candidate, []))
 
+    def test_review_must_bind_objective_gate_completed_before_review(self) -> None:
+        candidate = candidate_sha256({"source": "class Service {}"})
+        evidence = {
+            "candidate_sha256": candidate,
+            "reviewer": "reviewer-1",
+            "independent": True,
+            "risks": [],
+            "accepted_findings": [],
+            "blocking_findings": [],
+            "pre_review_gate": {
+                "quality_candidate_sha256": candidate,
+                "build_candidate_sha256": "old-build",
+                "test_evidence_sha256": "tests",
+                "coverage_evidence_sha256": "coverage",
+            },
+        }
+        expected = {
+            "quality_candidate_sha256": candidate,
+            "build_candidate_sha256": "build",
+            "test_evidence_sha256": "tests",
+            "coverage_evidence_sha256": "coverage",
+        }
+        self.assertIn(
+            "review evidence does not match the objective pre-review Gate",
+            review_evidence_errors(evidence, candidate, [], pre_review_gate=expected),
+        )
+
+    def test_review_rejects_reusing_one_generic_acceptance_reason(self) -> None:
+        body = "\n".join(f"        int value{number} = {number};" for number in range(22))
+        source = f"""
+class Service {{
+    void first() {{
+{body}
+    }}
+    void second() {{
+{body}
+    }}
+}}
+"""
+        findings = [finding for finding in scan_java_source(source) if finding.code == "METHOD-LOC"]
+        candidate = candidate_sha256({"source": source})
+        evidence = {
+            "candidate_sha256": candidate,
+            "reviewer": "reviewer-1",
+            "independent": True,
+            "risks": [],
+            "accepted_findings": [
+                {
+                    "fingerprint": finding.fingerprint,
+                    "reason": "existing repository method is accepted",
+                    "evidence": ["stable repository contract"],
+                }
+                for finding in findings
+            ],
+            "blocking_findings": [],
+        }
+        errors = review_evidence_errors(evidence, candidate, findings)
+        self.assertTrue(any("generic reason" in error for error in errors))
+
     def test_changed_scope_ignores_explanatory_documents(self) -> None:
         self.assertEqual([], _scope_errors({"docs/pretty/example/design.md"}, set()))
 
@@ -178,6 +366,109 @@ class Service {{
             manifest.write_text('{"../outside.java": [1]}', encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "repository-relative"):
                 _read_manifest(manifest)
+
+    def test_changed_manifest_rejects_empty_java_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manifest = Path(temporary) / "changed.json"
+            manifest.write_text('{"src/main/java/example/Service.java": []}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must contain changed lines"):
+                _read_manifest(manifest)
+
+    def test_manifest_cannot_omit_real_java_diff(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/main/java/example/Service.java"
+            source.parent.mkdir(parents=True)
+            source.write_text('class Service { String build(Query query) { return "ok"; } }\n', encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+            subprocess.run(["git", "add", "."], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=repo, check=True)
+            base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+            source.write_text(
+                "class Service { String build(Query query) { "
+                "return query == null ? null : query.value(); } }\n",
+                encoding="utf-8",
+            )
+            manifest = repo / "changed.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+
+            changed_java, changed_paths, _ = _changed_scope(repo, base)
+            findings, _, _ = _scan_sources(repo, changed_java)
+            errors = _manifest_scope_errors(manifest, changed_java, changed_paths)
+
+            self.assertIn("NULL-TERNARY", {finding.code for finding in findings})
+            self.assertTrue(any("omits Java paths" in error for error in errors))
+
+    def test_java_execution_matrix_requires_generation_preflight(self) -> None:
+        design = "## 实施影响\n### TASK-001：行为\n"
+        matrix = {
+            "tasks": [{
+                "id": "TASK-001",
+                "production_files": ["src/main/java/example/Service.java"],
+                "test_files": ["src/test/java/example/ServiceTest.java"],
+                "supporting_files": [],
+                "behavior_slices": [],
+            }]
+        }
+
+        _, errors = _matrix_paths(matrix, design)
+
+        self.assertTrue(any("without behavior_slices needs non_behavior_reason" in error for error in errors))
+
+    def test_accepts_complete_generation_preflight(self) -> None:
+        design = "## 实施影响\n### TASK-001：行为\n"
+        matrix = {
+            "tasks": [{
+                "id": "TASK-001",
+                "production_files": ["src/main/java/example/Service.java"],
+                "test_files": ["src/test/java/example/ServiceTest.java"],
+                "supporting_files": [],
+                "behavior_slices": [{
+                    "id": "SLICE-001",
+                    "paths": [
+                        "src/main/java/example/Service.java",
+                        "src/test/java/example/ServiceTest.java",
+                    ],
+                    "production_symbols": ["Service#execute"],
+                    "test_entry": "ServiceTest#returnsResult",
+                    "input_invariants": ["query is required"],
+                    "boundary_substitutes": [],
+                    "result_assertions": ["returns the mapped result"],
+                    "nearest_neighbors": ["NeighborService#execute"],
+                    "coverage_obligations": ["normal result -> ServiceTest#returnsResult"],
+                    "resolver_rules": [rule.code for rule in RULES],
+                    "resolver_risks": [{
+                        "id": "JAVA_RUNTIME_RISK",
+                        "owner": "java-code-review",
+                        "evidence": ["Service#execute"],
+                    }],
+                    "depends_on": [],
+                }],
+            }]
+        }
+
+        _, errors = _matrix_paths(matrix, design)
+
+        self.assertEqual([], errors)
+
+    def test_non_behavior_java_task_can_record_not_applicable_reason(self) -> None:
+        design = "## 实施影响\n### TASK-001：声明类型\n"
+        matrix = {
+            "tasks": [{
+                "id": "TASK-001",
+                "production_files": ["src/main/java/example/Status.java"],
+                "test_files": [],
+                "supporting_files": [],
+                "behavior_slices": [],
+                "non_behavior_reason": "declaration-only enum with no runtime branch",
+            }]
+        }
+
+        _, errors = _matrix_paths(matrix, design)
+
+        self.assertEqual([], errors)
 
     def test_disabled_scope_is_reported_before_apply(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -214,6 +505,24 @@ class Service {{
 
         self.assertFalse(payload["passed"])
         self.assertTrue(any("disabled" in error for error in payload["errors"]))
+
+    def test_new_test_source_is_bound_into_test_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repo = Path(temporary)
+            source = repo / "src/test/java/example/NewTest.java"
+            source.parent.mkdir(parents=True)
+            source.write_text("class NewTest {}\n", encoding="utf-8")
+            payload = verify(TestExecutionRequest(
+                repo=repo,
+                test_sources=(),
+                expected_tests=(),
+                reports=(),
+                report_not_before=0,
+                new_test_sources=("src/test/java/example/NewTest.java",),
+                design_sha256="design-sha",
+            ))
+
+        self.assertIn("src/test/java/example/NewTest.java", payload["source_sha256"])
 
     def test_new_test_can_use_enabled_class_beside_historical_disabled_class(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

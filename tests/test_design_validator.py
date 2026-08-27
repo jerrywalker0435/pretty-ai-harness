@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import unittest
@@ -10,7 +9,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills/pretty-writing-design/scripts"))
 
 from validate_design import validate_design  # noqa: E402
-from validate_design_review import design_candidate_hash, review_evidence_errors, validate_design_review  # noqa: E402
 
 
 PRD = """# Example PRD
@@ -43,6 +41,8 @@ DESIGN = """# Example Design
 ### TASK-001：返回订单
 - 覆盖需求：REQ-001、AC-001
 - 结果：返回目标订单。
+- 输入与不变量：订单编号必填，入口完成合法性校验。
+- 失败语义：非法编号抛出参数异常，合法未命中返回缺失结果，仓储故障继续传播。
 - 公共验证入口：OrderService#load
 - 影响锚点：OrderService、OrderRepository
 - 验证观察面：订单结果或缺失异常。
@@ -72,6 +72,39 @@ class DesignValidatorTest(unittest.TestCase):
     def test_requires_task_traceability_fields(self) -> None:
         self.design.write_text(DESIGN.replace("- 公共验证入口：OrderService#load\n", ""), encoding="utf-8")
         self.assertIn("TASK-001 缺少字段：公共验证入口", validate_design(self.design))
+
+    def test_requires_input_invariant_and_failure_contract(self) -> None:
+        invalid = DESIGN.replace("- 输入与不变量：订单编号必填，入口完成合法性校验。\n", "")
+        invalid = invalid.replace(
+            "- 失败语义：非法编号抛出参数异常，合法未命中返回缺失结果，仓储故障继续传播。\n",
+            "",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertIn("TASK-001 缺少字段：输入与不变量, 失败语义", validate_design(self.design))
+
+    def test_rejects_low_quality_implementation_directive(self) -> None:
+        invalid = DESIGN.replace(
+            "保持现有职责。",
+            "保持现有职责；实现时允许使用 continue 跳过非目标订单。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertTrue(any("不得用普通实现指令降级" in error for error in validate_design(self.design)))
+
+    def test_rejects_required_input_empty_fallback_contract(self) -> None:
+        invalid = DESIGN.replace(
+            "订单编号必填，入口完成合法性校验。",
+            "订单编号必填，订单编号为空时返回空集合。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertTrue(any("不得用普通实现指令降级" in error for error in validate_design(self.design)))
+
+    def test_rejects_generic_normalization_helper_directive(self) -> None:
+        invalid = DESIGN.replace(
+            "保持现有职责。",
+            "保持现有职责；新增 normalizeText 通用方法处理所有文本。",
+        )
+        self.design.write_text(invalid, encoding="utf-8")
+        self.assertTrue(any("不得要求通用文本规范化 Helper" in error for error in validate_design(self.design)))
 
     def test_requires_task_delivery_ownership_fields(self) -> None:
         self.design.write_text(DESIGN.replace("- 人工运维产物：无\n", ""), encoding="utf-8")
@@ -155,71 +188,6 @@ class DesignValidatorTest(unittest.TestCase):
     def test_rejects_missing_prd_contract_coverage(self) -> None:
         self.design.write_text(DESIGN.replace("REQ-001、", ""), encoding="utf-8")
         self.assertIn("实施影响未覆盖 REQ-001", validate_design(self.design))
-
-    def test_review_receipt_requires_all_three_risk_surfaces(self) -> None:
-        candidate = design_candidate_hash(DESIGN, PRD)
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risk_surfaces": {
-                "MODULE_BOUNDARY": {"checked": True},
-                "JAVA_RUNTIME_RISK": {"checked": True},
-                "BEHAVIOR_TEST": {"checked": True},
-            },
-            "blocking_findings": [],
-        }
-        receipt = self.topic / "review.json"
-        receipt.write_text(json.dumps(evidence), encoding="utf-8")
-        self.assertEqual([], validate_design_review(self.design, receipt))
-        evidence["risk_surfaces"].pop("BEHAVIOR_TEST")
-        self.assertTrue(review_evidence_errors(evidence, candidate))
-
-    def test_review_receipt_is_invalid_after_design_changes(self) -> None:
-        candidate = design_candidate_hash(DESIGN, PRD)
-        evidence = {
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risk_surfaces": {
-                "MODULE_BOUNDARY": {"checked": True},
-                "JAVA_RUNTIME_RISK": {"checked": True},
-                "BEHAVIOR_TEST": {"checked": True},
-            },
-            "blocking_findings": [],
-        }
-        receipt = self.topic / "review.json"
-        receipt.write_text(json.dumps(evidence), encoding="utf-8")
-        self.design.write_text(DESIGN + "\n新增事实。\n", encoding="utf-8")
-        self.assertTrue(any("候选不匹配" in error for error in validate_design_review(self.design, receipt)))
-
-    def test_review_receipt_rejects_blocking_findings(self) -> None:
-        candidate = design_candidate_hash(DESIGN, PRD)
-        errors = review_evidence_errors({
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risk_surfaces": {surface: {"checked": True} for surface in (
-                "MODULE_BOUNDARY", "JAVA_RUNTIME_RISK", "BEHAVIOR_TEST",
-            )},
-            "blocking_findings": [{"id": "B-001"}],
-        }, candidate)
-        self.assertTrue(any("仍有 blocking finding" in error for error in errors))
-
-    def test_review_receipt_rejects_non_blocking_output(self) -> None:
-        candidate = design_candidate_hash(DESIGN, PRD)
-        errors = review_evidence_errors({
-            "candidate_sha256": candidate,
-            "reviewer": "reviewer-1",
-            "independent": True,
-            "risk_surfaces": {surface: {"checked": True} for surface in (
-                "MODULE_BOUNDARY", "JAVA_RUNTIME_RISK", "BEHAVIOR_TEST",
-            )},
-            "blocking_findings": [],
-            "suggestions": ["rename service"],
-        }, candidate)
-        self.assertTrue(any("非阻断输出字段" in error for error in errors))
-
 
 if __name__ == "__main__":
     unittest.main()

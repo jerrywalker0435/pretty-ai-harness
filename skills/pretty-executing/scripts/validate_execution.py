@@ -12,6 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
+COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
+if str(COMMON_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPTS))
+
+from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+
 
 SECTIONS = ("执行起点", "基线", "TASK 结果", "最终门禁", "未验证范围", "结论与恢复点")
 TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})[：:]\s*\S.+$", re.MULTILINE)
@@ -48,6 +54,13 @@ def _load_json(path: Path) -> dict[str, object]:
     if not isinstance(payload, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return payload
+
+
+def evidence_candidate_sha256(payload: Mapping[str, object]) -> str:
+    candidate = dict(payload)
+    candidate.pop("candidate_sha256", None)
+    canonical = json.dumps(candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _section_body(document: str, heading: str) -> str:
@@ -135,7 +148,7 @@ def _coverage_errors(document: str, coverage: Mapping[str, object]) -> list[str]
 
 def _gate_errors(document: str, quality: Mapping[str, object], tests: Mapping[str, object]) -> list[str]:
     gate = _section_body(document, "最终门禁")
-    required = ("Design TASK 与真实 Diff", "机械 Gate 与独立审查", "编译与相关测试", "新增/修改测试实际执行", "增量覆盖率")
+    required = ("Design TASK 与真实 Diff", "机械 Gate", "编译与相关测试", "新增/修改测试实际执行", "增量覆盖率", "最终独立审查")
     errors = []
     for row in required:
         match = re.search(rf"^\|\s*{re.escape(row)}\s*\|[^|]*\|\s*([^|\n]+)\s*\|$", gate, re.MULTILINE)
@@ -164,11 +177,56 @@ def _source_binding_errors(evidence: Mapping[str, object], repo: Path, label: st
 
 def _build_errors(build: Mapping[str, object], design_path: Path, evidence: ExecutionEvidence, require_passes: bool) -> list[str]:
     errors = _evidence_binding_errors(build, design_path, evidence)
+    if build.get("candidate_sha256") != evidence_candidate_sha256(build):
+        errors.append("build evidence candidate_sha256 does not match its content")
     if not isinstance(build.get("commands"), list):
         return errors + ["build evidence commands must be a list"]
     if not require_passes:
         return errors
     return errors + _required_command_errors(build, evidence)
+
+
+def _evidence_integrity_errors(evidence: ExecutionEvidence) -> list[str]:
+    errors = []
+    for label, payload in (
+        ("quality", evidence.quality),
+        ("coverage", evidence.coverage),
+        ("test", evidence.tests),
+    ):
+        expected = payload.get("evidence_sha256")
+        if not isinstance(expected, str) or not expected:
+            errors.append(f"{label} evidence needs evidence_sha256")
+        elif expected != evidence_sha256(payload):
+            errors.append(f"{label} evidence evidence_sha256 does not match its content")
+    return errors
+
+
+def _start_head_errors(document: str, evidence: ExecutionEvidence) -> list[str]:
+    match = HEAD.search(_section_body(document, "执行起点"))
+    if not match:
+        return []
+    report_head = re.search(r"`([0-9a-f]{7,64})`", match.group(0))
+    if not report_head:
+        return []
+    expected_prefix = report_head.group(1)
+    heads = _evidence_start_heads(evidence)
+    errors = [
+        f"{label} evidence does not use the Execution starting HEAD"
+        for label, actual in heads.items()
+        if not isinstance(actual, str) or not actual.startswith(expected_prefix)
+    ]
+    concrete = {head for head in heads.values() if isinstance(head, str)}
+    if len(concrete) > 1:
+        errors.append("quality, coverage, and build evidence use different starting HEADs")
+    return errors
+
+
+def _evidence_start_heads(evidence: ExecutionEvidence) -> dict[str, object]:
+    return {
+        "quality": evidence.quality.get("start_head"),
+        "coverage": evidence.coverage.get("start_head"),
+        "build": evidence.build.get("start_head"),
+    }
 
 
 def _evidence_binding_errors(
@@ -185,16 +243,38 @@ def _evidence_binding_errors(
         errors.append("coverage evidence does not match the current Design")
     if tests.get("design_sha256") != design_hash:
         errors.append("test evidence does not match the current Design")
+    for label, payload in (("coverage", coverage), ("test", tests)):
+        if payload.get("quality_candidate_sha256") != quality.get("candidate_sha256"):
+            errors.append(f"{label} evidence does not match the frozen quality candidate")
     candidate_bindings = {
         "quality_candidate_sha256": quality.get("candidate_sha256"),
-        "coverage_candidate_sha256": coverage.get("candidate_sha256"),
-        "test_candidate_sha256": tests.get("candidate_sha256"),
+        "coverage_evidence_sha256": coverage.get("evidence_sha256"),
+        "test_evidence_sha256": tests.get("evidence_sha256"),
     }
     for field, expected in candidate_bindings.items():
         if not isinstance(expected, str) or not expected:
             errors.append(f"{field.removesuffix('_candidate_sha256')} evidence needs candidate_sha256")
         elif build.get(field) != expected:
             errors.append(f"build evidence has stale {field}")
+    return errors
+
+
+def _pre_review_gate_errors(evidence: ExecutionEvidence) -> list[str]:
+    gate = evidence.quality.get("pre_review_gate")
+    if not isinstance(gate, dict):
+        return ["quality evidence must bind the objective Gate completed before final Review"]
+    expected = {
+        "quality_candidate_sha256": evidence.quality.get("candidate_sha256"),
+        "build_candidate_sha256": evidence.build.get("candidate_sha256"),
+        "test_evidence_sha256": evidence.tests.get("evidence_sha256"),
+        "coverage_evidence_sha256": evidence.coverage.get("evidence_sha256"),
+    }
+    errors = []
+    for field, value in expected.items():
+        if not isinstance(value, str) or not value:
+            errors.append(f"pre-review {field.removesuffix('_candidate_sha256')} evidence needs candidate_sha256")
+        elif gate.get(field) != value:
+            errors.append(f"final Reviewer started before stable {field}")
     return errors
 
 
@@ -240,10 +320,13 @@ def validate_execution(document: str, design_text: str, design_path: Path, evide
     repo = design_path.resolve().parents[3] if len(design_path.resolve().parents) >= 4 else design_path.parent
     complete = _complete_status(document)
     if complete:
+        errors.extend(_evidence_integrity_errors(evidence))
+        errors.extend(_start_head_errors(document, evidence))
         errors.extend(_source_binding_errors(quality, repo, "quality"))
         errors.extend(_source_binding_errors(coverage, repo, "coverage"))
         errors.extend(_source_binding_errors(tests, repo, "test"))
         errors.extend(_build_errors(build, design_path, evidence, True))
+        errors.extend(_pre_review_gate_errors(evidence))
     final_digest = re.search(r"^-\s*最终 Diff 摘要：\s*`([^`]+)`\s*$", _section_body(document, "结论与恢复点"), re.MULTILINE)
     if complete and (not final_digest or final_digest.group(1) != quality.get("candidate_sha256")):
         errors.append("最终 Diff 摘要必须匹配 quality candidate_sha256")

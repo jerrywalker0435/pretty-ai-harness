@@ -70,6 +70,25 @@ EXECUTION_DDL_ACTION = re.compile(
     r"[^\n。；;]{0,24}由\s*Execution[^\n。；;]{0,20}(?:执行|运行|应用|部署|迁移))",
     re.IGNORECASE,
 )
+LOW_QUALITY_DIRECTIVE = re.compile(
+    r"(?:使用|采用|新增|允许|保留)[^\n。；;]{0,28}\bcontinue\b|"
+    r"(?:返回|使用|允许)[^\n。；;]{0,20}(?:null|空指针)|"
+    r"(?:必填|必需|required)[^\n。；;]{0,48}(?:缺失|为空|null)[^\n。；;]{0,32}"
+    r"(?:返回空|emptyList|emptySet|emptyMap|Optional\.empty)|"
+    r"(?:添加|新增|保留|要求)[^\n。；;]{0,24}(?:中文步骤注释|普通\s*JavaDoc|步骤注释)",
+    re.IGNORECASE,
+)
+QUALITY_EXCEPTION_EVIDENCE = re.compile(
+    r"(?:外部|遗留|框架|兼容)[^\n]{0,80}(?:#|Schema|签名|测试)",
+    re.IGNORECASE,
+)
+GENERIC_NORMALIZATION_DIRECTIVE = re.compile(
+    r"(?:使用|采用|新增|允许|保留|复用|调用)[^\n。；;]{0,32}"
+    r"(?:normalize(?:Text|String|Value|Input)?|normalise(?:Text|String|Value|Input)?|"
+    r"clean(?:Text|String|Value|Input)?|trim(?:Text|String|Value|Input|ToNull)?|"
+    r"通用[^\n。；;]{0,12}(?:规范化|归一化)[^\n。；;]{0,12}(?:Helper|helper|工具方法))",
+    re.IGNORECASE,
+)
 
 
 def section_headings(document: str) -> list[str]:
@@ -146,6 +165,26 @@ def _delivery_assignment_errors(document: str) -> list[str]:
     return sorted(set(errors))
 
 
+def _quality_directive_errors(document: str) -> list[str]:
+    errors = []
+    for line in document.splitlines():
+        if re.search(
+            r"(?:不|不得|禁止|避免|移除)[^\n]{0,24}(?:normalize|normalise|cleanText|trimText|"
+            r"trimToNull|通用[^\n。；;]{0,12}(?:规范化|归一化)[^\n。；;]{0,12}(?:Helper|helper|工具方法))",
+            line,
+            re.IGNORECASE,
+        ):
+            continue
+        if re.search(r"(?:不|不得|禁止|避免|移除)[^\n]{0,16}(?:continue|null|步骤注释|JavaDoc)", line, re.IGNORECASE):
+            continue
+        if GENERIC_NORMALIZATION_DIRECTIVE.search(line):
+            errors.append("Design 不得要求通用文本规范化 Helper；规范化必须由有领域归属的首个信任边界完成")
+            continue
+        if LOW_QUALITY_DIRECTIVE.search(line) and not QUALITY_EXCEPTION_EVIDENCE.search(line):
+            errors.append("Design 不得用普通实现指令降级 Pretty 共享质量规则；合法外部或遗留例外必须绑定 Symbol 和事实证据")
+    return sorted(set(errors))
+
+
 def validate_design_document(document: str) -> list[str]:
     """Return deterministic structural errors for a final Design."""
     headings = section_headings(document)
@@ -157,6 +196,7 @@ def validate_design_document(document: str) -> list[str]:
         errors.append("Design 仍包含占位内容或未决项")
     errors.extend(validate_mermaid_blocks(document))
     errors.extend(_delivery_assignment_errors(document))
+    errors.extend(_quality_directive_errors(document))
     impact = section_body(document, "实施影响")
     tasks = TASK_HEADING.findall(impact)
     if not tasks:
@@ -176,7 +216,8 @@ def validate_design_document(document: str) -> list[str]:
         missing = [
             field
             for field in (
-                "结果", "公共验证入口", "影响锚点", "验证观察面", *TASK_DELIVERY_FIELDS,
+                "结果", "输入与不变量", "失败语义", "公共验证入口",
+                "影响锚点", "验证观察面", *TASK_DELIVERY_FIELDS,
             )
             if not re.search(rf"^-\s*{field}：\s*\S.*$", body, re.MULTILINE)
         ]

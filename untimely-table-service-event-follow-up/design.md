@@ -2,273 +2,236 @@
 
 ## 设计结论
 
-`CLEAR_TABLE_NOT_DONE` 与 `WIPE_TABLE_NOT_DONE` 继续复用现有 HTTP/Dubbo 事件上报合同和首次受理唯一键，但在事件首次成功落库后、模板规则编排前进入专属同步附加触达，并由规则重放入口再次做防御性拦截；两类事件不匹配规则、不生成工单，也不在响应中返回目标工单或触达信息。
-目标工单采用固定事件到模板映射，在事件发生日的半开时间区间内按门店、桌台、模板、允许状态检索，应用层复用既有桌台账单解析口径精确比对，并以 `create_time DESC, id DESC` 唯一选中最新记录。
-待接单目标只升级既有手表消息；执行中或已完成目标只向最近一次成功手表派发轮次的不可变接收人快照发送专用复核提醒，缺少可信快照时静默跳过。
-事件标识通过数据库唯一键换取一次且不释放的附加触达尝试权；任何查询、解析、审计或远程失败均停止剩余动作、禁止补偿重试，并保持原事件受理结果和目标工单不变。
+采用“事件正常受理、特殊事件前置分流、附加触达至多一次”的方案。`CLEAR_TABLE_NOT_DONE` 固定关联 `TemplateConstants.TemplateCode.CLEAR_TABLE`，`WIPE_TABLE_NOT_DONE` 固定关联 `TemplateConstants.TemplateCode.WIPE_TABLE`。两类事件首次成功受理并形成事件记录后，不进入模板触发、普通规则、建单、派发和普通触达链路，而是在本次同步请求内消费一次不可释放的附加触达尝试权。
+
+目标工单只从事件 `occurredAt` 所属自然日内、同门店、同点位、同桌台账单、同固定模板且状态为 `WAIT_CLAIM`、`EXECUTING` 或 `COMPLETED` 的有效工单中选择。候选按 `create_time DESC, id DESC` 稳定排序，应用层复用 `TableBillIdResolveSupport` 完成账单精确比对，只取第一条完整匹配记录。`CANCELED`、跨日、账单不一致以及失效记录均不得入选。
+
+`WAIT_CLAIM` 目标只调用云手表现有消息紧急升级接口；`EXECUTING` 和 `COMPLETED` 目标只向最高派发轮次中被云手表服务聚合接受、并由本系统固化的员工请求快照发送专用复核提醒。现有派发目标、工单状态、处理人和业务内容均不修改。最高轮没有可信手表快照时接收人为空，不从更早轮次、当前处理人、历史候选人或临时人员推断。
+
+并发防重使用独立的事件附加触达尝试表，以 `event_id` 唯一插入作为尝试权获取结果。插入在远程副作用前独立提交；成功、合法跳过、依赖失败、超时或远程结果未知都视为尝试权已经使用，不释放、不补偿、不自动重试。附加流程的任何结果只通过内部状态和日志观察，不改变事件成功受理结果，也不进入上游响应。
+
+本次需要 Java、行为测试及结构性 DDL 文件；DDL 只进入代码库，质量门禁不连接数据库。两类事件定义及其启停属于人工运维配置数据 DML，且不得建立普通模板关系。`CONTEXT.md` 与 ADR 已覆盖本设计的领域语言和长期决策，无需修改。
 
 ## 方案全景
 
-### 技术流程
+### 运行流程
 
 ```mermaid
-sequenceDiagram
-    participant U as 事件上报方
-    participant W as 工单系统
-    participant DB as MySQL
-    participant C as 云手表服务
-    U->>W: HTTP/Dubbo 上报事件
-    W->>DB: 按事件类型+来源事件标识受理落库
-    alt 重复上报或非未及时事件
-        W-->>U: 既有重复结果或既有事件处理结果
-    else 未及时事件首次成功受理
-        W->>DB: INSERT IGNORE 注册事件级触达尝试权
-        alt 未取得尝试权或任一附加步骤失败
-            W-->>U: 既有成功受理结果
-        else 取得尝试权
-            W->>DB: 查询发生日内目标工单并精确比对账单
-            alt 无唯一目标或无可信手表接收人
-                W-->>U: 既有成功受理结果
-            else 目标为待接单
-                W->>C: 升级目标工单既有消息紧急程度
-                W-->>U: 既有成功受理结果
-            else 目标为执行中或已完成
-                W->>C: 以事件ID发送专用复核提醒
-                W-->>U: 既有成功受理结果
-            end
-        end
-    end
+flowchart TD
+    A[上游报告事件] --> B[既有校验与事件记录持久化]
+    B --> C{是否首次成功受理}
+    C -->|否| R[返回既有受理结果]
+    C -->|是| D{是否未及时收台或擦台}
+    D -->|否| N[沿用普通模板触发与建单链路]
+    D -->|是| E[独立事务获取事件级尝试权]
+    E -->|未获得或依赖故障| R
+    E -->|获得且已提交| F[解析账单并查询当日目标工单]
+    F --> G{目标状态}
+    G -->|无目标| R
+    G -->|WAIT_CLAIM| H[升级既有手表消息紧急程度]
+    G -->|EXECUTING 或 COMPLETED| I[读取最高派发轮手表接收人快照]
+    I -->|无可信对象| R
+    I -->|有可信对象| J[发送专用线下复核提醒]
+    H --> R
+    J --> R
+    N --> R
 ```
 
-首次普通工单向手表投递成功后，现有建单编排在同一调用线程内将该次 `dispatchRound`、远程请求标识、发送时间和实际提交的员工集合写入派发记录；该审计写入是尽力而为的旁路，不反向改变原建单和投递结果。未及时事件只读取这些成功投递快照，不读取当前处理人、参与者关系、岗位候选池或事件携带的临时接收人。
+同步边界固定在现有事件报告请求内。事件主记录成功受理是前置事实，尝试权提交是远程副作用的前置事实；目标查询、紧急升级和二次提醒均不得参与事件主记录事务。特殊分支完成、跳过或失败后直接返回原事件结果，不等待异步任务、MQ 或调度补偿。
 
-### 核心领域模型
+### 职责与依赖
 
-```mermaid
-classDiagram
-    class 未及时事件 {
-      eventId
-      eventDefineCode
-      storeCode
-      pointCode
-      occurredAt
-      payloadData
-    }
-    class 触达尝试权 {
-      bizType
-      eventId
-      granted
-    }
-    class 目标工单 {
-      workOrderId
-      templateCode
-      workOrderStatus
-      createTime
-      payloadData
-    }
-    class 手表派发接收人快照 {
-      dispatchRound
-      channelRequestId
-      recipients
-    }
-    未及时事件 --> 触达尝试权 : 首次注册
-    未及时事件 --> 目标工单 : 固定映射并唯一选择
-    目标工单 --> 手表派发接收人快照 : 执行中或已完成时读取
-```
+内部职责链遵守 `web -> application -> domain`，持久化端口由 `infra` 实现，云手表端口由 `adapter` 实现：
 
-| 领域合同 | 固定语义 |
-| --- | --- |
-| 事件映射 | `CLEAR_TABLE_NOT_DONE -> CLEAR_TABLE`；`WIPE_TABLE_NOT_DONE -> WIPE_TABLE`，不允许配置覆盖 |
-| 发生日 | 使用已经在入口解析为 `LocalDateTime` 的 `occurredAt`，区间为该日期 `00:00:00`（含）到下一日期 `00:00:00`（不含），不使用上报时间或受理时间 |
-| 候选状态 | 仅 `WAIT_CLAIM`、`EXECUTING`、`COMPLETED`；`CANCELED` 和未知状态不可入选 |
-| 唯一性 | 先按结构条件查询，再逐条解析候选 `payloadData`；账单完全相等的第一条即为唯一目标，排序固定为 `create_time DESC, id DESC` |
-| 事件级尝试权 | `bizType=EVENT_NOT_DONE_ADDITIONAL_TOUCH`、`guardKey=eventId`；唯一键插入成功才授权，授权一经写入永不释放 |
-| 有效手表对象 | 目标工单活动派发记录的最高轮次中一条 `channel_type=WATCH`、`delivery_status=SENT` 且有可解析非空接收人快照的规范记录；该最高轮次没有这样的记录就视为无对象，不回退更早轮次 |
+- `EventReportController`、`EventCommandBizImpl` 和既有 Qo/DTO/VO 转换保持对外契约不变。
+- `EventIngestBizImpl` 在首次成功受理后、`TemplateTriggerOrchestrateAppService` 之前识别两类特殊事件；普通事件继续走原编排。
+- 新增应用服务承接尝试权获取、目标匹配和状态分支，只依赖领域查询端口、领域持久化端口与外部触达端口，不直接依赖 repository、mapper 或远程 SDK。
+- 领域层拥有事件类型映射、尝试权、目标匹配条件、最高轮可信快照和触达命令的合同；不依赖 `infra` 或 `adapter` 实现。
+- `infra` 提供尝试权原子插入、目标工单有序候选查询、最高派发轮及手表接收人快照读取与持久化。
+- `adapter` 扩展紧急升级能力，并为专用二次提醒组装真实 `RemoteMessageDto` 后调用 `PushEventRemote`。
 
-### 持久化实体
+### 数据事实
 
-| 存储 | 本次使用/变更 | 约束 |
-| --- | --- | --- |
-| `t_event_record` | 复用事件记录及 `(event_type_code, source_event_id)` 唯一键 | 专属事件保持既有成功受理结果，`workOrderIds` 为空，不新增事件结果字段 |
-| `t_idempotency_guard` | 复用 `(biz_type, guard_key)` 唯一键，新业务类型按 `eventId` 原子 `INSERT IGNORE` | 不复用现有窗口 claim/commit/release 语义；后续失败也不删除、不释放 |
-| `t_work_order_record` | 读取有效工单的门店、桌台、模板、状态、创建时间和 payload | 新增联合索引 `(state, store_code, point_code, template_code, work_order_status, create_time, id)`；查询必须 `state=0`、发生日半开区间、倒序稳定排序 |
-| `t_work_order_dispatch_record` | 复用现有 `channel_type`、`channel_request_id`、`delivery_status`、`sent_time`、`delivery_snapshot_json` | 每轮只选择 `state=1, id DESC` 的一条规范记录；快照仅在为空或与新快照完全一致时条件更新，不修改派发对象、选中员工、决策快照等原始派发事实 |
-| `t_event_define` | 以两阶段迁移登记两类 `SHOP_TABLE` 事件 | 准备阶段幂等写入但保持禁用，代码全量部署验证后才启用；payload 白名单必须包含 `tableBillId`、`orderId`、`detail` |
-| `t_event_define_template_relation` | 清除两类专属事件的活动模板绑定 | 数据配置不能把专属事件重新导向常规模板；代码分流和规则重放拦截仍是最终保护 |
+新增 `t_event_additional_touch_attempt`，以 `event_id` 作为业务唯一键。必要字段包括尝试记录标识、事件标识、事件类型、领取状态、领取时间、结果编码、目标工单标识、结束时间以及审计字段。领取状态在插入成功时即固定为已领取；结果字段允许为空，因为进程退出或结果未知不能让尝试权重新可用。表和全部字段均带业务注释。
 
-接收人快照固定为 `{"schemaVersion":1,"recipients":[{"employeeId":"U001","employeeName":"张三","employeeStaffNo":"10001"}]}`。快照来源不是 `DispatchResult.assigneeUsers`：手表 adapter 必须在最终 `RemoteMessageDto.employeeList` 形成后，以其中的 `employeeCode/employeeName` 顺序构造 `DeliveryResult.acceptedAssigneeUsers`，工号仅可按 employeeCode 从本次已规范化输入映射补齐，并且只有远程返回 `R.isSuccess=true` 才回传；执行域把这份不可变领域快照原样传入 `ExecuteResult.acceptedAssigneeUsers`，应用层只审计该字段。姓名、工号缺失时写 JSON `null`，员工标识缺失的条目不写入。快照形成后不覆盖为不同内容；未部署本能力前的历史工单不回填，也不从其他字段推断，因而没有可信快照时不发送二次提醒。
+新增 `t_work_order_watch_recipient_snapshot`，一条记录表示某工单某派发轮次的一次云手表请求被远端聚合接受后，本系统固化的完整请求收件人集合。必要字段包括快照标识、工单标识、派发轮次、渠道请求标识、规范化员工快照 JSON、远端接受时间以及审计字段。业务唯一键固定为 `work_order_id + dispatch_round + channel_request_id`；快照标识是独立生成的记录主键，渠道请求标识为空或无法稳定归属时不创建可信快照。建立按工单和轮次读取的组合索引。员工快照保留 `employeeCode`、`employeeName`，只有原请求真实携带岗位信息时才保留 `jobCode`、`jobName`，不得从派发岗位反推员工岗位。
+
+目标工单查询在 `t_work_order_record` 上增加专用组合索引，覆盖有效状态、门店、点位、模板、工单状态、创建时间和主键。查询使用发生日零点到次日零点的左闭右开范围，并按创建时间、主键倒序返回候选；账单仍从既有 payload 快照解析，不增加冗余账单列。
+
+### 人工配置合同
+
+人工运维配置两条 `t_event_define` 数据：来源类型固定为 `AI,SYSTEM`，点位类型固定为 `SHOP_TABLE`，payload schema 保留 `tableBillId`、兼容字段 `orderId` 以及可能承载两者的 `detail`；事件定义在代码和结构性 DDL 已具备后再人工启用。两类事件在 `t_event_define_template_relation` 中必须没有有效关系，防止配置误操作绕过代码分流进入普通模板链路。人工验收需核对编码唯一、来源与 schema 一致、点位类型正确、启用状态符合投产步骤以及普通模板关系为空。
 
 ## 关键设计与权衡
 
-### 在首次受理点专属分流，并对重放入口双重封堵
+### 特殊分流与兼容结果
 
-主分流放在 `EventIngestBizImpl.ingest` 已获得 `ACCEPTED_READY_FOR_RULE` 且该事件记录完成提交之后、`TemplateTriggerOrchestrateAppService.orchestrate` 之前。专属事件以局部 `try/catch` 同步调用附加触达应用服务，无论其成功、跳过或抛出异常都直接 `finish`，异常不得进入事件受理入口的失败映射；结果保留现有 `eventId/resultCode/reasonDesc/processedAt`，并保持 `workOrderId=null`、`workOrderIds=[]`。重复键分支沿用 `IGNORED_DUPLICATE` 且不进入附加服务；其他事件继续调用原模板编排器。
+两类特殊事件继续沿用现有事件类型、来源、门店、点位、payload schema 和唯一键校验。只有结果为 `ACCEPTED_READY_FOR_RULE` 且确实由当前请求首次形成事件记录时才能进入附加用例；`IGNORED_DUPLICATE`、拒绝结果和其他结果直接返回。特殊事件保持 `workOrderId`、`workOrderIds` 为空，不写入事件与目标工单关系。
 
-`EventRuleDispatchBizImpl.dispatchToRule` 和 `EventRuleDispatchAsyncExecutor.dispatch` 在进入 `EventProcessAppService` 前共享同一事件类型判定，读取到两类专属事件就直接结束且不写失败结果；`EventRuleDeliveryRetryJob.retryRuleDelivery` 作为现有作业入口也只能经过该拦截。这样线程池任务、失败任务扫描、人工重放或后续新增重放入口无法越过主分流进入普通处理。仅依赖数据库不配置模板关系无法覆盖这些重放路径；仅在规则层返回“不建单”又会把不属于规则域的触达职责混入普通处理链路，因此不采用。
+仅在 `EventIngestBizImpl` 跳过 `TemplateTriggerOrchestrateAppService` 不足以构成长期保护。普通规则的显式重放入口和统一事件处理入口也必须共享同一特殊事件类型策略，对两类事件执行无副作用跳过，避免人工重放或未来恢复任务重新建单。普通事件及既有 `CLEAR_TABLE`、`WIPE_TABLE` 事件不命中该策略，保持原行为。
 
-`EventProcessAppServiceImpl.process` 在解析出事件记录后、规则评估前使用同一分类器提供最终失败关闭：若上游拦截被绕过，直接返回该事件已有的受理结果、原因、处理时间和空工单集合，不调用结果持久化、规则域、建单、派发或执行域。异步 executor 的前置拦截仍然必须保留，避免它把这一非终态受理返回误判为异步处理失败。
+### 目标工单选择
 
-### 尝试权先于业务解析，选择至多一次而非至少一次
+首个信任边界位于应用层附加触达服务。事件的门店、点位、发生时间、账单和类型映射先完成规范化；任一必要值缺失或账单解析失败均形成合法的“无目标”结果，不扩大匹配范围。发生日使用应用当前业务时区 `Asia/Shanghai` 计算自然日边界，避免按受理时间或数据库日期函数造成跨日偏差。
 
-事件首次成功记录必须先完成自己的数据库提交，再调用专属应用服务；该入口不得把事件受理写入、尝试权注册和远程调用包在同一个可回滚事务中。专属应用服务首先调用独立领域端口 `tryRegister(eventId)`，infra 通过独立 `REQUIRES_NEW` 事务复用 `IdempotencyGuardMapper.insertIgnore`，只有该事务已提交且受影响行数为 1 才返回授权，不修改既有 `IdempotencyGuardGateway.initIfAbsent` 的 void 合同和窗口幂等行为。两个提交边界必须由独立 Spring 代理组件或显式 `TransactionTemplate` 建立，禁止依赖同类自调用上的事务注解。未取得授权立即结束；数据库异常按未授权处理并结束。取得授权后才解析事件字段、查询工单和调用外部服务，任何后续缺失、异常、失败或超时都消费本次尝试权，禁止 release、定时补偿、人工重放和客户端重试。
+领域查询端口接收门店、点位、唯一目标模板、三个允许状态、日始和次日始。`infra` 只按结构化字段、有效记录和时间范围缩小候选并保证稳定倒序；应用层对事件和每个候选复用 `TableBillIdResolveSupport`，按排序顺序选出第一条账单完全相等的记录。相同创建时间通过主键倒序消除并列歧义，其他候选不再触达。
 
-该语义在远程请求已被接受但调用方超时的场景仍能保证本系统不再次触达，代价是提醒可能丢失。业务优先级是避免员工被重复提醒，且现有云手表接口没有可供本系统确认最终状态的可靠回执，因此不采用租约释放或失败重试。专用二次提醒同时使用当前事件 `eventId` 作为 `businessId` 且设置 `businessIdDedup=true`，作为下游重复保护；它不能替代本地并发守卫。
+选择过程只读目标工单，不加业务锁，也不写主表、状态日志、参与关系或事件工单关系。查询时目标状态是选择条件；选择后到远程调用之间即使工单状态并发变化，本次仍按已选快照执行附加提醒，因为附加动作不改变工单且尝试权不能恢复。该竞态通过事件标识、目标工单标识和所选状态日志观察，不以二次读取触发另一种动作。
 
-### 专用目标查询保持账单解析兼容且保证稳定唯一
+### 至多一次与事务边界
 
-新增不可变领域查询对象和专用读取端口，字段固定为 `storeCode`、`pointCode`、单一 `templateCode`、三种状态、`createTimeBegin`、`createTimeEndExclusive`。infra 只返回 `state=0` 且满足结构条件的候选，按 `create_time DESC, id DESC` 排序；应用服务使用现有 `TableBillIdResolveSupport` 同时兼容根节点 `tableBillId/orderId` 与对象或字符串形态 `detail.tableBillId/detail.orderId`，取第一个与事件账单完全相等的候选。
+尝试权必须在解析、查询和远程调用之前获取。领域端口执行单行唯一插入并使用独立本地事务提交；唯一键冲突只表示尝试权已被使用，不抛出需要重试的业务错误。数据库不可用、事务超时或提交结果不确定时，附加流程按失败结束且不执行远程动作，事件受理结果保持不变。
 
-账单不下推为单一 JSON SQL 条件，是因为历史 payload 存在四种字段位置/形态，数据库表达会与既有解析器形成两套语义。候选集已被门店、桌台、单模板、三状态和单日索引收窄；若事件或候选账单缺失、JSON 解析失败，则该记录不匹配，全部不匹配时静默结束。目标状态以这次唯一候选查询返回的持久化快照为决策时点，查询后立即执行对应触达，不持有数据库锁跨越远程调用；并发状态变更不触发第二次查询、改分支或补偿。日期边界、等时刻 `id` 决胜、取消状态、跨日记录及查询后并发状态变化均由行为测试固定。
+获得尝试权后不删除记录、不把领取状态改回可用，也不因无目标、无接收人、远程拒绝、异常、超时或返回结果未知而释放。结果编码和结束时间只是尽力写入的内部观察字段；结果回写失败不能重新开放尝试权。该设计选择避免重复打扰，代价是单次故障可能丢失提醒，与 ADR 的至多一次决策一致。
 
-### 手表成功投递快照是二次提醒接收人的唯一事实源
+两个云手表调用均只允许一次应用调用，并使用零 RPC 重试配置，禁止复用普通工单执行域的重试策略。未取得远端逐员工回执，因此远端聚合成功只表示该次请求被服务接受，不能宣称每名员工设备均已收到；快照只记录请求接受事实，不写入逐员工 `ACKED` 或 `SENT` 状态。
 
-现有 `DispatchResult` 持有派发轮次和候选员工，`ExecuteResult` 持有 `triggered/channelType/channelRequestId`。为关闭候选员工与实际手表请求之间的证据缺口，`DeliveryResult` 和 `ExecuteResult` 增加不可变 `acceptedAssigneeUsers`，仅手表 adapter 在归一化请求员工且远程成功后填充，执行域原样复制；其他触达 adapter 返回空集合。`EventProcessAppServiceImpl` 仅在 `triggered=true`、`channelType=WATCH` 且该快照非空时，调用独立派发投递审计端口，将实际被接受的员工集合固化到该轮 `id` 最大的活动派发记录；条件更新保证不同快照不能覆盖原事实。审计调用必须在应用服务内使用局部 `try/catch` 隔离，失败只记录含 `workOrderId`、`dispatchRound`、失败原因的摘要日志，不得冒泡到 `EventProcessAppServiceImpl` 外层异常处理，也不改变原事件、工单或手表投递结果。
+### 手表接收人快照
 
-二次提醒读取端口先确定该工单活动派发记录的最高 `dispatchRound`，再只读取该轮 `id` 最大的活动记录并验证 `WATCH/SENT/schema v1/非空员工`；最高轮次缺少可解析快照、快照损坏或读取异常时直接跳过，绝不向更早轮次回退。当前参与人可能在完工后转为历史，派发候选人未必实际发送到手表，远程或事件临时接收人也不属于目标工单的派发事实，因此这些来源均禁止兜底。
+现有 `t_work_order_dispatch_record` 的 `dispatch_target_type` 和 `dispatch_target_code` 表达派发目标，岗位派发时不等于实际员工；`selected_employee_*`、`delivery_snapshot_json` 也没有在当前普通手表发送链路中形成可证明的完整接收人事实。因此本设计不覆盖这些字段，也不把岗位记录改写为人员记录。普通事件的原派发记录仍由既有派发域拥有，新增快照表只拥有“远端接受的员工请求集合”这一审计事实。
 
-### 云手表边界使用专用端口并固定完整请求合同
+普通手表请求的 `dispatchRound` 从既有 `DispatchResult` 透传到执行命令。`WatchDeviceDeliveryGatewayAdapter` 以实际发送的规范化 `employeeList` 形成领域收件人快照，并随聚合接受结果返回；`WorkOrderExecuteDomainServiceImpl` 只在远端返回成功且 `channel_request_id` 可稳定归属时通过独立领域端口固化新快照。该端口只能新增快照记录，不得更新或覆盖 `t_work_order_dispatch_record` 的 `dispatch_target_type`、`dispatch_target_code`、`selected_employee_*`、`dispatch_status`、`delivery_status` 或其他原派发字段。快照持久化失败不反向改变普通手表发送结果，但该轮因此没有可信快照，未来未及时事件必须跳过二次提醒。
 
-新增专属领域出站端口，由 adapter 中一个专用实现承接 `MessageCallbackRemote` 与 `PushEventRemote`，两个 Dubbo 引用均使用现有 `version=1.0.0`、`check=false` 并显式 `retries=0`。`work-order-adapter` 的 `cloud-bracelet-api` 从可漂移的 `1.2.5.9-SNAPSHOT` 固定为发布版 `1.2.5.9`；仓库本地发布版二进制 SHA-256 为 `53fd98e69c2db0b4ab3d537bf3a5605aac4e7c588280a477f0eb3012fb5ee8e8`，Execution 编译前必须解析到该发布坐标并校验二进制签名。已用该二进制确认 `MessageCallbackRemote.upgradeMessageToUrgent` 接受字符串列表与字符串并返回 `R`、`PushEventRemote.pushEvent` 接受 `RemoteMessageDto` 并返回 `R`，以及请求 DTO 的 `setEventType/setPsCode/setTitle/setMsg/setTableNo/setBusinessId/setData/setUpdateTime/setEmployeeList/setBusinessIdDedup/setExtraData`、员工和详情字段 setter 均存在。
+读取接收人时，先从既有派发记录确定最高 `dispatch_round`，再只读取该轮的手表接受快照。最高轮无快照、快照损坏或员工集合为空时返回空，不查询更早轮次。最高轮存在多条聚合接受快照时，按接受时间和主键稳定排序，并按 `employeeCode` 合并去重；所有员工都必须来自这些真实请求，不能从当前处理人或关系表补齐。上线前存量工单通常没有新快照，因此可能不发送二次提醒，这是为可信对象边界接受的兼容代价。
 
-待接单分支调用 `upgradeMessageToUrgent(Collections.singletonList(workOrderId), messageSourceFromCode)`；`messageSourceFromCode` 复用 `work-order.watch.message-source-from-code`，空值仍回退 `HSC_WORK_ORDER`。返回对象为空、`isSuccess=false`、异常或超时均视为本次触达失败并终止，不改变工单。
+### 两种外部动作
 
-执行中/已完成分支调用 `PushEventRemote.pushEvent(RemoteMessageDto)`，请求必须完全满足下表，禁止附带 payload、桌台账单、凭证或额外员工信息：
+待接单分支扩展 `WatchMessageRemoteGateway`，以单个目标工单号和 `WorkOrderWatchProperties.messageSourceFromCode` 调用 `MessageCallbackRemote.upgradeMessageToUrgent`。远端返回为空、失败或抛出异常均视为本次动作失败；不得创建新手表任务替代，也不得调用普通 `ExecuteWorkOrderCommand`。
 
-| 字段 | `CLEAR_TABLE_NOT_DONE` | `WIPE_TABLE_NOT_DONE` | 公共规则 |
-| --- | --- | --- | --- |
-| `eventType` | `CLEAR_TABLE_NOT_DONE` | `WIPE_TABLE_NOT_DONE` | 使用当前未及时事件编码 |
-| `title` | `未及时收台复核提醒` | `未及时擦台复核提醒` | 固定文案 |
-| `msg` | `{pointCode}桌台未及时收台，请员工线下复核处理` | `{pointCode}桌台未及时擦台，请员工线下复核处理` | 不使用工单状态拼文案 |
-| 标识 | 相同 | 相同 | `psCode=storeCode`、`tableNo=pointCode`、`businessId=eventId`、`businessIdDedup=true` |
-| 时间 | 相同 | 相同 | `updateTime` 使用附加触达请求构造时的应用本地时间，按现有 `yyyy-MM-dd HH:mm:ss` 格式生成 |
-| 员工 | 相同 | 相同 | `employeeCode=employeeId`；`employeeName` 缺失时回退 employeeId；`jobCode/jobName=null` |
-| `data[0]` | 相同 | 相同 | `fieldName=tableNo`、`fieldValue=pointCode`、`fieldDesc=桌号`、`fieldSort=1`、`fieldExplain=桌台号` |
-| `data[1]` | 相同 | 相同 | `fieldName=reviewAction`、`fieldValue=请员工线下复核处理`、`fieldDesc=复核要求`、`fieldSort=2`、`fieldExplain=未及时事件处理要求` |
-| 空字段 | 相同 | 相同 | `areaNo/tableName/areaName/extraData` 不赋业务值 |
+执行中和已完成分支使用独立的专用提醒领域端口。适配器调用 `PushEventRemote.pushEvent`，边界请求固定为：
 
-### 配置分准备与激活两阶段发布
+| 字段 | 合同 |
+| --- | --- |
+| `eventType` | 沿用当前手表工单消息类型 `WOKR_ORDER` |
+| `psCode` | 目标工单门店编码 |
+| `tableNo` | 目标工单点位编码 |
+| `businessId` | 目标工单标识 |
+| `businessIdDedup` | `false`，避免被原工单首次消息去重 |
+| `title` | 收台或擦台未及时复核提醒 |
+| `msg` | 明确对应作业未及时并要求员工线下复核 |
+| `employeeList` | 最高派发轮可信快照中的规范化员工集合 |
 
-Execution 必须生成三个独立、可审计的版本化 SQL 文件：`sql/prepare_not_done_event_additional_touch_20260825.sql`、`sql/activate_not_done_event_additional_touch_20260825.sql` 和 `sql/rollback_not_done_event_additional_touch_20260825.sql`，不修改 `sql/work_order_mysql.sql` 充当线上迁移。准备迁移以 upsert 写入两类事件定义，固定合同如下：
+聚合返回对象成功才表示请求被远端接受；失败、空返回、异常或超时均不重试。两种动作都不得写目标工单，不向上游暴露外部请求或结果。
 
-| 字段 | `CLEAR_TABLE_NOT_DONE` | `WIPE_TABLE_NOT_DONE` | 更新规则 |
-| --- | --- | --- | --- |
-| `event_name` | `未及时收台` | `未及时擦台` | 名称与说明均表达既有工作的复核信号 |
-| `event_desc` | `收台工作未及时完成的复核事件` | `擦台工作未及时完成的复核事件` | 不表达新建清台任务 |
-| `source_type` | 相同 | 相同 | 固定 `AI,MANUAL,MEMBER,OPEN_PLATFORM,POS,SYSTEM,WATCH` |
-| `payload_schema_json` | 相同 | 相同 | 固定 `[{"fieldCode":"tableBillId"},{"fieldCode":"orderId"},{"fieldCode":"detail"}]` |
-| `point_type` | `SHOP_TABLE` | `SHOP_TABLE` | 不允许空值或工作点位类型 |
-| 控制字段 | 相同 | 相同 | 新增时 `enable_status=0,idempotent_min=15,state=1,version=1`，审计人为 `SYSTEM` |
+### 代码质量约束
 
-准备迁移重复执行时可以修正上述合同字段和审计时间，但不得把已是 `enable_status=1` 的记录改回禁用；upsert 的更新表达式必须保留已启用值，确保激活后重跑为无害操作。它还必须用 `UPDATE t_event_define_template_relation SET state=0, update_by='SYSTEM', update_time=NOW(), version=version+1 WHERE state=1 AND event_define_code IN ('CLEAR_TABLE_NOT_DONE','WIPE_TABLE_NOT_DONE')` 逻辑失效活动模板关系，并在确认 `information_schema.statistics` 不存在同名索引后执行 `ALTER TABLE t_work_order_record ADD INDEX idx_work_order_not_done_target (state, store_code, point_code, template_code, work_order_status, create_time, id)`；每个 DML/DDL 的表、字段和迁移说明都使用真实业务注释。
-
-激活迁移只对 `state=1` 且合同字段与准备迁移完全一致的两条记录执行 `enable_status=1`，更新审计字段并递增版本；任一记录缺失、活动模板关系仍存在、索引缺失或代码验证未通过时整次激活失败，不允许部分启用。激活迁移本身重复执行保持启用，不改变其他事件定义。
-
-发布顺序固定为：先执行准备迁移和索引，再全量部署所有代码节点，随后验证专属分流、三层重放拦截、手表投递快照和两个 Dubbo 引用，最后由运维执行独立激活迁移把两类定义更新为 `enable_status=1`。不得在应用启动时自动执行配置 DML。回滚脚本只把两类活动定义原子更新为 `enable_status=0` 并维护审计字段/版本，不删除事件定义、联合索引、事件历史、尝试权或已写入派发快照；执行回滚脚本止流后才能回滚代码，禁止回放。
+Java 实现以仓库 `JDK 1.8` 为基线，不使用更高版本语法或标准库。新增业务代码默认不增加流程翻译式注释，不写编号注释或临时待办注释；仅在命名和类型无法表达至多一次、事务顺序或外部限制时解释原因。新增日志不得打印 payload、完整员工集合或复杂实体，单条日志最多保留三个关键业务字段，优先使用事件标识、目标工单标识和结果编码。
 
 ## 设计边界
 
-工单系统继续负责校验、持久化和返回事件受理结果，并在首次受理后的同步调用窗口内尽力完成一次附加触达；上报方不感知目标工单、触达分支、接收人、远程结果或失败原因，也不获得重试附加触达的能力。HTTP `POST /api/event-center/events/report`、Dubbo `EventReportRemote.reportEvent`、`EventReportRequestQo`、`EventReportResponseVO` 均不增加字段、不改变校验与错误映射；特殊事件成功、跳过或触达失败时均返回既有成功受理合同。
+### 上游事件报告方
 
-云手表服务负责接收紧急升级或专用推送请求及其自身投递；工单系统只把同步 `R.isSuccess` 视为接口接受，不承诺员工设备最终展示，也不跨系统补偿。MySQL 负责事件受理唯一性、触达尝试权原子唯一性、目标候选排序和派发快照持久化；两者之间没有分布式事务。
+公共入口仍为 `POST /api/event-center/events/report`，请求和 `EventReportResponseVO` 不新增字段。合法特殊事件无论附加动作成功、跳过或失败，都只返回既有事件受理结果；目标工单标识、目标状态、动作类型、员工、远端结果和失败原因均不得进入 `workOrderId`、`workOrderIds`、`reasonDesc` 或其他响应字段。非法事件请求继续由既有校验和异常合同处理，不因本需求改为成功。
 
-本设计不创建、重开、取消、完成或更新目标工单，不改变状态、当前处理人、参与关系、派发决策和业务 payload。首次普通手表投递新增的成功快照属于派发审计事实，不是新的接收人关系；上线前历史工单没有该事实时保持无触达，不做推测性回填。
+### 工单数据库
 
-### 非功能设计
+本系统拥有事件记录、附加触达尝试权、工单主记录、派发记录和手表接收人快照。事件记录唯一键继续负责首次受理，尝试表唯一键负责附加副作用资格，两者职责不可合并。目标工单和既有派发目标为只读事实；新接收人快照是普通手表请求被聚合接受后的不可变审计事实，不代表逐员工设备回执。
 
-| 主题 | 约束及依据 | 设计措施/责任边界 | 失败、降级与恢复 | 验证观察面 |
-| --- | --- | --- | --- | --- |
-| 兼容性 | 两个公开入口和响应已被上游使用 | 不改 Qo/Vo/DTO 公共字段；特殊事件仍用现有结果码和空工单集合 | 附加失败不映射为 HTTP/Dubbo 失败 | 完整响应 JSON、Dubbo 返回对象、普通事件回归 |
-| 并发与一致性 | 同一事件可能并发上报、重放、进程崩溃或远程超时 | 事件受理先提交；尝试权以独立新事务提交后才允许副作用；受理和触达唯一键分别拦截；Dubbo 禁用提供者重试 | 任何失败均消费尝试权，不补偿；目标工单只读 | 并发数据库集成测试、提交/回滚故障注入、远程调用次数、守卫行数 |
-| 性能 | payload 兼容形态阻止账单条件完全下推 | 联合索引先将候选收窄到单店单桌单模板单日三状态，再在应用内顺序解析 | 查询失败直接跳过，不降级全表或跨日查询 | 查询条件、稳定排序、执行计划及候选数量日志 |
-| 可观测性 | 上游不可看到附加结果，但运维需要定位 | 每阶段只记录 `eventId`、动作/状态、一个关键关联标识；复杂实体不整对象打印，日志字段不超过三个业务字段 | 失败日志不包含 payload、账单或完整员工列表 | 分流、守卫命中、无目标、无快照、远程失败、审计失败日志 |
-| 发布恢复 | 事件定义启用后会产生不可逆外部提醒 | 准备、代码、验证、激活四步发布；激活为唯一流量开关 | 先禁用定义止血，历史和守卫保留，禁止回放 | 配置查询、关系表核验、索引、节点版本、手表引用健康度 |
+结构性 DDL 仅作为代码库文件交付，数据库变更、迁移、发布和数据库验证不属于本流程。事件定义配置数据、启用、禁用和配置回滚由人工运维承担，Execution 不生成也不执行配置数据 DML。
 
-### 外部边界合同
+### 云手表服务
 
-| 边界 | 方向/触发 | 外部契约/语义所有者 | 输入契约及来源 | 输出/结果 | 失败与运行时语义 |
-| --- | --- | --- | --- | --- | --- |
-| 开放事件 HTTP | 上游同步调用 | `EventReportHttpApi` | 现有 `EventReportRequestQo`；新增的只是可接受事件编码与配置 | 现有 `OpenApiResponse` 包裹 `EventReportResponseVO`，无附加字段 | 入站校验失败仍按现有错误；受理成功后的附加失败不外泄 |
-| 开放事件 Dubbo | 上游同步调用 | `EventReportRemote` v1.0.0 | 与 HTTP 共用 Qo | 与 HTTP 共用响应 VO | 同上，不新增提供方重试语义 |
-| 手表消息紧急升级 | 首次专属事件命中待接单目标 | `MessageCallbackRemote` v1.0.0 | 单一目标 `workOrderId` 列表与消息来源编码 | 仅 `R.isSuccess=true` 视为接受 | `retries=0`；空/失败/异常/超时终止且不补偿 |
-| 手表专用复核提醒 | 首次专属事件命中执行中/已完成目标与可信快照 | `PushEventRemote` v1.0.0 | 上表固定 `RemoteMessageDto` | 仅 `R.isSuccess=true` 视为接受 | `retries=0`；空/失败/异常/超时终止且不补偿 |
-| 数据库迁移 | 发布前准备、发布后激活、回滚止血 | MySQL 变更流程与运维 | 事件定义、模板关系、联合索引 | 配置启停和查询能力 | 迁移幂等；索引失败不得激活；回滚先禁用事件 |
+待接单动作使用依赖版本 `cloud-bracelet-api:1.2.5.9-SNAPSHOT` 中的 `MessageCallbackRemote.upgradeMessageToUrgent`；专用提醒使用同一依赖中的 `PushEventRemote.pushEvent`。本系统只把远端聚合成功当作请求被接受，不扩展为逐员工投递成功承诺。调用超时或结果不确定时不查询补偿、不自动重试，事件受理和目标工单保持不变。
+
+### 消息与调度基础设施
+
+特殊事件不发布用于普通规则、建单或普通触达的 MQ 消息，不进入失败事件扫描任务、延迟模板恢复或其他重放调度。现有消息和调度基础设施只继续服务普通事件。本需求不新增补偿任务，也不授权人工通过重复上报触发补发。
 
 ## 实施影响
 
 ### 变更职责链路
 
-```mermaid
-flowchart TD
-    A[HTTP或Dubbo事件上报] --> B[EventCommandBiz统一受理]
-    B --> C{首次成功且属于未及时事件}
-    C -->|否| D[既有模板规则与建单链路]
-    C -->|是| E[未及时事件附加触达应用服务]
-    E --> F[领域尝试权端口]
-    F --> G[t_idempotency_guard原子注册]
-    E --> H[领域目标工单查询端口]
-    H --> I[t_work_order_record候选查询]
-    E --> J{目标工单状态}
-    J -->|WAIT_CLAIM| K[手表紧急升级出站端口]
-    J -->|EXECUTING或COMPLETED| L[派发成功快照读取端口]
-    L --> M[手表复核提醒出站端口]
-    D --> N[现有手表首次投递]
-    N --> O[派发成功快照审计端口]
-    O --> P[t_work_order_dispatch_record条件更新]
-```
+`EventReportController -> EventCommandBizImpl -> EventIngestCmdHandler -> EventIngestBizImpl` 保持公共入口；首次成功受理后由特殊事件类型策略在 `TemplateTriggerOrchestrateAppService` 之前分流到附加触达应用服务。该服务依次通过领域端口获取尝试权、查询目标工单、读取最高轮手表接收人，并按状态调用云手表紧急升级或专用提醒端口。`infra` 只实现数据库端口，`adapter` 只实现远程端口；显式规则重放和统一事件处理入口复用相同策略阻断特殊事件进入普通链路。
 
-职责落点遵守 `web/adapter 入站 -> application 编排 -> domain 规则与端口 -> infra 持久化适配或 adapter 外部系统适配`。本需求无新 Qo/Vo 和跨层公开 DTO；新增领域查询、尝试权、接收人快照及手表触达命令使用不可变值对象或 `*Entity`，持久化继续落现有 `*PO`，转换在网关边界显式完成。所有 application/domain 核心方法按校验、授权、解析、查询、决策、远程调用、结果收口添加并维护中文分步注释，Java 实现保持 JDK 8 语法。
-
-### TASK-001：两类未及时事件成功受理且不进入规则建单
+### TASK-001：特殊事件首次受理后只进入附加触达分支
 
 - 覆盖需求：REQ-001、REQ-002、REQ-010、REQ-012、AC-001、AC-002、AC-018、AC-019
-- 结果：两类新增事件仅在首次成功受理后同步进入专属附加触达，响应沿用既有成功字段且无工单标识；普通事件及现有收台、擦台事件继续走原规则、建单和触达链路。
-- 公共验证入口：HTTP `POST /api/event-center/events/report`；Dubbo `EventReportRemote.reportEvent(EventReportRequestQo)`。
-- 影响锚点：`EventConstants.EventDefineCode`、`EventIngestBizImpl.ingest`、`TemplateTriggerOrchestrateAppService.orchestrate`、`EventRuleDispatchBizImpl.dispatchToRule`、`EventRuleDispatchAsyncExecutor.dispatch`、`EventProcessAppServiceImpl.process`、准备/激活/回滚迁移。
-- 验证观察面：首次与重复上报的完整响应、事件记录结果、规则编排调用次数、工单新增数、重放路径调用次数、普通事件回归结果。
-- 依赖：准备迁移已写入但禁用事件定义；所有节点部署并验证后执行激活迁移。
+- 结果：两类未及时事件首次成功受理后同步进入专用附加触达用例且不触发普通规则、建单、派发或普通触达；特殊事件响应不包含目标与触达信息，其他事件保持原行为。
+- 输入与不变量：公共入口先完成既有 Qo、DTO、领域命令校验并持久化事件；只有当前请求形成的 `ACCEPTED_READY_FOR_RULE` 记录且事件类型为两个固定编码时分流，固定映射分别为 `CLEAR_TABLE` 和 `WIPE_TABLE`，事件工单关系始终为空。
+- 失败语义：非法请求继续返回既有拒绝或异常结果；重复事件返回 `IGNORED_DUPLICATE` 且不进入附加用例；特殊分流内部异常被隔离并返回原成功受理结果；合法普通事件不受特殊分流影响。
+- 公共验证入口：`POST /api/event-center/events/report` 以及既有事件结果查询入口。
+- 影响锚点：`EventReportController`、`EventCommandBizImpl`、`EventIngestCmdHandler`、`EventIngestBizImpl`、`TemplateTriggerOrchestrateAppService`、`EventRuleDispatchBizImpl`、`EventProcessAppServiceImpl`、`EventReportResponseVO`。
+- 验证观察面：事件结果码与响应字段、事件记录及事件工单关系、普通模板编排与建单入口调用次数、普通事件回归结果。
+- Execution 交付：特殊事件类型策略、首次受理后的应用分流与普通规则入口保护 Java，实现相应应用单元测试、入口契约测试和普通事件回归测试。
+- 人工运维产物：两条事件定义配置数据 DML；固定 `source_type=AI,SYSTEM`、`point_type=SHOP_TABLE`、payload schema 保留账单兼容字段，人工控制启用状态，并验证不存在有效模板关系。
 
-### TASK-002：只选择发生日内全部维度一致的最新唯一工单
+### TASK-002：精确且稳定地选择唯一目标工单
 
 - 覆盖需求：REQ-003、REQ-004、REQ-007、REQ-009、AC-003、AC-004、AC-005、AC-010、AC-012、AC-015、AC-016
-- 结果：系统只在同门店、同桌台、同账单、固定模板、允许状态和事件发生日内选择 `create_time/id` 最新的一张工单；无目标、字段缺失、解析或查询失败时不触达。
-- 公共验证入口：通过两个公开事件上报入口提交具备不同候选数据组合的未及时事件。
-- 影响锚点：专用目标工单领域查询端口、`WorkOrderRecordGateway`/`WorkOrderServiceImpl` 持久化查询、`TableBillIdResolveSupport.resolve`、`t_work_order_record` 联合索引。
-- 验证观察面：候选查询参数和顺序、最终远程调用使用的唯一工单、跨日/错维度/取消状态排除、同创建时间 `id` 决胜、无调用的静默结果。
-- 依赖：事件 payload schema 保留账单字段；索引在事件激活前创建成功。
+- 结果：系统只从事件发生日内同门店、同点位、同账单、同固定模板和三个目标状态的有效工单中选择创建时间与主键倒序的第一条；无目标时静默结束。
+- 输入与不变量：事件类型、门店、点位、发生时间和账单是匹配必需值；发生日按 `Asia/Shanghai` 计算左闭右开时间范围；候选状态仅为 `WAIT_CLAIM`、`EXECUTING`、`COMPLETED`，账单比较复用 `TableBillIdResolveSupport` 并采用精确相等。
+- 失败语义：入口级非法时间由既有校验拒绝；事件或候选账单缺失、解析失败以及合法查询未命中均返回无目标且不触达；数据库查询异常或超时终止剩余附加动作并保持事件成功受理，不回退到较旧、跨日、取消或账单不一致工单。
+- 公共验证入口：`POST /api/event-center/events/report`，通过持久化候选和云手表边界调用观察最终选择。
+- 影响锚点：`TableBillIdResolveSupport`、`WorkOrderRecordEntity`、`WorkOrderActiveQuery`、`WorkOrderRecordGateway.listByQuery`、`WorkOrderRecordGatewayImpl`、`WorkOrderServiceImpl.listByParam`、`t_work_order_record`。
+- 验证观察面：选中的唯一工单标识、候选稳定顺序、无目标结果、云手表边界是否未调用、事件结果与目标工单持久化快照是否不变。
+- Execution 交付：专用领域查询对象与查询端口、infra 查询实现、账单过滤与稳定选择 Java，行为测试，以及只写入代码库的工单组合查询索引结构性 DDL 文件。
+- 人工运维产物：无。
 
-### TASK-003：待接单目标仅升级既有手表消息紧急程度
+### TASK-003：并发与重复处理最多消费一次附加触达尝试权
+
+- 覆盖需求：REQ-008、REQ-009、AC-013、AC-014、AC-016
+- 结果：同一已受理事件最多有一个处理者在尝试权提交后继续查询和触达；重复上报、并发上报、人工重放和进程恢复都不能再次执行附加动作。
+- 输入与不变量：尝试权键固定为已持久化事件的 `event_id`；领取发生在任何匹配或远程副作用之前，使用独立本地事务和数据库唯一键原子提交，后续任何结果均不释放该记录。
+- 失败语义：唯一键冲突表示已消费并静默跳过；事件标识为空属于合同错误且不调用端口；数据库不可用、提交异常、超时或提交结果不确定时停止附加流程且不执行远程动作；领取后进程退出仍视为已消费。
+- 公共验证入口：`POST /api/event-center/events/report`，并通过相同事件身份的串行、并发报告及公开规则重放入口验证。
+- 影响锚点：`EventIngestBizImpl`、附加触达应用服务、新增事件尝试权领域端口及 infra 实现、`t_event_record.uk_event_type_source_event`、`t_event_additional_touch_attempt`。
+- 验证观察面：事件记录数量、尝试权唯一记录、目标查询与两个云手表边界的调用次数、重复响应、依赖故障后的事件结果。
+- Execution 交付：尝试权领域模型、领域端口、独立事务的 infra 原子领取与尽力结果记录 Java，串行及并发行为测试，以及只写入代码库且包含表/字段注释和唯一键的结构性 DDL 文件。
+- 人工运维产物：无。
+
+### TASK-004：待接单目标只升级既有手表消息紧急程度
 
 - 覆盖需求：REQ-005、REQ-009、REQ-011、AC-006、AC-017
-- 结果：唯一目标为 `WAIT_CLAIM` 时仅对该 `workOrderId` 调用手表紧急升级，不创建新工单或新手表任务，不修改目标工单；远程失败仍返回事件成功受理。
-- 公共验证入口：通过公开事件上报入口提交可命中待接单目标的未及时事件。
-- 影响锚点：专属手表触达领域端口、`MessageCallbackRemote.upgradeMessageToUrgent` adapter、`WorkOrderWatchProperties.messageSourceFromCode`。
-- 验证观察面：完整紧急升级请求、远程调用一次、工单及派发记录前后差异、事件响应、异常/超时下无重试。
-- 依赖：云手表 v1.0.0 服务提供紧急升级接口，Dubbo 提供者重试关闭。
+- 结果：唯一目标为 `WAIT_CLAIM` 时，只对该工单已有云手表消息执行一次紧急升级，不创建新消息或新工单，不修改工单及派发关系。
+- 输入与不变量：调用前必须已提交事件尝试权并选出唯一待接单目标；远程请求只含该工单标识列表和 `WorkOrderWatchProperties.messageSourceFromCode`，默认来源编码为 `HSC_WORK_ORDER`；应用与 RPC 均不得重试。
+- 失败语义：工单标识或来源编码无效属于边界合同错误并终止动作；远端空返回、失败、异常、超时或结果不确定均记录为本次已消费失败，不改事件结果和目标工单，也不改发专用二次提醒兜底。
+- 公共验证入口：`POST /api/event-center/events/report`，以云手表紧急升级完整边界请求和持久化不变性作为观察依据。
+- 影响锚点：`WatchMessageRemoteGateway`、`WatchMessageRemoteGatewayAdapter`、`WorkOrderWatchProperties.messageSourceFromCode`、`MessageCallbackRemote.upgradeMessageToUrgent`。
+- 验证观察面：紧急升级远程调用次数与完整参数、普通手表推送及建单入口未调用、事件响应、目标工单和派发记录前后状态。
+- Execution 交付：领域远程端口扩展、adapter 紧急升级实现、零重试 RPC 配置及行为测试；无结构性 DDL。
+- 人工运维产物：无。
 
-### TASK-004：执行中和已完成目标只提醒最近有效手表接收人
+### TASK-005：执行中或已完成目标只提醒最高派发轮可信员工
 
 - 覆盖需求：REQ-006、REQ-007、REQ-009、REQ-011、AC-007、AC-008、AC-009、AC-011、AC-017
-- 结果：`EXECUTING` 或 `COMPLETED` 目标只向活动派发记录最高轮次中已成功手表投递的实际接收人快照发送一次固定复核提醒；最高轮次没有可信快照时不回退、不触达，更早轮次、当前/历史关系推断对象和临时对象均不触达，工单状态保持不变。
-- 公共验证入口：先经现有公开事件入口形成并成功手表派发工单，再通过公开入口上报可命中该工单的未及时事件。
-- 影响锚点：`EventProcessAppServiceImpl` 的 dispatch/execute 结果衔接、`DispatchResult`、`ExecuteResult`、派发投递审计读写端口、`WorkOrderDispatchRecordServiceImpl`、`PushEventRemote.pushEvent` adapter。
-- 验证观察面：adapter 归一化后的 `DeliveryResult.acceptedAssigneeUsers`、`ExecuteResult` 原样传递、规范派发记录的条件更新、最高轮次接收人集合、完整 `RemoteMessageDto`、员工去重顺序、无快照或最高轮次缺快照时零调用、执行前后工单状态和处理人。
-- 依赖：只有代码上线后被手表成功接受并写入 schema v1 快照的派发可成为接收人事实；历史记录不回填。
-
-### TASK-005：重复、并发与任一附加失败最多消耗一次触达尝试
-
-- 覆盖需求：REQ-008、REQ-009、AC-013、AC-014、AC-015、AC-016、AC-017
-- 结果：同一 `eventId` 仅一个执行者取得尝试权，重复上报、规则重放和并发处理均不产生第二次紧急升级或复核提醒；守卫、解析、查询、审计或远程失败均被隔离在已成功受理事件之外。
-- 公共验证入口：对 HTTP/Dubbo 公开入口并发提交相同来源事件，并通过 `EventRuleDeliveryRetryJob.retryRuleDelivery`（XXL-Job handler `eventRuleDeliveryRetryJob`）和异步派发入口重复处理同一事件。
-- 影响锚点：`t_event_record.uk_event_type_source_event`、专用尝试权领域端口、`IdempotencyGuardMapper.insertIgnore`、`t_idempotency_guard.uk_guard_biz_type_key`、`EventRuleDispatchBizImpl.dispatchToRule`、`EventRuleDispatchAsyncExecutor.dispatch`、`EventProcessAppServiceImpl.process`、`EventRuleDeliveryRetryJob.retryRuleDelivery`。
-- 验证观察面：并发响应、单一事件记录、独立提交的单一守卫记录、两个手表边界各自调用次数、失败注入后的事件结果和工单零变更、`EventRuleDispatchBizImpl`/`EventRuleDispatchAsyncExecutor`/`EventProcessAppServiceImpl`/XXL-Job 重放零触达。
-- 依赖：数据库唯一约束有效，触达尝试记录不被清理或失效化。
+- 结果：唯一目标为 `EXECUTING` 或 `COMPLETED` 时，系统向最高派发轮中被云手表服务聚合接受并固化的员工集合发送一次专用线下复核提醒；无可信对象时不发送，工单状态和处理关系保持不变。
+- 输入与不变量：普通手表发送链路只有在 `PushEventRemote` 返回聚合成功后才固化实际请求的规范化员工集合和派发轮次；读取时先确定最高派发轮，再只合并该轮快照并按 `employeeCode` 去重；专用提醒使用固定 `RemoteMessageDto` 字段合同且应用与 RPC 均不得重试。
+- 失败语义：最高轮不存在可信快照、快照为空或损坏属于合法无对象并静默跳过；快照查询故障终止剩余动作；远端失败、空返回、异常、超时或结果不确定均消耗本次尝试且不重试；聚合成功不能解释为每个员工设备逐一成功。
+- 公共验证入口：`POST /api/event-center/events/report`，并通过普通事件报告入口先形成可读的手表接受快照，再观察专用提醒边界。
+- 影响锚点：`DispatchResult`、`ExecuteWorkOrderCommand`、`WorkOrderExecuteDomainServiceImpl`、`WatchDeviceDeliveryGatewayAdapter`、`WorkOrderDispatchRecordService.findLatestByWorkOrderId`、`PushEventRemote.pushEvent`、新增手表收件人快照领域端口与 infra 实现、专用提醒领域端口与 adapter、`t_work_order_watch_recipient_snapshot`。
+- 验证观察面：普通手表接受快照的派发轮次与员工字段、最高轮选择、专用 `RemoteMessageDto` 完整请求、远程调用次数、无对象分支、事件响应和目标工单持久化不变性。
+- Execution 交付：派发轮次透传、聚合接受快照固化与读取、专用提醒领域端口和 adapter Java，消息字段映射及状态组合行为测试，以及只写入代码库且包含表/字段注释、业务唯一键和查询索引的结构性 DDL 文件。
+- 人工运维产物：无。
 
 ## 验证与风险
 
-验证以公开 HTTP/Dubbo 事件上报为主行为入口，并在应用层测试替换领域端口、在 infra 集成测试使用真实 MySQL 语义、在 adapter 合同测试捕获完整远程请求。行为矩阵至少覆盖两种专属事件与普通事件、首次/重复/并发/两条重放路径、四种工单状态、无目标、跨日和六类错维度、创建时间并列、四种账单位置/形态、无/旧/最新派发轮次、最高轮次无快照、员工重复与空字段，以及守卫/查询/解析/审计/两个远程边界的空返回、失败、异常和超时。数据库验证必须证明事件受理先提交、`REQUIRES_NEW` 守卫在外层回滚和进程崩溃前已独立持久化、两个唯一键、半开日期边界、`create_time DESC,id DESC`、联合索引命中和派发快照条件更新；adapter/执行域测试必须证明只有实际组装进成功手表请求的归一化员工进入 `acceptedAssigneeUsers` 并原样到达审计端口。回归验证必须证明审计异常不会进入 `EventProcessAppServiceImpl` 外层失败处理、目标工单所有业务字段不变、专属响应不泄露附加信息、其他事件建单与触达次数不变。
+### 行为验证矩阵
 
-无法在仓库自动化测试中证明员工设备最终展示或生产运维实际执行顺序，因此以云手表接口接受结果、迁移审计记录、节点版本与激活开关作为边界观察面。迁移演练必须在真实 MySQL 依次执行准备两次、激活两次、再次误执行准备、回滚两次，逐步核验最终启停状态、两条定义完整字段、三字段 payload 快照、活动模板关系为空及联合索引仅一份；上线验收先用禁用定义核验 DDL/索引和代码节点，再用受控事件验证两条远程合同。出现重复触达、普通事件误拦截、查询性能退化或错误改单时立即执行回滚脚本禁用两类定义止血。
+| 维度 | 组合 | 必须观察的结果 |
+| --- | --- | --- |
+| 事件类型 | 两类特殊事件、`CLEAR_TABLE`、`WIPE_TABLE`、其他普通事件 | 特殊事件固定映射且不建单；其他事件保持普通链路 |
+| 受理身份 | 首次、串行重复、并发重复、显式重放 | 仅首次且唯一尝试权持有者可继续；其余无远程副作用 |
+| 匹配维度 | 同日/跨日、同店/异店、同点位/异点位、同账单/异账单、账单缺失或损坏 | 只有全部维度成立者入选，缺失和解析失败不降级 |
+| 目标状态 | `WAIT_CLAIM`、`EXECUTING`、`COMPLETED`、`CANCELED` | 分别执行紧急升级、专用提醒、专用提醒、无动作 |
+| 唯一选择 | 一条、多条不同创建时间、多条相同创建时间 | 只选 `create_time DESC, id DESC` 的第一条完整账单匹配工单 |
+| 接收人 | 最高轮有一人、多人、多个接受快照、空或损坏、仅早期轮有快照 | 只合并最高轮真实请求员工并去重；无最高轮可信对象时不发送 |
+| 依赖结果 | 查询成功/失败、领取成功/冲突/不确定、远端成功/失败/空返回/异常/超时、快照写入成功/失败 | 仅合同允许的动作发生，失败和不确定结果不重试且不改变事件受理；普通事件远端成功但快照写入失败时仍保持原建单与触达结果，且不产生可信快照 |
+| 上游兼容 | 动作成功、无目标、无对象、依赖失败 | 响应始终不包含目标工单、动作、员工或附加失败信息 |
 
-- Design 风险级别：高
-- Design 风险类型：公共 HTTP/RPC 行为兼容、数据库迁移与历史兼容、跨模块职责与依赖方向、并发幂等与一致性、工单状态保持、云手表不可逆副作用、部署协作
-- 合同来源：CONTEXT.md, docs/adr/0001-not-done-additional-touch-at-most-once.md, pom.xml, work-order-adapter/pom.xml, work-order-api/src/main/java/com/haidilao/workorder/api/open/event/constant/OpenEventApiConstants.java, work-order-api/src/main/java/com/haidilao/workorder/api/open/event/remote/EventReportHttpApi.java, work-order-api/src/main/java/com/haidilao/workorder/api/open/event/remote/EventReportRemote.java, work-order-api/src/main/java/com/haidilao/workorder/api/open/event/request/EventReportRequestQo.java, work-order-api/src/main/java/com/haidilao/workorder/api/open/event/response/EventReportResponseVO.java, work-order-web/src/main/java/com/haidilao/workorder/web/controller/open/event/EventReportController.java, work-order-web/src/main/java/com/haidilao/workorder/web/job/event/EventRuleDeliveryRetryJob.java, work-order-adapter/src/main/java/com/haidilao/workorder/adapter/remote/inbound/EventReportRemoteAdapter.java, work-order-adapter/src/main/java/com/haidilao/workorder/adapter/async/outbound/EventRuleDispatchAsyncGatewayAdapter.java, work-order-adapter/src/main/java/com/haidilao/workorder/adapter/config/WorkOrderWatchProperties.java, work-order-adapter/src/main/java/com/haidilao/workorder/adapter/remote/outbound/executer/message/AbstractCloudBraceletMessageDataStrategy.java, work-order-application/src/main/java/com/haidilao/workorder/application/event/command/ingest/EventIngestBizImpl.java, work-order-application/src/main/java/com/haidilao/workorder/application/event/command/ingest/EventRuleDispatchAsyncExecutor.java, work-order-application/src/main/java/com/haidilao/workorder/application/event/command/dispatch/EventRuleDispatchBizImpl.java, work-order-application/src/main/java/com/haidilao/workorder/application/event/command/process/EventProcessAppServiceImpl.java, work-order-application/src/main/java/com/haidilao/workorder/application/event/executor/command/ingest/EventIngestCmdHandler.java, work-order-application/src/main/java/com/haidilao/workorder/application/workorder/generate/trigger/TemplateTriggerOrchestrateAppService.java, work-order-application/src/main/java/com/haidilao/workorder/application/workorder/support/TableBillIdResolveSupport.java, work-order-common/src/main/java/com/haidilao/workorder/common/constant/EventConstants.java, work-order-common/src/main/java/com/haidilao/workorder/common/constant/TemplateConstants.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/common/enums/WorkOrderStatusEnum.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/event/core/service/impl/EventPayloadSchemaDomainServiceImpl.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/gateway/IdempotencyGuardGateway.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/gateway/WorkOrderRecordGateway.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/dispatch/gateway/WorkOrderDispatchGateway.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/dispatch/model/valueobject/DispatchResult.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/execute/WorkOrderExecuteDomainServiceImpl.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/rule/execution/ExecuteResult.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/rule/execution/gateway/DeliveryResult.java, work-order-domain/src/main/java/com/haidilao/workorder/domain/workorder/rule/execution/gateway/DeviceDeliveryGateway.java, work-order-infra/src/main/java/com/haidilao/workorder/infra/core/repository/idempotency/IdempotencyGuardServiceImpl.java, work-order-infra/src/main/java/com/haidilao/workorder/infra/core/repository/event/EventWorkOrderRelationServiceImpl.java, work-order-infra/src/main/java/com/haidilao/workorder/infra/core/repository/workorder/WorkOrderServiceImpl.java, work-order-infra/src/main/java/com/haidilao/workorder/infra/core/repository/workorder/dispatch/WorkOrderDispatchRecordService.java, work-order-infra/src/main/java/com/haidilao/workorder/infra/core/repository/workorder/dispatch/WorkOrderDispatchRecordServiceImpl.java, work-order-infra/src/main/java/com/haidilao/workorder/infra/gatewayimpl/workorder/dispatch/WorkOrderDispatchGatewayImpl.java, work-order-infra/src/main/resources/com/haidilao/workorder/infra/core/mapper/idempotency/IdempotencyGuardMapper.xml, work-order-adapter/src/main/java/com/haidilao/workorder/adapter/remote/outbound/watch/WatchMessageRemoteGatewayAdapter.java, work-order-adapter/src/main/java/com/haidilao/workorder/adapter/remote/outbound/executer/WatchDeviceDeliveryGatewayAdapter.java, sql/work_order_mysql.sql, sql/create_t_idempotency_guard_20260526.sql
+测试以稳定公共入口和真实端口边界为主：入口契约测试验证 HTTP 响应；应用测试验证规则入口、目标选择和副作用次数；infra 测试验证唯一插入、有序查询与最高轮读取；adapter 测试捕获紧急升级参数和完整 `RemoteMessageDto`。普通事件公开入口必须分别覆盖远端成功且快照成功、远端成功但快照失败、远端失败或结果未知三组场景，断言原响应和工单处理结果保持既有语义、远程调用不增加、原派发记录逐字段不变，并且只有聚合成功且快照落库成功的场景产生可信快照。并发测试必须使用能真实触发唯一键竞争的持久化边界，不能只用顺序 mock 证明并发。DDL 仅验证文件结构、注释、键和索引定义，不连接或修改数据库。
+
+### 可观测性
+
+内部结果编码至少区分已领取、重复跳过、无目标、无接收人、查询失败、紧急升级接受/失败、二次提醒接受/失败和结果不确定。日志不改变上游合同，也不打印 payload、收件人列表或完整复杂实体。事件标识贯穿附加用例；涉及目标后使用目标工单标识，结果日志使用结果编码，单条日志最多保留三个关键业务字段。
+
+### 主要风险与控制
+
+- **远端已处理但本地只得到超时或不确定结果**：尝试权保持已消费，禁止重试；可能漏记成功，但不会重复打扰员工。
+- **普通手表请求成功但快照持久化失败**：普通派发结果不回滚，最高轮被视为没有可信对象，后续二次提醒跳过。
+- **存量工单没有新快照**：不从派发岗位、参与关系或历史处理人推断，接受上线初期部分二次提醒缺失。
+- **工单选择后状态并发变化**：按选择时状态执行单一动作，不二次分流；所有动作不修改目标工单，事件尝试权仍只消费一次。
+- **事件定义误绑普通模板**：代码入口仍有特殊类型保护，人工启用前必须核对有效模板关系为空。
+- **组合查询扫描过大**：infra 先用结构化字段和半开日期范围收窄并使用专用索引，应用只对有序候选解析账单 JSON。
+- **远端只提供聚合返回**：测试和日志只陈述请求被服务接受，不把结果扩大为逐员工设备送达证明。
+
+进入 Apply 前需由用户 Review 并批准本 Design。批准后，Apply 使用 `$pretty-executing`；如只需查看非权威执行预览，使用 `$pretty-executing Dry Run` 生成 `execution-preview.md`。

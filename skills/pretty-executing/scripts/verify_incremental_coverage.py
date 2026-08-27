@@ -18,6 +18,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
+if str(COMMON_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPTS))
+
+from evidence_binding import evidence_sha256  # type: ignore[import-not-found]
+
 
 DEFAULT_LINE_THRESHOLD = 90.0
 DEFAULT_BRANCH_THRESHOLD = 80.0
@@ -167,6 +173,8 @@ def load_changed_manifest(manifest: Path) -> tuple[ChangedSource, ...]:
             continue
         if any(not isinstance(line, int) or line < 1 for line in line_numbers):
             raise ValueError(f"invalid line number for {path}")
+        if not line_numbers:
+            raise ValueError(f"changed manifest production Java entry must contain changed lines: {path}")
         sources.append(ChangedSource(path, frozenset(line_numbers)))
     return tuple(sorted(sources, key=lambda source: source.path))
 
@@ -434,8 +442,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."), help="目标仓库根目录")
     parser.add_argument("--design", type=Path, required=True, help="当前批准的 Design")
-    parser.add_argument("--base", default="HEAD", help="执行开始的 Git 基线")
-    parser.add_argument("--changed-manifest", type=Path, help="执行归因生成的临时 changed-line JSON")
+    parser.add_argument("--base", required=True, help="记录在 Apply 状态中的起始 HEAD")
+    parser.add_argument(
+        "--changed-manifest",
+        type=Path,
+        help="可选 TASK 归因；必须与 Git 推导的生产 Java 增量完全一致",
+    )
     parser.add_argument("--report", action="append", type=Path, help="JaCoCo XML；可重复传入")
     parser.add_argument("--run", action="store_true", help="先运行通用 Maven/Gradle 覆盖率任务")
     parser.add_argument("--build-tool", choices=("auto", "maven", "gradle"), default="auto")
@@ -448,6 +460,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         help="未使用 --run 时，JaCoCo 报告不得早于此 Unix 时间",
     )
+    parser.add_argument("--quality-candidate-sha256")
     return parser
 
 
@@ -485,7 +498,9 @@ def _emit_result(
     candidate_hash: str,
     source_hashes: Mapping[str, str],
     design_sha256: str,
+    start_head: str,
     json_output: Path | None,
+    quality_candidate_sha256: str | None,
 ) -> int:
     payload = coverage_result.as_dict()
     payload["reports"] = [str(report) for report in reports]
@@ -496,7 +511,10 @@ def _emit_result(
     payload["candidate_sha256"] = candidate_hash
     payload["source_sha256"] = dict(sorted(source_hashes.items()))
     payload["design_sha256"] = design_sha256
+    payload["start_head"] = start_head
+    payload["quality_candidate_sha256"] = quality_candidate_sha256
     payload["generated_at"] = time.time()
+    payload["evidence_sha256"] = evidence_sha256(payload)
     print(_render_text(coverage_result))
     _write_json(json_output, payload)
     if coverage_result.status == "unmeasurable":
@@ -514,17 +532,36 @@ def _run_requested_build(args: argparse.Namespace, repo: Path) -> None:
         raise RuntimeError(f"Coverage build failed ({build_exit}): {shlex.join(command)}")
 
 
-def _load_changed_sources(args: argparse.Namespace, repo: Path) -> tuple[ChangedSource, ...]:
-    if args.changed_manifest:
-        return load_changed_manifest(args.changed_manifest)
-    return collect_changed_sources(repo, args.base)
+def _load_changed_sources(
+    args: argparse.Namespace,
+    repo: Path,
+    start_head: str,
+) -> tuple[ChangedSource, ...]:
+    actual = collect_changed_sources(repo, start_head)
+    if not args.changed_manifest:
+        return actual
+    declared = load_changed_manifest(args.changed_manifest)
+    actual_map = {source.path: source.lines for source in actual}
+    declared_map = {source.path: source.lines for source in declared}
+    if declared_map != actual_map:
+        raise ValueError(
+            "changed manifest production Java scope must exactly match the Git diff: "
+            f"declared={sorted(declared_map)}, actual={sorted(actual_map)}"
+        )
+    return actual
 
 
 def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _coverage_candidate_hash(repo: Path, sources: Sequence[ChangedSource]) -> str:
+def _coverage_candidate_hash(
+    repo: Path,
+    sources: Sequence[ChangedSource],
+    reports: Sequence[Path] = (),
+    line_threshold: float = DEFAULT_LINE_THRESHOLD,
+    branch_threshold: float = DEFAULT_BRANCH_THRESHOLD,
+) -> str:
     digest = hashlib.sha256()
     for source in sources:
         digest.update(source.path.encode("utf-8"))
@@ -534,6 +571,14 @@ def _coverage_candidate_hash(repo: Path, sources: Sequence[ChangedSource]) -> st
         if source_path.is_file():
             digest.update(b"\0")
             digest.update(source_path.read_bytes())
+    digest.update(b"thresholds\0")
+    digest.update(f"{line_threshold:.12g},{branch_threshold:.12g}".encode("ascii"))
+    for report in sorted(reports, key=lambda path: str(path)):
+        digest.update(b"report\0")
+        digest.update(str(report).encode("utf-8"))
+        digest.update(b"\0")
+        if report.is_file():
+            digest.update(_file_sha256(report).encode("ascii"))
     return digest.hexdigest()
 
 
@@ -591,19 +636,30 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         design_path = args.design if args.design.is_absolute() else repo / args.design
         design_sha256 = _file_sha256(design_path)
+        start_head = _run_git(repo, ["rev-parse", "--verify", f"{args.base}^{{commit}}"]).strip()
         _validate_thresholds(args.line_threshold, args.branch_threshold)
         if not args.run and args.report_not_before is None:
             raise ValueError("--report-not-before is required unless --run is used")
         report_not_before = time.time() if args.run else args.report_not_before
         assert report_not_before is not None
         _run_requested_build(args, repo)
-        changed_sources = _load_changed_sources(args, repo)
-        candidate_hash = _coverage_candidate_hash(repo, changed_sources)
-        source_hashes = _source_hashes(repo, changed_sources)
         reports = _resolve_reports(repo, args.report, report_not_before)
+        changed_sources = _load_changed_sources(args, repo, start_head)
+        candidate_hash = _coverage_candidate_hash(
+            repo,
+            changed_sources,
+            reports,
+            args.line_threshold,
+            args.branch_threshold,
+        )
+        source_hashes = _source_hashes(repo, changed_sources)
         if not changed_sources:
             coverage_result = calculate_coverage((), {}, args.line_threshold, args.branch_threshold)
-            return _emit_result(coverage_result, (), candidate_hash, source_hashes, design_sha256, args.json_output)
+            return _emit_result(
+                coverage_result, (), candidate_hash, source_hashes,
+                design_sha256, start_head, args.json_output,
+                args.quality_candidate_sha256,
+            )
         if not reports:
             raise RuntimeError("未找到 JaCoCo XML 报告；请使用 --report 或 --run")
         stale_sources = _stale_sources(repo, changed_sources, reports)
@@ -616,7 +672,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
             args.line_threshold,
             args.branch_threshold,
         )
-        return _emit_result(coverage_result, reports, candidate_hash, source_hashes, design_sha256, args.json_output)
+        return _emit_result(
+            coverage_result, reports, candidate_hash, source_hashes,
+            design_sha256, start_head, args.json_output,
+            args.quality_candidate_sha256,
+        )
     except (OSError, RuntimeError, ValueError, ElementTree.ParseError) as error:
         print(f"覆盖率验证无法验证：{error}", file=sys.stderr)
         return UNMEASURABLE_EXIT

@@ -9,7 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills/pretty-executing/scripts"))
 
-from validate_execution import ExecutionEvidence, validate_execution  # noqa: E402
+from validate_execution import ExecutionEvidence, evidence_candidate_sha256, validate_execution  # noqa: E402
+from evidence_binding import evidence_sha256  # noqa: E402
 
 DESIGN = """# Example Design
 ## 实施影响
@@ -31,10 +32,11 @@ EXECUTION = """# Example Execution
 | 门禁 | 证据 | 结果 |
 | --- | --- | --- |
 | Design TASK 与真实 Diff | matrix.json | 通过 |
-| 机械 Gate 与独立审查 | quality.json | 通过 |
+| 机械 Gate | quality.json | 通过 |
 | 编译与相关测试 | build.json | 通过 |
 | 新增/修改测试实际执行 | tests.json | 通过 |
 | 增量覆盖率 | coverage.json | 通过 |
+| 最终独立审查 | review.json | 通过 |
 ## 未验证范围
 - 无
 ## 结论与恢复点
@@ -57,15 +59,42 @@ class ExecutionValidatorTest(unittest.TestCase):
         self.source.write_text("final class Service {}\n", encoding="utf-8")
         design_hash = hashlib.sha256(self.design.read_bytes()).hexdigest()
         source_hash = hashlib.sha256(self.source.read_bytes()).hexdigest()
-        self.quality = {"candidate_sha256": "quality", "design_sha256": design_hash, "source_sha256": {"src/main/java/example/Service.java": source_hash}, "production_java": True, "passed": True}
-        self.coverage = {"candidate_sha256": "coverage", "design_sha256": design_hash, "source_sha256": {"src/main/java/example/Service.java": source_hash}, "status": "pass", "line_percentage": 100.0, "branch_percentage": 98.91}
-        self.tests = {"candidate_sha256": "tests", "design_sha256": design_hash, "source_sha256": {}, "status": "pass", "passed": True}
-        self.build = {"design_sha256": design_hash, "quality_candidate_sha256": "quality", "coverage_candidate_sha256": "coverage", "test_candidate_sha256": "tests", "commands": [{"kind": kind, "exit_code": 0, "finished_at": 101} for kind in ("compile", "new_tests", "regression_tests")]}
+        start_head = "1234567abcdef1234567890abcdef1234567890a"
+        self.quality = {"candidate_sha256": "quality", "start_head": start_head, "design_sha256": design_hash, "source_sha256": {"src/main/java/example/Service.java": source_hash}, "production_java": True, "passed": True}
+        self.coverage = {"candidate_sha256": "coverage", "start_head": start_head, "design_sha256": design_hash, "source_sha256": {"src/main/java/example/Service.java": source_hash}, "status": "pass", "line_percentage": 100.0, "branch_percentage": 98.91}
+        self.tests = {"candidate_sha256": "tests", "quality_candidate_sha256": "quality", "design_sha256": design_hash, "source_sha256": {}, "status": "pass", "passed": True}
+        self.coverage["quality_candidate_sha256"] = "quality"
+        self.build = {"start_head": start_head, "design_sha256": design_hash, "quality_candidate_sha256": "quality", "commands": [{"kind": kind, "exit_code": 0, "finished_at": 101} for kind in ("compile", "new_tests", "regression_tests")]}
+        self.build["candidate_sha256"] = evidence_candidate_sha256(self.build)
+        self.quality["pre_review_gate"] = {
+            "quality_candidate_sha256": "quality",
+            "build_candidate_sha256": self.build["candidate_sha256"],
+            "test_evidence_sha256": "tests-evidence",
+            "coverage_evidence_sha256": "coverage-evidence",
+        }
+        self.tests["evidence_sha256"] = "tests-evidence"
+        self.coverage["evidence_sha256"] = "coverage-evidence"
+        self.refresh_evidence_hashes()
+
+    def refresh_evidence_hashes(self) -> None:
+        for payload in (self.coverage, self.tests):
+            payload["evidence_sha256"] = evidence_sha256(payload)
+        self.quality["pre_review_gate"]["test_evidence_sha256"] = self.tests["evidence_sha256"]
+        self.quality["pre_review_gate"]["coverage_evidence_sha256"] = self.coverage["evidence_sha256"]
+        self.quality["evidence_sha256"] = evidence_sha256(self.quality)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
     def validate(self, document: str = EXECUTION) -> list[str]:
+        self.build["candidate_sha256"] = evidence_candidate_sha256(self.build)
+        self.quality["pre_review_gate"]["build_candidate_sha256"] = self.build["candidate_sha256"]
+        self.refresh_evidence_hashes()
+        self.build["coverage_evidence_sha256"] = self.coverage["evidence_sha256"]
+        self.build["test_evidence_sha256"] = self.tests["evidence_sha256"]
+        self.build["candidate_sha256"] = evidence_candidate_sha256(self.build)
+        self.quality["pre_review_gate"]["build_candidate_sha256"] = self.build["candidate_sha256"]
+        self.refresh_evidence_hashes()
         return validate_execution(document, DESIGN, self.design, ExecutionEvidence(self.quality, self.coverage, self.build, self.tests))
 
     def test_accepts_design_bound_execution_and_exact_coverage(self) -> None:
@@ -90,6 +119,17 @@ class ExecutionValidatorTest(unittest.TestCase):
         self.assertIn("quality evidence is stale for src/main/java/example/Service.java", errors)
         self.assertIn("coverage evidence is stale for src/main/java/example/Service.java", errors)
 
+    def test_rejects_tampered_coverage_evidence(self) -> None:
+        self.validate()
+        self.coverage["line_percentage"] = 99.0
+        errors = validate_execution(
+            EXECUTION,
+            DESIGN,
+            self.design,
+            ExecutionEvidence(self.quality, self.coverage, self.build, self.tests),
+        )
+        self.assertIn("coverage evidence evidence_sha256 does not match its content", errors)
+
     def test_latest_failed_build_command_overrides_earlier_success(self) -> None:
         self.build["commands"].append({"kind": "compile", "exit_code": 1, "finished_at": 102})
         self.assertIn("latest build evidence failed: compile", self.validate())
@@ -101,6 +141,33 @@ class ExecutionValidatorTest(unittest.TestCase):
     def test_rejects_stale_candidate_binding(self) -> None:
         self.build["quality_candidate_sha256"] = "older-quality"
         self.assertIn("build evidence has stale quality_candidate_sha256", self.validate())
+
+    def test_rejects_test_evidence_from_another_frozen_candidate(self) -> None:
+        self.tests["quality_candidate_sha256"] = "older-quality"
+        self.assertIn(
+            "test evidence does not match the frozen quality candidate",
+            self.validate(),
+        )
+
+    def test_rejects_review_started_before_final_coverage_evidence(self) -> None:
+        self.validate()
+        self.quality["pre_review_gate"]["coverage_evidence_sha256"] = "older-coverage"
+        self.quality["evidence_sha256"] = evidence_sha256(self.quality)
+        self.assertIn(
+            "final Reviewer started before stable coverage_evidence_sha256",
+            validate_execution(
+                EXECUTION,
+                DESIGN,
+                self.design,
+                ExecutionEvidence(self.quality, self.coverage, self.build, self.tests),
+            ),
+        )
+
+    def test_rejects_evidence_from_a_different_starting_head(self) -> None:
+        self.coverage["start_head"] = "abcdef0123456789abcdef0123456789abcdef01"
+        errors = self.validate()
+        self.assertTrue(any("starting HEAD" in error for error in errors))
+        self.assertIn("quality, coverage, and build evidence use different starting HEADs", errors)
 
     def test_stopped_report_does_not_require_successful_commands(self) -> None:
         document = EXECUTION.replace("- 状态：完成", "- 状态：停止：测试环境不可用")
@@ -157,6 +224,7 @@ class ExecutionValidatorTest(unittest.TestCase):
             "- 路由与审查：独立 reviewer 已完成。",
             "- DDL：已交付、未执行、未进行数据库验证。\n- 路由与审查：独立 reviewer 已完成。",
         )
+        self.validate()
         self.assertEqual(
             [],
             validate_execution(
@@ -169,6 +237,7 @@ class ExecutionValidatorTest(unittest.TestCase):
 
     def test_java_field_change_does_not_require_ddl_report(self) -> None:
         design = DESIGN.replace("Java、测试", "Java DTO 字段、测试")
+        self.validate()
         self.assertEqual(
             [],
             validate_execution(

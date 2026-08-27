@@ -77,6 +77,15 @@ class PreviewValidatorTest(unittest.TestCase):
         errors, _ = validate_preview(self.preview)
         self.assertTrue(any(error.startswith("DISABLED-TEST") for error in errors))
 
+    def test_rejects_generic_normalization_helper_proposal(self) -> None:
+        proposal = PREVIEW.replace(
+            "return repository.require(id);",
+            "return normalizeText(id.value());",
+        )
+        self.preview.write_text(proposal, encoding="utf-8")
+        errors, _ = validate_preview(self.preview)
+        self.assertTrue(any(error.startswith("GENERIC-NORMALIZATION-HELPER") for error in errors))
+
     def test_modify_path_must_exist_in_repository(self) -> None:
         self.preview.write_text(
             PREVIEW.replace("OrderService.java", "MissingService.java"),
