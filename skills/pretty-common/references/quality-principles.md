@@ -1,6 +1,6 @@
 # Java 代码与设计质量基线
 
-本文件只定义 Plan 代码提案与 Execution 真实增量共同遵守的质量原则。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，机械规则及阈值以 `../scripts/quality_contract_gate.py` 的规则注册表为准。
+本文件只定义 Plan 代码提案与 Execution 真实增量共同遵守的质量原则，必须严格遵循该质量原则生成代码。阶段流程见各 Skill，风险路由见 [quality-routing.md](quality-routing.md)，审查证据见 [quality-review-protocol.md](quality-review-protocol.md)，机械规则及阈值以 `../scripts/quality_contract_gate.py` 的规则注册表为准。
 
 ## QP-01 完整链路与规则归属
 
