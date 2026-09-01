@@ -156,9 +156,9 @@ def consistency_errors(
         errors.append("shared principles must define GENERIC-NORMALIZATION-HELPER as non-waivable")
     for index, item in enumerate(PRECEDENCE):
         if item not in principles:
-            errors.append(f"QP-03 precedence is missing: {item}")
+            errors.append(f"precedence rule is missing: {item}")
         if index and principles.find(PRECEDENCE[index - 1]) > principles.find(item):
-            errors.append("QP-03 precedence order is inconsistent")
+            errors.append("precedence order is inconsistent")
     if "风险路由" not in principles or "不定义风险路由" not in routing:
         errors.append("precedence and risk routing must be explicitly separated")
     if "只有执行阶段的真实可执行产物强制独立 Reviewer" not in review_protocol:

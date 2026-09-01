@@ -37,11 +37,14 @@ description: Create or revise a Java/Spring Design contract from an approved PRD
 
 运行 `scripts/validate_design.py` 做 Design 文档的机械校验，检查章节、TASK 字段、REQ/AC 覆盖、占位内容、Mermaid 和 DDL/DML 归属。它不检查生产代码、测试执行、覆盖率或运行质量；Design 阶段不运行 Quality Resolver。
 
-Design 只按需参考共享质量基线，确保技术合同中的边界、不变量、失败语义、职责和依赖方向与共享规则一致：
+生成 Design 时，必须依据 PRD、外部协议、Schema 和真实仓库事实，从当前受影响链路中提取并明确以下技术合同。只描述合同层语义；类、方法和模块细节放入“实施影响”。不适用项须明确说明“不适用”及原因，不得保留 TBD 或待定项：
 
-- [质量基线](../pretty-common/references/quality-principles.md)
-
-校验通过后请求用户 Review。用户审批的是业务和技术合同，不等于实现质量批准；Execution 首次写代码前仍须完成合同可执行性预检，发现缺失即返回 Design。
+- 入口、外部边界、职责归属、数据所有权和依赖方向；
+- 首个输入信任边界、必填/可选/默认语义和不变量；
+- 成功结果，以及查询未命中、数据损坏、非法输入和外部故障的可区分语义；
+- 查询/命令、副作用、协议可见的类型和返回值边界；
+- 公共验证入口和验证观察面；
+- 若涉及 DDL/DML，明确 DDL 仅作为代码库文件交付且不执行，配置数据 DML 由人工运维处理且不属于 Execution 交付物。
 
 ## 红线
 
