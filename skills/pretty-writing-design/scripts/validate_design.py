@@ -78,7 +78,7 @@ LOW_QUALITY_DIRECTIVE = re.compile(
     r"(?:添加|新增|保留|要求)[^\n。；;]{0,24}(?:中文步骤注释|普通\s*JavaDoc|步骤注释)",
     re.IGNORECASE,
 )
-QUALITY_EXCEPTION_EVIDENCE = re.compile(
+QUALITY_EXCEPTION_BASIS = re.compile(
     r"(?:外部|遗留|框架|兼容)[^\n]{0,80}(?:#|Schema|签名|测试)",
     re.IGNORECASE,
 )
@@ -180,8 +180,8 @@ def _quality_directive_errors(document: str) -> list[str]:
         if GENERIC_NORMALIZATION_DIRECTIVE.search(line):
             errors.append("Design 不得要求通用文本规范化 Helper；规范化必须由有领域归属的首个信任边界完成")
             continue
-        if LOW_QUALITY_DIRECTIVE.search(line) and not QUALITY_EXCEPTION_EVIDENCE.search(line):
-            errors.append("Design 不得用普通实现指令降级 Pretty 共享质量规则；合法外部或遗留例外必须绑定 Symbol 和事实证据")
+        if LOW_QUALITY_DIRECTIVE.search(line) and not QUALITY_EXCEPTION_BASIS.search(line):
+            errors.append("Design 不得用普通实现指令降级 Pretty 共享质量规则；合法外部或遗留例外必须绑定 Symbol 和可核查事实")
     return sorted(set(errors))
 
 
@@ -235,7 +235,7 @@ def _contract_ids(prd: str, prefix: str) -> set[str]:
     return set(re.findall(rf"^###\s+({prefix}-\d{{3}})[：:]", prd, re.MULTILINE))
 
 
-def _traceability_errors(design: str, prd: str) -> list[str]:
+def _contract_coverage_errors(design: str, prd: str) -> list[str]:
     impact = section_body(design, "实施影响")
     errors = []
     for prefix in ("REQ", "AC"):
@@ -259,7 +259,7 @@ def validate_design(design_path: Path) -> list[str]:
     except OSError as error:
         return [f"Design 需要同目录 prd.md：{error}"]
     errors = validate_design_document(design)
-    errors.extend(_traceability_errors(design, prd))
+    errors.extend(_contract_coverage_errors(design, prd))
     return errors
 
 

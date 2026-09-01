@@ -193,8 +193,8 @@ def consistency_errors(
             errors.append("Design must not require complete Java generation")
         if re.search(r"review-start|review-evidence(?:\.json)?|validate_design_review\.py", text):
             errors.append("Design must not orchestrate an independent Reviewer")
-        if "等待用户 Review" not in text or "证据" not in text:
-            errors.append("Design must end at evidence checks and user Review")
+        if "等待用户 Review" not in text:
+            errors.append("Design must end at mechanical checks and user Review")
     return sorted(set(errors))
 
 

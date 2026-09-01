@@ -1,8 +1,8 @@
 # Pretty 运行授权
 
-用户调用 Pretty Design 或 Apply，即授权本次运行直接创建、更新和清理必要的临时文件，并直接执行完成该流程所需的本地命令，无需逐文件、逐命令确认。
+用户调用 Pretty Apply，即授权本次运行直接创建、更新和清理必要的临时文件，并直接执行完成该流程所需的本地命令，无需逐文件、逐命令确认。
 
-Pretty 运行期临时文件的唯一位置是当前主题的 `docs/pretty/<topic>/tmp/<run-id>/`。Design 使用 `design-run.json`，Apply 使用 `execution-state.json` 作为登记清单；质量、测试、覆盖率、Resolver、矩阵和 Reviewer 证据都是 run 直属文件。Apply 仅允许一个固定的 `candidate/` 子目录作为 detached Git worktree。脚本拒绝其他目录、绝对 artifact 路径、`/private/tmp`、其他 topic 的 tmp 和路径穿越。
+Pretty Apply 运行期临时文件的唯一位置是当前主题的 `docs/pretty/<topic>/tmp/<run-id>/`。Apply 使用 `execution-state.json` 作为登记清单；质量、测试、覆盖率、Resolver、矩阵和 Reviewer 证据都是 run 直属文件。Apply 仅允许一个固定的 `candidate/` 子目录作为 detached Git worktree。脚本拒绝其他目录、绝对 artifact 路径、`/private/tmp`、其他 topic 的 tmp 和路径穿越。
 
 Maven/Gradle 自己管理的 `target/`、`build/`、Surefire 和 JaCoCo 报告保持项目约定位置；它们是构建输出，不是 Pretty 临时证据，也不由 Pretty 清理脚本删除。
 

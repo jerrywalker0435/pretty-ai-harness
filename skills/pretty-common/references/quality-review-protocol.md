@@ -1,6 +1,6 @@
 # Apply 最终独立审查协议
 
-只有 Apply 的真实可执行产物强制独立 Reviewer。Design 由机械校验、证据新鲜度和用户对业务/技术合同的审批负责；Design 不生成 Reviewer receipt。
+只有 Apply 的真实可执行产物强制独立 Reviewer。Design 由机械校验和用户对业务/技术合同的审批负责；Design 不生成 Reviewer receipt。
 
 ## 唯一 Reviewer 与启动条件
 
