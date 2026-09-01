@@ -1,6 +1,6 @@
 ---
 name: pretty-executing
-description: Apply an approved Java/Spring Design in an isolated Candidate Lane with evidence-bound quality gates and a single Promotion step.
+description: Execute an approved Java/Spring Design in an isolated Candidate Lane with evidence-bound quality gates and a single Promotion step.
 ---
 
 # 执行 Design
@@ -9,14 +9,14 @@ description: Apply an approved Java/Spring Design in an isolated Candidate Lane 
 
 按需读取：
 
-- [Apply Gate](references/quality-contract-gates.md)：执行矩阵、Slice Fast Gate、最终 Gate 和证据字段；
+- [执行 Gate](references/quality-contract-gates.md)：执行矩阵、Slice Fast Gate、最终 Gate 和证据字段；
 - [质量基线](../pretty-common/references/quality-principles.md)：QP-01～QP-11；
 - [质量路由](../pretty-common/references/quality-routing.md)：Resolver 风险和语义 owner；
 - [独立审查协议](../pretty-common/references/quality-review-protocol.md)：唯一最终 Reviewer；
 - [运行授权](../pretty-common/references/runtime-authorization.md)：topic run、Candidate Lane 和清理边界；
 - [Execution 模板](assets/execution.md)：最终报告结构。
 
-## Apply 协议
+## 执行协议
 
 1. 读取当前 `prd.md`、`design.md`、目标文件、最近邻实现、真实 Java/JDK/依赖和构建配置。检查运行相关路径干净；说明性文档可以保持脏状态。
 2. 创建或恢复同一 topic run 的 `execution-matrix.json`、`execution-state.json` 和 detached Candidate Lane。首次编辑前完成合同可执行性预检、共享规则包摘要和 Quality Resolver；预检失败立即返回 Design。

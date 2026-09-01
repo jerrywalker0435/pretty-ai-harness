@@ -195,7 +195,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."))
     parser.add_argument("--design", type=Path, required=True)
-    parser.add_argument("--base", help="Apply starting HEAD; derives current Git scope when no matrix is supplied")
+    parser.add_argument("--base", help="execution starting HEAD; derives current Git scope when no matrix is supplied")
     parser.add_argument("--execution-matrix", type=Path)
     parser.add_argument("--path", action="append", default=[])
     parser.add_argument("--output", type=Path, required=True)

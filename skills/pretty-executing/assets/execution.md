@@ -4,7 +4,6 @@
 
 - 执行依据：当前工作区最新 Design
 - 起始 HEAD：`<sha>`
-- 模式：`Apply / Resume`
 
 ## 基线
 

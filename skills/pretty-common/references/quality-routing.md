@@ -6,7 +6,7 @@
 
 Pretty Harness 决定阶段、审批、构建范围、证据格式和完成状态。冲突优先级唯一以 [quality-principles.md 的 QP-03](quality-principles.md#qp-03-约定优先) 为准；本文不定义风险路由之外的第二套优先级。本文只规定 Pretty 质量层内部的风险所有权：Resolver 决定必须检查哪些风险和主审者，专项 Skill 只提供适用的语义判断，其具体重构建议位于共享规则之后、仓库惯例之前。专项 Skill 自带命令、报告格式、审批流程和数值阈值不进入 Harness。真实 API、Schema 和依赖版本仍作为不可伪造的事实约束。
 
-本表服务 Apply 实现和最终独立 Reviewer。Design 阶段不启动 Reviewer；Execution Writer 在首次编辑前完成合同可执行性预检，最终 Reviewer 使用全部适用风险协议一次审完真实候选，不按风险拆分 Reviewer。
+本表服务执行实现和最终独立 Reviewer。执行 Writer 在首次编辑前完成合同可执行性预检，最终 Reviewer 使用全部适用风险协议一次审完真实候选，不按风险拆分 Reviewer。
 
 ## 风险所有权
 
@@ -31,7 +31,7 @@ Execution 对所有非平凡生产代码额外执行一次 `clean-code-guard`，
 1. 生成前由 `scripts/quality_resolver.py` 从执行矩阵和仓库事实派生规则与风险；Writer 只消费结果。
 2. Java 生产切片保守命中 `JAVA_OOD`、`JAVA_RUNTIME_RISK` 和 `BEHAVIOR_TEST`，再按观察到的边界、类型和变化轴事实累积其他风险；不确定时取并集。
 3. 每项风险必须绑定具体文件、symbol、调用链或合同事实，并使用表中的语义归属；最终仍由同一名独立 Reviewer 汇总结论。
-4. 候选出现新文件、Symbol、依赖或边界时增量运行 Resolver；批准合同内用 Apply `rebind` 更新矩阵与 Resolver 摘要，改变公共合同时返回 Design；完整候选冻结前对真实 Diff 复核一次。
+4. 候选出现新文件、Symbol、依赖或边界时增量运行 Resolver；批准合同内用执行编排器 `rebind` 更新矩阵与 Resolver 摘要，改变公共合同时返回上游合同；完整候选冻结前对真实 Diff 复核一次。
 5. 最终 Reviewer 检查 Resolver 是否漏掉新事实，但不能删除已派生风险；专项结论落实到职责、签名、异常、类型、测试或配置。
 
 普通专项不可用时，按共享基线完成同一语义检查并记录降级；公开 Interface、迁移、并发、安全或高风险架构缺少必要审查能力时停止并返回上游。

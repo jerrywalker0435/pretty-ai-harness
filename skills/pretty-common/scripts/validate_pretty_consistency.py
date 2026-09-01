@@ -132,7 +132,6 @@ def _threshold_errors(common_root: Path) -> list[str]:
 def consistency_errors(
     common_root: Path,
     *,
-    design_skill: Path | None = None,
     executing_skill: Path | None = None,
 ) -> list[str]:
     errors = list(registry_errors())
@@ -162,46 +161,30 @@ def consistency_errors(
             errors.append("QP-03 precedence order is inconsistent")
     if "风险路由" not in principles or "不定义风险路由" not in routing:
         errors.append("precedence and risk routing must be explicitly separated")
-    if "只有 Apply 的真实可执行产物强制独立 Reviewer" not in review_protocol:
-        errors.append("only Apply must require an independent Reviewer")
-    if "Design 不生成 Reviewer receipt" not in review_protocol:
-        errors.append("Design must not require a Reviewer receipt")
-    if design_skill is not None and _skill_document(design_skill) is None:
-        errors.append(f"Design Skill path is missing SKILL.md: {design_skill}")
+    if "只有执行阶段的真实可执行产物强制独立 Reviewer" not in review_protocol:
+        errors.append("execution must require an independent Reviewer")
     if executing_skill is not None and _skill_document(executing_skill) is None:
         errors.append(f"Executing Skill path is missing SKILL.md: {executing_skill}")
     executing_document = _skill_document(executing_skill)
     if executing_document:
         text = executing_document.read_text(encoding="utf-8")
-        if "validate_design.py" in text:
-            errors.append("Execution must not call validate_design.py")
         if re.search(r"并行运行[^\n]*Reviewer[^\n]*(?:覆盖率|编译|回归)", text):
             errors.append("final Reviewer must start after objective coverage/build/test gates")
         if "合同可执行性预检" not in text:
             errors.append("Execution must perform a contract executability preflight")
         if "唯一最终 Reviewer" not in text and "唯一最终独立 Reviewer" not in text:
-            errors.append("Apply must retain one final independent Reviewer")
+            errors.append("execution must retain one final independent Reviewer")
         for required in ("Candidate Lane", "Promotion", "register", "resume", "rebind", "reopen"):
             if required not in text:
-                errors.append(f"Apply workflow is missing {required}")
+                errors.append(f"execution workflow is missing {required}")
         if "Slice Fast Gate" not in text:
-            errors.append("Apply workflow must retain Slice Fast Gate")
-    design_document = _skill_document(design_skill)
-    if design_document:
-        text = design_document.read_text(encoding="utf-8")
-        if "生成完整 Java" in text and "不生成完整 Java" not in text:
-            errors.append("Design must not require complete Java generation")
-        if re.search(r"review-start|review-evidence(?:\.json)?|validate_design_review\.py", text):
-            errors.append("Design must not orchestrate an independent Reviewer")
-        if "等待用户 Review" not in text:
-            errors.append("Design must end at mechanical checks and user Review")
+            errors.append("execution workflow must retain Slice Fast Gate")
     return sorted(set(errors))
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--common-root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--design-skill", type=Path)
     parser.add_argument("--executing-skill", type=Path)
     parser.add_argument("--output", type=Path)
     return parser
@@ -211,14 +194,13 @@ def main(arguments: Iterable[str] | None = None) -> int:
     args = _build_parser().parse_args(list(arguments) if arguments is not None else None)
     errors = consistency_errors(
         args.common_root,
-        design_skill=args.design_skill,
         executing_skill=args.executing_skill,
     )
     payload = {
         "schema_version": 1,
         "pretty_bundle_sha256": bundle_sha256(
             args.common_root,
-            [*_skill_files(args.design_skill), *_skill_files(args.executing_skill)],
+            _skill_files(args.executing_skill),
         ),
         "passed": not errors,
         "errors": errors,

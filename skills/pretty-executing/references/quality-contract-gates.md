@@ -1,13 +1,13 @@
-# Apply 质量合同 Gate
+# 执行质量合同 Gate
 
-本文件只定义 Apply 的 Gate 时机、证据结构和绑定关系。QP 内容见共享质量基线，风险 owner 见质量路由/registry，阈值只从 `quality_registry.py` 读取。
+本文件只定义执行阶段的 Gate 时机、证据结构和绑定关系。QP 内容见共享质量基线，风险 owner 见质量路由/registry，阈值只从 `quality_registry.py` 读取。
 
 ## 1. 首次编辑前
 
 在 Candidate Lane 创建并写入代码前，Harness 必须验证：
 
 - 当前 topic 的 `prd.md`、`design.md` 可读，Design TASK 可载入执行矩阵；Execution 不重新运行 Design 校验或审查；
-- 目标运行路径干净，说明性文档不影响 Apply；
+- 目标运行路径干净，说明性文档不影响执行；
 - 当前 run 有 `execution-matrix.json` 和 `execution-state.json`，状态、起始 HEAD、Design 摘要、共享规则包摘要和路径快照一致；
 - `execution_contract.py` 的 `contract_preflight` 四个区域均为 `clear` 或有理由的 `not_applicable`；
 - 骨架矩阵先由 TASK/切片合同组成，再由 `quality_resolver.py` 派生并绑定 `resolver_rules`、`resolver_risks`；Writer 不得自报、删除或降级路由；
@@ -47,7 +47,7 @@ Slice Fast Gate 不运行正式 JaCoCo、全量回归或独立 Reviewer。目标
 
 最终证据必须来自同一个 `start_head`、Design SHA、execution-matrix SHA、shared-bundle SHA、resolver SHA 和冻结 `candidate_sha256`。`quality.json`、`build.json`、`tests.json`、`coverage.json` 的 evidence 摘要不可跨 run 拼接。
 
-## 4. Reviewer 与 Promotion
+## 4. Reviewer 与落地
 
 objective Gate 全部通过后才启动一名独立 Reviewer。receipt 至少绑定：
 
@@ -69,7 +69,7 @@ objective Gate 全部通过后才启动一名独立 Reviewer。receipt 至少绑
 
 `review_required` 必须逐条给出 Symbol、合同事实和 evidence；机械 `error` 不可豁免。Reviewer 或 objective Gate 失败必须由 `apply_run.py reopen --reason ...` 显式恢复写权限；修改后重新计算候选和受影响证据。
 
-只有 `apply_run.py promote` 可以修改目标工作区。Promotion 前检查目标 HEAD、目标运行路径、冻结 patch 和候选摘要，先 `git apply --check`，应用后重新计算目标 Diff。摘要不一致立即停止并保留 Lane。
+只有 `apply_run.py promote` 可以修改目标工作区。落地前检查目标 HEAD、目标运行路径、冻结 patch 和候选摘要，先 `git apply --check`，应用后重新计算目标 Diff。摘要不一致立即停止并保留 Lane。
 
 ## 5. 证据与 DDL 边界
 

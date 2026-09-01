@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a diagnostic Java scan with the shared Pretty quality rule registry.
 
-Formal Apply evidence is produced only by ``verify_quality_contract.py``.  This
+Formal execution evidence is produced only by ``verify_quality_contract.py``.  This
 module remains the reusable scanner and reviewer-finding validator; its CLI is
 intentionally source-scoped diagnostics and never emits formal evidence.
 """

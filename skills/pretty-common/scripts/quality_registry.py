@@ -76,7 +76,7 @@ RISK_OWNERS = {risk.code: risk.owner for risk in RISKS}
 
 
 PRECEDENCE = (
-    "已批准 PRD / Design",
+    "已批准执行合同",
     "Pretty 共享质量规则",
     "专项 Skill 的非强制建议",
     "真实仓库既有惯例",
