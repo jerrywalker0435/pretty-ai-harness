@@ -9,6 +9,10 @@ description: Implement or resume an approved Java/Spring Plan, independently rev
 
 先读取 [报告模板](assets/execution.md)、[Execution Gates](references/quality-contract-gates.md) 以及共享的[质量基线](../pretty-common/references/quality-principles.md)、[质量路由](../pretty-common/references/quality-routing.md)和[独立审查协议](../pretty-common/references/quality-review-protocol.md)。
 
+生成真实代码时
+- 不复制现有代码的命名、排版、实现习惯
+- 按质量基线与质量路由规范生成代码
+- 仅查看现有代码的接口契约、依赖关系和业务边界，确保能集成
 ## 优先级与范围
 
 依次遵守：用户当前明确要求、当前已批准 Plan、Pretty 共享质量规则、真实仓库既有惯例、`AGENTS.md`、Trellis 质量规范。真实 API、Schema、依赖版本和构建结果是不可伪造的事实；事实使 Plan 无法实现时返回 Plan。Reviewer 不得用 AGENTS/Trellis 的偏好推翻 Plan、阻断已批准实现或扩大范围。

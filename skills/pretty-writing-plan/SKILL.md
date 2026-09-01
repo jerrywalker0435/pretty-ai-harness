@@ -3,10 +3,16 @@ name: pretty-writing-plan
 description: Create, revise, or review a Java/Spring implementation Plan from an approved Design, its PRD, domain context, and real repository code.
 ---
 
-# 编写 Java/Spring Implementation Plan
+# 编写  Plan
 
 把已批准 Design 转成可审查、可落地的核心代码实施方案。Plan 是唯一最终产物，也是 Execution 的规范实现基线；本阶段只读，不修改或编译项目代码。
+先读取 [报告模板](assets/execution.md)、[Execution Gates](references/quality-contract-gates.md) 以及共享的[质量基线](../pretty-common/references/quality-principles.md)、[质量路由](../pretty-common/references/quality-routing.md)和[独立审查协议](../pretty-common/references/quality-review-protocol.md)。逻辑 TASK 还读取 `tdd`；不可用时读取 [测试设计](references/test-design.md)。不调用额外草稿 Skill，不复制共享规则到本文件或 Plan。
 
+
+Plan中生成代码详情时
+- 不复制现有代码的命名、排版、实现习惯
+- 按质量基线与质量路由规范生成代码
+- 仅查看现有代码的接口契约、依赖关系和业务边界，确保能集成
 ## 优先级与范围
 
 依次遵守：用户当前明确要求、已批准 PRD/Design、Pretty 共享质量规则、真实仓库既有惯例、`AGENTS.md`、Trellis 质量规范。真实 API、Schema、依赖版本和调用链是不可伪造的事实；既有坏实践不是新代码范本。下层规则与上层明确合同冲突时以上层为准，事实使合同不可实现时返回 Design，不得猜测接口或强行落地。
@@ -26,16 +32,6 @@ description: Create, revise, or review a Java/Spring implementation Plan from an
 5. 不存在会改变业务结果、外部合同、Interface、所有权、依赖方向或长期扩展点的未决问题。
 
 业务语义不明返回 PRD，技术合同不明返回 Design。只接受 `docs/pretty/<topic>/plan.md`，topic 使用小写 kebab-case。
-
-## 唯一共享规则
-
-创建、修订和审查都完整读取：
-
-- [共享质量基线](../pretty-common/references/quality-principles.md)
-- [质量路由](../pretty-common/references/quality-routing.md)
-- [独立审查协议](../pretty-common/references/quality-review-protocol.md)
-
-逻辑 TASK 还读取 `tdd`；不可用时读取 [测试设计](references/test-design.md)。不调用额外草稿 Skill，不复制共享规则到本文件或 Plan。
 
 ## 工作流
 
