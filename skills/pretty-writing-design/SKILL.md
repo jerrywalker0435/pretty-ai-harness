@@ -1,6 +1,6 @@
 ---
 name: pretty-writing-design
-description: Create or revise a Java/Spring Design contract from an approved PRD for a later Apply execution.
+description: Create or revise a Java/Spring Design contract from an approved PRD for later Plan or direct execution.
 ---
 
 # 编写 Design
@@ -10,8 +10,8 @@ description: Create or revise a Java/Spring Design contract from an approved PRD
 ## 输入与交付
 
 - 读取同目录 `prd.md`、适用 Context/Context Map/ADR、构建配置和受影响真实代码；以这些材料和真实实现为依据，不猜测 API、Schema 或依赖。
-- 默认写入 `docs/pretty/<topic>/design.md`，topic 使用小写 kebab-case。完成后停止，请用户 Review；后续由用户调用 `$pretty-executing` Apply。
-- 交付只报告机械结构校验结果并等待用户 Review；不生成 Design Reviewer receipt，也不启动独立 Reviewer。真实实现质量只在 Apply 最终 Gate 证明。
+- 默认写入 `docs/pretty/<topic>/design.md`，topic 使用小写 kebab-case。完成后停止，请用户 Review；后续由用户调用 `$pretty-executing`，未指定 `Plan` 时直接执行，明确指定 `Plan` 时生成实施计划。
+- 交付只报告机械结构校验结果并等待用户 Review；不生成 Design Reviewer receipt，也不启动独立 Reviewer。真实实现质量由后续 `$pretty-executing` 的 Plan 或执行模式证明。
 
 ## Design 合同门禁
 
@@ -35,7 +35,7 @@ description: Create or revise a Java/Spring Design contract from an approved PRD
 
 ## 文档校验与用户 Review
 
-运行 `scripts/validate_design.py` 做 Design 文档的机械校验，检查章节、TASK 字段、REQ/AC 覆盖、占位内容、Mermaid 和 DDL/DML 归属。它不检查生产代码、测试执行、覆盖率或运行质量；Design 阶段不运行 Quality Resolver。
+运行 `scripts/validate_design.py` 做 Design 文档的机械校验，检查章节、TASK 字段、REQ/AC 覆盖、占位内容、Mermaid 和 DDL/DML 归属。它不检查生产代码、测试执行、覆盖率或运行质量。
 
 生成 Design 时，必须依据 PRD、外部协议、Schema 和真实仓库事实，从当前受影响链路中提取并明确以下技术合同。只描述合同层语义；类、方法和模块细节放入“实施影响”。不适用项须明确说明“不适用”及原因，不得保留 TBD 或待定项：
 
@@ -48,7 +48,7 @@ description: Create or revise a Java/Spring Design contract from an approved PRD
 
 ## 红线
 
-- 不创建 `plan.md` 或新的规范阶段。
+- 不创建 `execution-plan.md` 或新的规范阶段。
 - 不修改 PRD、生产代码、测试代码、配置数据或治理文档；Context/ADR 由 `domain-modeling` 维护。
 - 不把逐文件实施计划冒充设计边界，不保留占位词、待定技术选择或未经 PRD、外部协议或真实仓库事实支持的兼容承诺。
 - 不把配置数据 DML、发布、部署、激活、回滚或数据库执行分配给 Execution。

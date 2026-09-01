@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Executing"
-  short_description: "Execute an approved Java/Spring Design"
-  default_prompt: "Use $pretty-executing to execute the approved Java/Spring Design in an isolated Candidate Lane and pass its evidence-bound quality gates."
+  short_description: "生成 Java/Spring 实现或详细执行计划"
+  default_prompt: "Use $pretty-executing to implement the Java/Spring task directly, unless the user explicitly requests Plan."
