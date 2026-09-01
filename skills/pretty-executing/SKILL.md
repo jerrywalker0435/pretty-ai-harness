@@ -29,14 +29,9 @@ Design 或 execution plan 不得覆盖用户当前明确的目标和授权；文
 - AGENTS、Trellis。
 
 该顺序只解决真实冲突，不改变质量 路由或审查强度；质量原则始终适用，专项路由根据执行合同与仓库事实选择。
-执行合同中的普通实现偏好不能伪装成业务合同来覆盖质量原则。外部或遗留合同确需例外时，
-必须绑定具体 symbol、不可修改原因，以及测试、Schema 或签名事实。真实 API、Schema、依赖
-版本和运行结果是不可伪造的事实约束；禁止参考既有实现方式，只能通过质量则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 以
-真实构建配置和已安装版本为准。
-
-输入可以只有 Prompt。若没有可复用的 topic，从 Prompt 生成小写 kebab-case topic；在写入
-文档或开始执行前展示该 topic 并确认。Design 或 execution plan 已位于
-`docs/pretty/<topic>/` 时，使用其所在 topic。
+执行合同中的普通实现偏好不能伪装成业务合同来覆盖质量原则。
+外部或遗留合同确需例外时，必须绑定具体 symbol、不可修改原因，以及测试、Schema 或签名事实。真实 API、Schema、依赖版本和运行结果是不可伪造的事实约束；禁止参考既有实现方式，只能通过质量原则或适用的专项建议。稳定业务规则不做成模式码、SpEL 或配置开关。Java 版本与依赖 API 以真实构建配置和已安装版本为准。
+输入可以只有 Prompt。若没有可复用的 topic，从 Prompt 生成小写 kebab-case topic；在写入文档或开始执行前展示该 topic 并确认。Design 或 execution plan 已位于`docs/pretty/<topic>/` 时，使用其所在 topic。
 
 ## 模式选择
 
@@ -107,6 +102,23 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
    不以豁免、删除规则或降低阈值掩盖问题。
 4. 项目验证：执行仓库现有的编译和相关测试入口，不跳过测试。Java 项目必须运行
    `scripts/verify_incremental_coverage.py`，使用 JaCoCo 检查本次生产 Java 增量覆盖率。
+
+### 规范化与防御式容错约束
+
+规范化责任由首次信任边界决定，不由方法名决定。生成或 Review 时必须先判定值来自外部请求、
+消息反序列化、持久化、内部调用还是值对象；只有首次进入信任域的入口可以依据协议、Schema
+或既有公共合同建立一次不变量。
+
+- 禁止新增或仅改名保留规范化 Helper，例如 `trimToNull` → `normalizeTaskCenterText`；
+  `normalize*`、`trim*`、`clean*` 等领域化名称不能绕过边界审查。
+- 内部方法和调用端信任已成立的值，不重复 `StringUtils.hasText`、`trim`、大小写折叠或
+  `null` 防御。持久化值、ID 和 Code 默认直接使用；没有明确合同时不得规范化。
+- 禁止引入 `firstNonBlank`、`coalesce`、`fallback*` 或手写等价逻辑把一个字段替换成另一个
+  字段。必填值缺失应保留并传播可诊断的失败语义，不得静默转成 `null`、空集合或成功。
+- 真正位于首次信任边界的直接规范化必须能指出其协议、Schema 或公共合同依据；无法证明时
+  停止并报告合同缺失。机械门禁发现 `NORMALIZATION-HELPER`、`IMPLICIT-FIELD-FALLBACK`
+  时不得豁免；`REPEATED-NORMALIZATION`、`IDENTIFIER-NORMALIZATION` 和
+  `NORMALIZATION-OWNERSHIP` 必须由 Reviewer 给出基于事实的结论。
 
 新增或修改的测试必须实际执行并观察业务结果、状态、异常或完整边界请求；不得通过构建参数、
 过滤器或测试发现配置跳过测试。测试命令失败时进入修复和重新验证流程。

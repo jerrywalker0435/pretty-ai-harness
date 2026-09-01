@@ -26,9 +26,14 @@ RULES = (
     RuleSpec("FIELD-INJECTION", ERROR, "production dependency uses field injection"),
     RuleSpec("CONTROL-FLOW-SKIP", ERROR, "continue obscures the business control flow"),
     RuleSpec("MANUAL-DURATION-LOGGING", ERROR, "manual wall-clock timing is used for logging"),
+    RuleSpec("NORMALIZATION-HELPER", ERROR, "a normalization helper hides the first trust boundary and invites repeated defense"),
     RuleSpec("GENERIC-NORMALIZATION-HELPER", ERROR, "generic text normalization hides boundary ownership"),
+    RuleSpec("IMPLICIT-FIELD-FALLBACK", ERROR, "an undocumented alternate field hides missing or corrupt data"),
     RuleSpec("DISABLED-TEST", ERROR, "a changed test is disabled or conditionally skipped"),
     RuleSpec("NULL-RETURN", REVIEW, "return null requires an explicit nullable contract"),
+    RuleSpec("REPEATED-NORMALIZATION", REVIEW, "the same method or boundary performs redundant text normalization"),
+    RuleSpec("IDENTIFIER-NORMALIZATION", REVIEW, "an ID or Code is normalized without a proven boundary contract"),
+    RuleSpec("NORMALIZATION-OWNERSHIP", REVIEW, "normalization ownership must be justified by the first trust boundary"),
     RuleSpec("WILDCARD-IMPORT", REVIEW, "wildcard import requires review"),
     RuleSpec("OPTIONAL-GET", REVIEW, "Optional get/isPresent usage requires contract review"),
     RuleSpec("BOOLEAN-FLAG", REVIEW, "boolean parameter may hide two commands"),
@@ -52,4 +57,3 @@ def registry_errors() -> list[str]:
         if not rule.description.strip():
             errors.append(f"quality rule {rule.code} needs a description")
     return errors
-

@@ -17,7 +17,11 @@
 - 在值首次进入信任域时建立不变量，内部代码信任已经成立的合同。
 - 区分必填、可选、可默认、外部不可信、持久化记录和内部值。
 - `trim`、大小写折叠和默认值等规范化只能放在首个信任边界，并由协议、Schema 或既有公共合同证明；内部方法不得为假想脏数据重复规范化，也不得悄悄改变标识符和值对象语义。
-- 禁止创建或调用 `normalizeText`、`normalizeString`、`cleanText`、`trimText`、`trimToNull` 及同类无领域归属的通用文本规范化 Helper。规范化、默认值、容错恢复和校验不得合并成模糊操作。确需转换时，由首个信任边界的领域类型、协议类型或兼容 Adapter 以具体合同命名并建立一次不变量。`GENERIC-NORMALIZATION-HELPER` 是不可豁免的机械错误；领域边界内的直接规范化仍由 `NORMALIZATION-OWNERSHIP` 审查合同与值语义。
+- 规范化责任由首次信任边界决定，不由方法名决定。禁止创建或调用 `normalizeText`、`normalizeString`、`cleanText`、`trimText`、`trimToNull` 及同类规范化 Helper；把 `trimToNull` 重命名为 `normalizeTaskCenterText`，但没有改变责任边界，仍属于同一违规。`NORMALIZATION-HELPER` 和 `GENERIC-NORMALIZATION-HELPER` 是不可豁免的机械错误。
+- 首次信任边界需要规范化时，优先在该边界的现有入口内直接完成，并由协议、Schema 或既有公共合同证明；领域类型、协议类型或兼容 Adapter 可以拥有有明确合同的转换，但不得把一次转换包装成可在内部重复调用的文本 Helper。内部方法必须信任已经建立的不变量，不得为假想脏数据重复 `hasText`、`trim`、大小写折叠或 `null` 防御。
+- 已可信的持久化值、内部值、ID 和 Code 不得重复规范化。对 ID/Code 做 `hasText`、`trim` 或 `null` 兜底必须有明确的边界合同，否则命中 `IDENTIFIER-NORMALIZATION`，未通过 Review 不得交付。
+- 备用字段选择必须有 Design、外部协议或 Schema 合同明确说明字段优先级、等价性和缺失语义。禁止新增 `firstNonBlank`、`coalesce`、`fallback*` 或等价的隐式兜底；缺少必填值时不能通过 `null`、空集合、另一个字段或“成功”结果掩盖数据损坏。`IMPLICIT-FIELD-FALLBACK` 是不可豁免的机械错误。
+- 同一方法内重复执行文本检查或转换，或在调用端和被调用端重复执行，命中 `REPEATED-NORMALIZATION`，必须由 Review 证明每次操作属于不同且有合同的信任边界；不能仅通过领域化改名规避。
 - 只有明确的框架、遗留或外部可空合同允许 `null`，并由注解、文档和测试共同证明；业务方法默认不返回 `null`。
 - 同一输入的不变量只在首个信任边界建立一次；内部不得对同一必填对象重复 `== null` 防御，也不得用逐字段空值映射伪造查询未命中。
 
