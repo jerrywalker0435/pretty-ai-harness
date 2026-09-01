@@ -10,10 +10,10 @@ description: Execute an approved Java/Spring Design in an isolated Candidate Lan
 按需读取：
 
 - [执行 Gate](references/quality-contract-gates.md)：执行矩阵、Slice Fast Gate、最终 Gate 和证据字段；
-- [质量基线](../pretty-common/references/quality-principles.md)：各项质量原则；
-- [质量路由](../pretty-common/references/quality-routing.md)：Resolver 风险和语义 owner；
-- [独立审查协议](../pretty-common/references/quality-review-protocol.md)：唯一最终 Reviewer；
-- [运行授权](../pretty-common/references/runtime-authorization.md)：topic run、Candidate Lane 和清理边界；
+- [质量基线](references/quality-principles.md)：各项质量原则；
+- [质量路由](references/quality-routing.md)：Resolver 风险和语义 owner；
+- [独立审查协议](references/quality-review-protocol.md)：唯一最终 Reviewer；
+- [运行授权](references/runtime-authorization.md)：topic run、Candidate Lane 和清理边界；
 - [Execution 模板](assets/execution.md)：最终报告结构。
 
 ## 执行协议

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
-from evidence_binding import COMMON_BUNDLE_FILES, bundle_sha256
+from evidence_binding import EXECUTION_BUNDLE_FILES, bundle_sha256
 
 from quality_registry import (
     MIN_BRANCH_COVERAGE,
@@ -74,8 +74,8 @@ def _runtime_files(skills_root: Path) -> list[Path]:
     ]
 
 
-def _retired_surface_errors(common_root: Path) -> list[str]:
-    skills_root = common_root.parent
+def _retired_surface_errors(skill_root: Path) -> list[str]:
+    skills_root = skill_root.parent
     errors: list[str] = []
     for path in _runtime_files(skills_root):
         try:
@@ -101,9 +101,9 @@ def _retired_surface_errors(common_root: Path) -> list[str]:
     return errors
 
 
-def _hash_ownership_errors(common_root: Path) -> list[str]:
-    skills_root = common_root.parent
-    owner = common_root / "scripts/evidence_binding.py"
+def _hash_ownership_errors(skill_root: Path) -> list[str]:
+    skills_root = skill_root.parent
+    owner = skill_root / "scripts/evidence_binding.py"
     errors: list[str] = []
     for path in skills_root.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
@@ -115,10 +115,10 @@ def _hash_ownership_errors(common_root: Path) -> list[str]:
     return errors
 
 
-def _threshold_errors(common_root: Path) -> list[str]:
-    registry = common_root / "scripts/quality_registry.py"
+def _threshold_errors(skill_root: Path) -> list[str]:
+    registry = skill_root / "scripts/quality_registry.py"
     errors = []
-    for path in common_root.parent.rglob("*.py"):
+    for path in skill_root.parent.rglob("*.py"):
         if path.resolve() == registry.resolve():
             continue
         text = path.read_text(encoding="utf-8")
@@ -129,26 +129,22 @@ def _threshold_errors(common_root: Path) -> list[str]:
     return errors
 
 
-def consistency_errors(
-    common_root: Path,
-    *,
-    executing_skill: Path | None = None,
-) -> list[str]:
+def consistency_errors(skill_root: Path) -> list[str]:
     errors = list(registry_errors())
-    errors.extend(_retired_surface_errors(common_root))
-    errors.extend(_hash_ownership_errors(common_root))
-    errors.extend(_threshold_errors(common_root))
+    errors.extend(_retired_surface_errors(skill_root))
+    errors.extend(_hash_ownership_errors(skill_root))
+    errors.extend(_threshold_errors(skill_root))
     errors.extend(
         f"shared quality bundle file is missing: {relative}"
-        for relative in COMMON_BUNDLE_FILES
-        if not (common_root / relative).is_file()
+        for relative in EXECUTION_BUNDLE_FILES
+        if not (skill_root / relative).is_file()
     )
-    routing_path = common_root / "references/quality-routing.md"
+    routing_path = skill_root / "references/quality-routing.md"
     routing = routing_path.read_text(encoding="utf-8") if routing_path.is_file() else ""
     if _routing_rows(routing) != RISK_OWNERS:
         errors.append("quality-routing.md risk ownership differs from the shared registry")
-    principles = (common_root / "references/quality-principles.md").read_text(encoding="utf-8")
-    review_protocol = (common_root / "references/quality-review-protocol.md").read_text(encoding="utf-8")
+    principles = (skill_root / "references/quality-principles.md").read_text(encoding="utf-8")
+    review_protocol = (skill_root / "references/quality-review-protocol.md").read_text(encoding="utf-8")
     if (
         "GENERIC-NORMALIZATION-HELPER" not in principles
         or "不可豁免的机械错误" not in principles
@@ -163,9 +159,7 @@ def consistency_errors(
         errors.append("precedence and risk routing must be explicitly separated")
     if "只有执行阶段的真实可执行产物强制独立 Reviewer" not in review_protocol:
         errors.append("execution must require an independent Reviewer")
-    if executing_skill is not None and _skill_document(executing_skill) is None:
-        errors.append(f"Executing Skill path is missing SKILL.md: {executing_skill}")
-    executing_document = _skill_document(executing_skill)
+    executing_document = _skill_document(skill_root)
     if executing_document:
         text = executing_document.read_text(encoding="utf-8")
         if re.search(r"并行运行[^\n]*Reviewer[^\n]*(?:覆盖率|编译|回归)", text):
@@ -184,23 +178,19 @@ def consistency_errors(
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--common-root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--executing-skill", type=Path)
+    parser.add_argument("--skill-root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", type=Path)
     return parser
 
 
 def main(arguments: Iterable[str] | None = None) -> int:
     args = _build_parser().parse_args(list(arguments) if arguments is not None else None)
-    errors = consistency_errors(
-        args.common_root,
-        executing_skill=args.executing_skill,
-    )
+    errors = consistency_errors(args.skill_root)
     payload = {
         "schema_version": 1,
         "pretty_bundle_sha256": bundle_sha256(
-            args.common_root,
-            _skill_files(args.executing_skill),
+            args.skill_root,
+            _skill_files(args.skill_root),
         ),
         "passed": not errors,
         "errors": errors,

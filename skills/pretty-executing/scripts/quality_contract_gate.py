@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a diagnostic Java scan with the shared Pretty quality rule registry.
+"""Run a diagnostic Java scan with the execution quality rule registry.
 
 Formal execution evidence is produced only by ``verify_quality_contract.py``.  This
 module remains the reusable scanner and reviewer-finding validator; its CLI is

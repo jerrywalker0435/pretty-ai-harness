@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 
-COMMON_BUNDLE_FILES = (
+EXECUTION_BUNDLE_FILES = (
     "references/quality-principles.md",
     "references/quality-routing.md",
     "references/quality-review-protocol.md",
@@ -21,7 +21,7 @@ COMMON_BUNDLE_FILES = (
     "scripts/quality_resolver.py",
     "scripts/pretty_tmp.py",
     "scripts/validate_pretty_consistency.py",
-    "../pretty-executing/assets/execution.md",
+    "assets/execution.md",
 )
 
 
@@ -54,8 +54,9 @@ def candidate_sha256(parts: Mapping[str, str | bytes]) -> str:
 
 
 def bundle_sha256(root: Path, extra_files: Iterable[Path] = ()) -> str:
-    """Hash the canonical shared rule bundle and any phase-specific contracts."""
-    paths = [root / relative for relative in COMMON_BUNDLE_FILES]
+    """Hash the canonical execution bundle and any extra contract files."""
+    root = root.resolve()
+    paths = [root / relative for relative in EXECUTION_BUNDLE_FILES]
     paths.extend(path for path in extra_files if path.is_file())
     digest_parts: dict[str, str | bytes] = {}
     for path in sorted({path.resolve() for path in paths if path.is_file()}):

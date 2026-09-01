@@ -17,9 +17,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
-if str(COMMON_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(COMMON_SCRIPTS))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from candidate_contract import quality_bundle_sha256  # type: ignore[import-not-found]
 from evidence_binding import evidence_sha256, file_sha256, self_bound_sha256  # type: ignore[import-not-found]

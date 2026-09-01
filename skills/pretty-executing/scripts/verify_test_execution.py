@@ -12,9 +12,9 @@ from pathlib import Path, PurePosixPath
 from typing import Mapping, Sequence
 from xml.etree import ElementTree
 
-COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
-if str(COMMON_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(COMMON_SCRIPTS))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from disabled_test_scope import repository_meta_disabled_names, scan_paths, targeted_findings  # type: ignore[import-not-found]
 from candidate_contract import quality_bundle_sha256, run_git  # type: ignore[import-not-found]

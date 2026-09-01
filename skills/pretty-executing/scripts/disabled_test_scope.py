@@ -1,4 +1,4 @@
-"""Shared Java test disabled-scope detection for execution gates."""
+"""Java test disabled-scope detection for execution gates."""
 
 from __future__ import annotations
 

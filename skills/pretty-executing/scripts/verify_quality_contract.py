@@ -13,9 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping, Sequence
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-COMMON_SCRIPTS = SCRIPT_DIR.parents[1] / "pretty-common" / "scripts"
-if str(COMMON_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(COMMON_SCRIPTS))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from candidate_contract import (  # type: ignore[import-not-found]
     CandidateRequest,

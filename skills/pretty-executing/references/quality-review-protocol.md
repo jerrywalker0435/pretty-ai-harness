@@ -22,6 +22,6 @@ Reviewer 读取从 topic tmp run 内 `execution-state.json` 起始 HEAD 推导�
 
 语义 finding 必须包含位置、风险 ID、违反的合同或事实约束、可观察后果、必须修正的内容和修正后的验证方式；机械 finding 复用扫描器的 code、位置、消息和 fingerprint。只输出阻断问题和逐条有证据的例外，不输出代码风格、命名偏好或非阻断建议。
 
-执行 receipt 至少包含 `candidate_sha256`、独立 Reviewer 标识、`independent: true`、`risks`（Resolver 风险及 owner）、`guards`、`pre_review_gate`、`scope_extensions`、`accepted_findings` 和 `blocking_findings`。`pre_review_gate` 必须绑定当前 `quality_candidate_sha256`、`build_candidate_sha256`、`test_evidence_sha256` 和 `coverage_evidence_sha256`；具体 JSON 字段由 [执行 Gate](../../pretty-executing/references/quality-contract-gates.md) 与校验脚本定义。
+执行 receipt 至少包含 `candidate_sha256`、独立 Reviewer 标识、`independent: true`、`risks`（Resolver 风险及 owner）、`guards`、`pre_review_gate`、`scope_extensions`、`accepted_findings` 和 `blocking_findings`。`pre_review_gate` 必须绑定当前 `quality_candidate_sha256`、`build_candidate_sha256`、`test_evidence_sha256` 和 `coverage_evidence_sha256`；具体 JSON 字段由 [执行 Gate](quality-contract-gates.md) 与校验脚本定义。
 
 候选内容或任一 Gate 摘要变化后旧 receipt 立即失效。机械 `error` 不能豁免；`review_required` 只能由 Reviewer 逐条以具体 Symbol、合同事实和 evidence 接受。修复必须由执行编排器 `reopen` 显式恢复 Lane 写权限，再复核修复增量并按证据依赖重跑受影响 Gate；公共合同、依赖方向或观察面变化时返回上游合同。相同阻断原因持续重复且无新证据时停止，不降低规则或复用旧结论。

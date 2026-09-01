@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-COMMON_SCRIPTS = Path(__file__).resolve().parents[2] / "pretty-common" / "scripts"
-if str(COMMON_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(COMMON_SCRIPTS))
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from evidence_binding import evidence_sha256, file_sha256, payload_sha256, self_bound_sha256  # type: ignore[import-not-found]
 from pretty_tmp import topic_dir_for_document, validate_artifact_path, validate_run_dir  # type: ignore[import-not-found]
