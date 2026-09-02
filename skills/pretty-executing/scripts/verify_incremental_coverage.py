@@ -47,6 +47,13 @@ class SourceCoverage:
 
 
 @dataclass(frozen=True)
+class CoverageBuild:
+    arguments: tuple[str, ...]
+    test_tasks: tuple[str, ...]
+    report_tasks: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CoverageResult:
     status: str
     changed_files: int
@@ -58,6 +65,8 @@ class CoverageResult:
     line_threshold: float
     branch_threshold: float
     missing_sources: tuple[str, ...]
+    missed_lines: tuple[str, ...] = ()
+    partial_branch_lines: tuple[str, ...] = ()
 
     @staticmethod
     def percentage(covered: int, total: int) -> float | None:
@@ -194,6 +203,8 @@ def calculate(
 ) -> CoverageResult:
     line_covered = line_total = branch_covered = branch_total = 0
     missing: list[str] = []
+    missed_lines: list[str] = []
+    partial_branch_lines: list[str] = []
     for item in changed:
         source = _match_source(item.path, sources)
         if source is None:
@@ -205,8 +216,15 @@ def calculate(
                 continue
             line_total += 1
             line_covered += int(coverage.covered > 0)
+            if coverage.covered == 0:
+                missed_lines.append(f"{item.path}:{number}")
             branch_total += coverage.branch_covered + coverage.branch_missed
             branch_covered += coverage.branch_covered
+            if coverage.branch_missed:
+                total = coverage.branch_covered + coverage.branch_missed
+                partial_branch_lines.append(
+                    f"{item.path}:{number} ({coverage.branch_covered}/{total})"
+                )
     if missing:
         status = "unmeasurable"
     elif line_total == 0:
@@ -226,6 +244,8 @@ def calculate(
         line_threshold,
         branch_threshold,
         tuple(sorted(missing)),
+        tuple(sorted(missed_lines)),
+        tuple(sorted(partial_branch_lines)),
     )
 
 
@@ -273,16 +293,43 @@ def _gradle_thresholds(paths: Iterable[Path]) -> tuple[float | None, float | Non
     return line, branch
 
 
-def project_thresholds(repo: Path) -> tuple[float, float]:
+def _ancestors_within(repo: Path, requested_path: str) -> Iterable[Path]:
+    current = (repo / requested_path).resolve().parent
+    while current == repo or repo in current.parents:
+        yield current
+        if current == repo:
+            return
+        current = current.parent
+
+
+def _relevant_build_files(repo: Path, requested_paths: Sequence[str]) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    if not requested_paths:
+        poms = tuple(repo.rglob("pom.xml"))
+        gradle = tuple(path for name in ("build.gradle", "build.gradle.kts") for path in repo.rglob(name))
+        return poms, gradle
+
+    poms: set[Path] = set()
+    gradle: set[Path] = set()
+    for requested in requested_paths:
+        for directory in _ancestors_within(repo, requested):
+            if (pom := directory / "pom.xml").is_file():
+                poms.add(pom)
+            for name in ("build.gradle", "build.gradle.kts"):
+                if (build := directory / name).is_file():
+                    gradle.add(build)
+    return tuple(sorted(poms)), tuple(sorted(gradle))
+
+
+def project_thresholds(repo: Path, requested_paths: Sequence[str] = ()) -> tuple[float, float]:
     line_values: list[float] = []
     branch_values: list[float] = []
-    for pom in repo.rglob("pom.xml"):
+    poms, gradle_paths = _relevant_build_files(repo.resolve(), requested_paths)
+    for pom in poms:
         line, branch = _maven_thresholds(pom)
         if line is not None:
             line_values.append(line)
         if branch is not None:
             branch_values.append(branch)
-    gradle_paths = tuple(path for name in ("build.gradle", "build.gradle.kts") for path in repo.rglob(name))
     line, branch = _gradle_thresholds(gradle_paths)
     if line is not None:
         line_values.append(line)
@@ -323,28 +370,59 @@ def _gradle_init_script() -> str:
 """
 
 
-def _run_coverage(repo: Path, tool: str, build_args: Sequence[str]) -> tuple[int, list[str]]:
+def _tasks(requested: Sequence[str], default: str) -> list[str]:
+    return list(dict.fromkeys(requested)) or [default]
+
+
+def _validate_build_arguments(tool: str, build: CoverageBuild) -> None:
+    if tool != "gradle":
+        return
+    task_arguments = {
+        "test",
+        "jacocoTestReport",
+    }
+    duplicate_tasks = [
+        argument
+        for argument in build.arguments
+        if argument in task_arguments or argument.startswith(":") and ":" in argument[1:]
+    ]
+    if duplicate_tasks:
+        raise ValueError(
+            "Gradle 测试或 JaCoCo task 请使用 --test-task/--jacoco-task，不要放入 --build-arg："
+            + ", ".join(duplicate_tasks)
+        )
+
+
+def _maven_coverage_command(repo: Path, build: CoverageBuild) -> list[str]:
+    return [
+        *_executable(repo, "mvnw", "mvn"),
+        *build.arguments,
+        "org.jacoco:jacoco-maven-plugin:prepare-agent",
+        *_tasks(build.test_tasks, "test"),
+        *_tasks(build.report_tasks, "org.jacoco:jacoco-maven-plugin:report"),
+    ]
+
+
+def _gradle_coverage_command(repo: Path, build: CoverageBuild, init_script: str) -> list[str]:
+    return [
+        *_executable(repo, "gradlew", "gradle"),
+        "--init-script",
+        init_script,
+        *build.arguments,
+        *_tasks(build.test_tasks, "test"),
+        *_tasks(build.report_tasks, "jacocoTestReport"),
+    ]
+
+
+def _run_coverage(repo: Path, tool: str, build: CoverageBuild) -> tuple[int, list[str]]:
+    _validate_build_arguments(tool, build)
     if tool == "maven":
-        command = [
-            *_executable(repo, "mvnw", "mvn"),
-            *build_args,
-            "org.jacoco:jacoco-maven-plugin:prepare-agent",
-            "test",
-            "org.jacoco:jacoco-maven-plugin:report",
-        ]
+        command = _maven_coverage_command(repo, build)
         return subprocess.run(command, cwd=repo, check=False).returncode, command
     with tempfile.NamedTemporaryFile("w", suffix=".gradle", encoding="utf-8") as init_script:
         init_script.write(_gradle_init_script())
         init_script.flush()
-        command = [
-            *_executable(repo, "gradlew", "gradle"),
-            "--no-daemon",
-            "--init-script",
-            init_script.name,
-            *build_args,
-            "test",
-            "jacocoTestReport",
-        ]
+        command = _gradle_coverage_command(repo, build, init_script.name)
         return subprocess.run(command, cwd=repo, check=False).returncode, command
 
 
@@ -372,16 +450,55 @@ def _stale_sources(repo: Path, changed: Sequence[ChangedSource], reports: Sequen
     return stale
 
 
+def _location_summary(locations: Sequence[str]) -> str:
+    visible = locations[:20]
+    remaining = len(locations) - len(visible)
+    suffix = f"，另有 {remaining} 项；用 --json-output 查看完整列表" if remaining else ""
+    return ", ".join(visible) + suffix
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."))
     parser.add_argument("--base", required=True, help="Git 基线，例如 HEAD")
-    parser.add_argument("--path", action="append", default=[], help="本次实际影响的生产 Java 文件；可重复")
+    parser.add_argument(
+        "--path",
+        action="append",
+        default=[],
+        help="本次含可执行行为增量的生产 Java 文件；可重复",
+    )
     parser.add_argument("--build-tool", choices=("auto", "maven", "gradle"), default="auto")
-    parser.add_argument("--build-arg", action="append", default=[], help="传给 Maven/Gradle 的参数，可重复")
-    parser.add_argument("--report", action="append", type=Path, help="JaCoCo XML 报告，可重复")
+    parser.add_argument(
+        "--build-arg",
+        action="append",
+        default=[],
+        help="传给 Maven/Gradle 的选项或项目选择器，可重复；不能用它替换测试任务",
+    )
+    parser.add_argument(
+        "--test-task",
+        action="append",
+        default=[],
+        help="最终合并构建中执行的 Maven goal 或 Gradle task，可重复；默认 test",
+    )
+    parser.add_argument(
+        "--jacoco-task",
+        action="append",
+        default=[],
+        help="最终合并构建中执行的 JaCoCo 报告 goal/task；Gradle 模块任务需显式指定",
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--report",
+        action="append",
+        type=Path,
+        help="已有 JaCoCo XML 报告，可重复；只读取，不运行测试",
+    )
     parser.add_argument("--report-not-before", type=float, help="手动报告的最早生成时间")
-    parser.add_argument("--run", action="store_true", help="运行测试和 JaCoCo 报告任务")
+    mode.add_argument(
+        "--run",
+        action="store_true",
+        help="执行最终一次相关模块测试并生成新鲜 JaCoCo 报告",
+    )
     parser.add_argument("--json-output", type=Path, help="可选普通结果 JSON 文件")
     return parser
 
@@ -392,7 +509,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     started = time.time()
     try:
         tool = _build_tool(repo, args.build_tool)
-        line_threshold, branch_threshold = project_thresholds(repo)
+        line_threshold, branch_threshold = project_thresholds(repo, args.path)
         if not 0 <= line_threshold <= 100 or not 0 <= branch_threshold <= 100:
             raise ValueError("覆盖率阈值必须在 0 到 100 之间")
         if args.run:
@@ -400,9 +517,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 r"skipTests|maven\.test\.skip|test\.enabled\s*=\s*false|(?:^|\s)(?:-x|--exclude-task)(?:\s|=)",
                 re.IGNORECASE,
             )
-            if forbidden.search(" ".join(args.build_arg)):
+            requested_build = " ".join((*args.build_arg, *args.test_task, *args.jacoco_task))
+            if forbidden.search(requested_build):
                 raise ValueError("覆盖率命令不能跳过测试")
-            exit_code, command = _run_coverage(repo, tool, args.build_arg)
+            build = CoverageBuild(
+                tuple(args.build_arg),
+                tuple(args.test_task),
+                tuple(args.jacoco_task),
+            )
+            exit_code, command = _run_coverage(repo, tool, build)
             if exit_code:
                 raise RuntimeError(f"覆盖率测试命令失败（退出码 {exit_code}）：{' '.join(command)}")
         changed = changed_sources(repo, args.base, args.path)
@@ -433,6 +556,10 @@ def main(arguments: Sequence[str] | None = None) -> int:
         )
         if result.missing_sources:
             print("无法匹配报告的生产源：" + ", ".join(result.missing_sources), file=sys.stderr)
+        if result.status == "fail" and result.missed_lines:
+            print("未覆盖增量行：" + _location_summary(result.missed_lines), file=sys.stderr)
+        if result.status == "fail" and result.partial_branch_lines:
+            print("未完全覆盖的增量分支：" + _location_summary(result.partial_branch_lines), file=sys.stderr)
         if result.status in {"pass", "not_applicable"}:
             return 0
         return 1 if result.status == "fail" else UNMEASURABLE

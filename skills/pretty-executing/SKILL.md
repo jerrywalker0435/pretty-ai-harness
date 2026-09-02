@@ -9,6 +9,28 @@ description: 根据 Java/Spring Design、用户 Prompt 或 execution-plan 生成
 `execution-plan.md` 与真实代码仓库结合，生成完整、具体、可落库的生产代码和行为测试。
 它不修改 PRD、Design、Context、ADR 或治理文档，不提交、推送、部署或发布。
 
+
+## Code style
+
+- 修改前先搜索现有实现，优先复用。
+- 保持最小 diff，只修改任务范围内的文件。
+- 禁止重复逻辑、校验、映射、错误处理和常量。
+- 新增抽象必须消除真实重复或表达稳定的领域概念。
+- 不进行未请求的重构、清理或依赖升级。
+- 注释只说明非显然的设计原因。
+- 保持现有 API 和行为，除非任务明确要求改变。
+
+
+## Response style
+
+- 先给结论。
+- 不重复用户需求或已经说明的内容。
+- 不粘贴完整文件。
+- 只报告改动、验证结果和必要风险。
+- 常规工具调用不需要逐条解释。
+
+
+
 ## 输入与优先级
 
 按以下顺序处理输入；冲突不能猜测解决：
@@ -21,6 +43,7 @@ description: 根据 Java/Spring Design、用户 Prompt 或 execution-plan 生成
 Design 或 execution plan 不得覆盖用户当前明确的目标和授权；文档与真实仓库事实不一致时，
 停止并报告冲突。只有已有 `execution-plan.md` 且它与当前 Prompt、Design 和仓库事实一致时，
 才可直接执行该计划。
+
 
 ### 生成代码质量规范优先级与事实约束
 
@@ -54,9 +77,12 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
   private 方法测试替代行为断言。
 - 不保留 TBD、伪 API、半实现、无调用者的抽象或无法由仓库事实支持的配置。
 
-生成前读取仓库并匹配质量原则和适用质量路由；生成后对计划中的代码进行结构校验、静态质量
-扫描、独立 Review，并在发现问题时重构计划内容后重新检查。Plan 不执行正式编译、测试或
-覆盖率，因为它不把实现集成进真实代码库；这些验证只在执行模式完成。
+Design 已提供精确影响锚点时，直接复用其中的影响文件、行为分支和公共验证入口，不再向用户
+重复输出一份前置分析。锚点缺失或输入只有 Prompt 时，在内部形成影响文件、行为分支和测试
+清单并直接写入现有 TASK，不增加模板字段或其他文档。生成前只定向读取锚点文件的当前
+内容、直接依赖、公共测试入口和所属构建配置；只有锚点缺失或失效时才围绕对应 symbol 搜索。
+随后匹配质量原则和适用质量路由；成稿后只执行一次静态质量扫描和合并 Review，结构检查并入
+该 Review。Plan 不执行编译、测试或覆盖率，因为它不把实现集成进真实代码库。
 
 ### 执行模式
 
@@ -64,26 +90,55 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
 
 开始修改前必须完成：
 
-1. 读取 Prompt、适用 Design、已有 execution plan、目标文件、相邻实现、调用方和被调用方、
-   测试入口、Java/JDK/依赖版本、构建配置以及适用的 AGENTS/Trellis/ADR。
-2. 若已有 `execution-plan.md`，校验其与上述输入和当前仓库事实一致；过期或冲突时停止并
+1. 读取 Prompt、适用 Design、已有 execution plan、质量原则以及适用的
+   AGENTS/Trellis/ADR；同一会话中已经读取且未发生修改的内容直接复用。
+2. 确定候选影响范围：
+   - Design 已按 `仓库相对路径#symbol` 提供影响锚点时进入快速路径，直接采用其职责链路、
+     公共验证入口、Execution 交付文件和构建模块；
+   - 已有 execution plan 时复用其中的 Files 和稳定 symbol，并与 Design 对齐；
+   - 输入只有 Prompt 或锚点不足时，才从已知入口做一次受限调查，沿真实受影响链路扩展，
+     不做无关全仓盘点。
+3. 在快速路径中读取候选目标文件的当前内容、对应行为测试、所属模块构建配置和本次修改
+   必需的直接 caller/callee。验证路径与 symbol 仍存在、职责和签名未漂移；锚点有效时不重新
+   搜索完整调用链。单个锚点失效时只围绕该 symbol 定向搜索；职责、数据所有权、依赖方向或
+   外部合同已变化时停止并返回 Design。
+4. 在内部形成影响文件、行为分支和测试清单；Design 或 execution plan 已提供的事实
+   直接复用，只补充定向新鲜度检查发现的缺口，不向用户重复输出，也不创建额外交接文档。
+5. 若已有 `execution-plan.md`，校验其与上述输入和当前仓库事实一致；过期或冲突时停止并
    报告，不按过期计划修改。
-3. 确定本次真实影响文件集合。只检查该集合中的未提交修改；集合包含受影响的 Java、测试、
+6. 确定本次真实影响文件集合。只检查该集合中的未提交修改；集合包含受影响的 Java、测试、
    `pom.xml`、Gradle 文件和实际项目配置等。若这些文件已有用户修改，停止并报告；不相关
    文件的脏状态不阻塞，也不得触碰。
-4. 确认 `docs/pretty/<topic>/execution.md` 不存在。若已存在，立即停止并报告，不覆盖、追加
+7. 确认 `docs/pretty/<topic>/execution.md` 不存在。若已存在，立即停止并报告，不覆盖、追加
    或继续修改代码。
-5. 按 [execution 模板](assets/execution.md) 创建空白执行记录，然后只更新模板已有字段；
-   不新增输入来源、仓库基线或内部执行计划字段。
+8. 按 [execution 模板](assets/execution.md) 创建空白执行记录；实现期间不维护过程状态，最终
+   验证后一次性填写。不得新增输入来源、仓库基线或内部执行计划字段。
 
 若没有现成的 execution plan，只在内部生成实现计划，不额外落盘
-`execution-plan.md`。按最小可验证行为切片生成生产代码和测试代码，并保持每个切片都能由
-公共行为入口观察。
+`execution-plan.md`。修改生产代码前，从 Design/Prompt 提取不同的成功结果、失败语义和状态
+迁移，形成简短的内部测试清单并先完成对应测试代码；不执行 RED，不给清单分配 ID、状态或
+证据字段，也不写入 `execution.md`。随后按公共入口到 Module、Adapter 或持久化的完整链路实现
+行为切片，所有代码和测试完成前不启动构建。
+
+### 测试范围
+
+- 纳入不同的成功结果、业务拒绝、查询未命中、非法或损坏数据、状态迁移、异常分类、远程
+  空/失败/异常响应，以及完整外部边界请求等会改变可观察行为的合同。
+- 相同公共入口和可观察结果的等价输入优先使用参数化测试，不按输入数量或每个 `if` 增加测试。
+- 纯 DTO/Request/Response 的字段、无逻辑 getter/setter、普通构造器，以及 Lombok、编译器或
+  其他工具生成的 accessor、`equals/hashCode/toString` 不创建专门测试。字段校验、转换、默认
+  值、不变量、自定义相等性或协议语义属于真实行为时仍纳入，并优先从序列化、校验、Mapper
+  或业务公共入口观察，不直接测试 accessor。
+- 注释、声明和没有独立合同的机械转发不因覆盖率建测试；包含业务逻辑和样板代码的同一文件
+  仍整体进入覆盖率范围，不按行手工规避。
+- 覆盖率是发现遗漏的反馈，不是测试目标；不得为提高百分比测试 private 方法、无逻辑
+  accessor、内部协作者调用次数或复制生产算法。
 
 ## 质量驱动实现
 
-生成前必须完整阅读 [质量原则](references/quality-principles.md)，先根据真实受影响链路、
-文件、symbol、类型、依赖和行为风险选择质量路由。质量原则始终生效：
+生成前必须完整阅读 [质量原则](references/quality-principles.md)，先根据 Design、真实受影响
+链路和计划修改的 symbol、类型、依赖与行为风险选择候选质量路由。生成后只调用一次路由解析，
+以本次实际代码增量确认最终路由；不得使用无关历史代码或全仓盘点扩大路由。质量原则始终生效：
 
 - 命中路由时，合并所有命中路由的约束；同一问题采用更严格的约束。
 - 没有命中专项路由时，仍按通用质量原则继续生成，不停止。
@@ -92,45 +147,43 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
 - 生产 Java 默认考虑职责/封装、运行时失败语义和行为测试；只有真实事实证明需要时才增加
   模块边界、类型设计、变化轴、SOLID 或其他专项约束。
 
-路由匹配后，在生成过程中落实其设计约束；生成完成后同时执行：
+路由匹配后，在生成过程中落实其设计约束。执行模式必须遵循以下验证节奏；Plan 模式只执行
+后文规定的静态检查和 Review，不执行真实项目验证：
 
-1. 机械质量门禁：使用 `scripts/quality_contract_gate.py` 通过重复的 `--path` 只扫描本次影响
-   的 Java 文件；Plan 中的临时代码文件可通过 `--source` 扫描，临时文件不得写入仓库。
-2. 独立 Review：由适用质量路由对应的 Reviewer 审查完整生产代码、测试、公共接口和真实
-   影响范围；执行模式对所有非平凡生产代码额外使用 `clean-code-guard`。
-3. 重构修复：发现问题时调用 `refactor` 完成必要重构，然后重新执行机械门禁和 Review；
-   不以豁免、删除规则或降低阈值掩盖问题。
-4. 项目验证：执行仓库现有的编译和相关测试入口，不跳过测试。Java 项目必须运行
-   `scripts/verify_incremental_coverage.py`，使用 JaCoCo 检查本次生产 Java 增量覆盖率。
+1. 实现阶段：先写完内部清单中的行为测试，再完成全部生产切片；不执行 RED、`compile`、
+   定向测试、JaCoCo 或其他 Maven/Gradle 命令。
+2. 构建前稳定阶段：并行执行机械质量门禁和一次合并 Review，并在同一 Review 中完成测试守卫。
+   测试守卫检查新增/修改测试是否通过公共入口覆盖内部清单中的结果、状态和异常，是否包含本次
+   行为产生的查询未命中、解析失败、依赖缺失及远程空/失败/异常响应，并拒绝测试禁用、private
+   方法测试、内部协作者调用次数或复制生产算法。合并 Review 一次性应用全部命中路由和
+   `clean-code-guard`；集中修复后只复核受影响的静态项，不启动构建。
+3. 最终验证阶段：每个受影响构建根只执行一次带测试的 Maven/Gradle 调用，在同一调用中完成
+   增量编译、相关模块全量测试和 JaCoCo XML。禁止预先执行定向测试、单独编译或覆盖率预跑；
+   多模块或自定义项目通过同一命令的参数合并任务。项目既有全量测试入口已经生成新鲜 JaCoCo
+   XML 时，只读取报告，不再次启动测试。只有纯数据载体或生成代码且没有可执行行为时，覆盖率
+   可以不适用，但仍按项目需要执行至多一次最小相关编译/测试。
+4. 记录阶段：验证通过后一次性填写 `execution.md`，再执行一次
+   `scripts/validate_execution.py`。修复记录不得触发编译、测试、Review、门禁或 JaCoCo。
+5. 失败处理：构建、测试或覆盖率失败时修复真实问题并重跑同一条最终验证命令；这是失败路径，
+   不增加新的验证阶段。覆盖率不足时只为遗漏的可观察行为补测试；无独立行为时简化死分支，
+   纯载体误入范围时更正覆盖文件集合。代码或测试修复后只复核受影响的静态项；仍失败则停止。
 
-### 规范化与防御式容错约束
-
-规范化责任由首次信任边界决定，不由方法名决定。生成或 Review 时必须先判定值来自外部请求、
-消息反序列化、持久化、内部调用还是值对象；只有首次进入信任域的入口可以依据协议、Schema
-或既有公共合同建立一次不变量。
-
-- 禁止新增或仅改名保留规范化 Helper，例如 `trimToNull` → `normalizeTaskCenterText`；
-  `normalize*`、`trim*`、`clean*` 等领域化名称不能绕过边界审查。
-- 内部方法和调用端信任已成立的值，不重复 `StringUtils.hasText`、`trim`、大小写折叠或
-  `null` 防御。持久化值、ID 和 Code 默认直接使用；没有明确合同时不得规范化。
-- 禁止引入 `firstNonBlank`、`coalesce`、`fallback*` 或手写等价逻辑把一个字段替换成另一个
-  字段。必填值缺失应保留并传播可诊断的失败语义，不得静默转成 `null`、空集合或成功。
-- 真正位于首次信任边界的直接规范化必须能指出其协议、Schema 或公共合同依据；无法证明时
-  停止并报告合同缺失。机械门禁发现 `NORMALIZATION-HELPER`、`IMPLICIT-FIELD-FALLBACK`
-  时不得豁免；`REPEATED-NORMALIZATION`、`IDENTIFIER-NORMALIZATION` 和
-  `NORMALIZATION-OWNERSHIP` 必须由 Reviewer 给出基于事实的结论。
-
-新增或修改的测试必须实际执行并观察业务结果、状态、异常或完整边界请求；不得通过构建参数、
-过滤器或测试发现配置跳过测试。测试命令失败时进入修复和重新验证流程。
-
-Plan 模式执行前述静态门禁和 Review，但不执行第 4 项正式编译、测试和覆盖率。
+成功路径的性能预算是每个构建根一次测试构建、一次 JaCoCo、一次合并 Review 和一次执行记录
+校验。任何额外构建必须由已经发生的失败触发，不能为了保存 RED、GREEN 或阶段性覆盖率证据而
+增加。
 
 执行模式的常用辅助命令如下；`<base>` 是开始修改前记录的 Git 基线，输出仅供当前执行判断：
 
 ```bash
-python3 skills/pretty-executing/scripts/quality_resolver.py --repo . --base <base> --json
+python3 skills/pretty-executing/scripts/quality_resolver.py --repo . --base <base> --path <affected-java-file> --json
 python3 skills/pretty-executing/scripts/quality_contract_gate.py --repo . --base <base> --path <affected-java-file>
 python3 skills/pretty-executing/scripts/validate_execution.py docs/pretty/<topic>/execution.md
+```
+
+`tests/` 仅存放上述辅助脚本的回归测试，不属于正常执行路径；只有修改辅助脚本时才运行：
+
+```bash
+python3 -m unittest discover -s skills/pretty-executing/tests -p 'test_*.py'
 ```
 
 ## Java / JaCoCo 增量覆盖率
@@ -139,20 +192,54 @@ python3 skills/pretty-executing/scripts/validate_execution.py docs/pretty/<topic
 
 - 优先使用 `mvnw`/`pom.xml` 或 `gradlew`/`build.gradle(.kts)` 及项目已有 JaCoCo 配置。
 - 项目配置了行或分支阈值时分别使用项目阈值；未配置的维度使用默认增量行覆盖率 `90%`、
-  分支覆盖率 `80%`。
-- 脚本根据执行开始时的 Git 基线计算新增或修改的生产 Java 行，运行 JaCoCo 测试报告并
-  输出行、分支覆盖率和阈值；只改测试或没有生产 Java 增量时明确输出“不适用”。
+  分支覆盖率 `80%`；不把阈值提高到 `100%` 来替代行为测试完整性。
+- 每次都用重复的 `--path` 显式传入含本次可执行行为增量的生产 Java 文件。纯数据载体、无逻辑
+  accessor 和生成代码不作为覆盖目标并在 `execution.md` 的“覆盖率范围”逐项说明；不能仅按
+  `dto` 包名排除，混有校验、转换、默认值、不变量或其他行为的文件必须纳入。
+- 脚本根据执行开始时的 Git 基线计算所选文件新增或修改的可执行行；`--run` 只用于最终一次
+  相关模块全量测试和报告生成。`--report`/`--report-not-before` 只读取已有报告，绝不启动
+  测试。只改测试或没有行为生产增量时明确记录“不适用”。
 - 发现没有 JaCoCo 报告、报告过期、源文件无法匹配或覆盖率未达阈值时，执行模式先修复并
-  重新验证；仍无法通过则停止并报告。
+  重新验证；脚本输出未覆盖行和部分覆盖分支供判断，不据此机械增加测试。仍无法通过则
+  停止并报告。
 
-示例：
+绿路径唯一一次带测试的命令同时完成相关模块全量测试和 JaCoCo：
 
 ```bash
 python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
-  --repo . --base HEAD --path <affected-java-file> --run
+  --repo . --base <base> --path <behavior-java-file> --run \
+  --build-arg=-pl --build-arg=<module> --build-arg=-am \
+  --test-task=test --jacoco-task=org.jacoco:jacoco-maven-plugin:report
+```
+
+Gradle 多模块项目将任务本身限定到目标模块，例如
+`--test-task=:module:test --jacoco-task=:module:jacocoTestReport`；不要同时再传根项目
+`test` 任务。
+
+项目自己的全量测试已经生成 JaCoCo XML 时，只读取该报告，不得
+使用 `--run`：
+
+```bash
+python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
+  --repo . --base <base> --path <behavior-java-file> \
+  --report <jacoco-xml-report>
 ```
 
 ## 执行范围与代码生成约束
+
+### i-have-adhd 聚焦实现
+
+将 `$i-have-adhd` 的“明确下一动作、单一当前状态、抑制旁支、完成可见”用于代码生成决策，
+不增加额外文档或验证阶段：
+
+- 同一时刻只实现一个可观察行为切片；锁定该切片的公共入口、规则所有者、必要文件和测试观察面，
+  完成生产链路与行为测试后再进入下一切片。内部保留完整任务清单，但不为切片启动构建或维护
+  中间状态证据。
+- 每个新增或修改的类、方法、字段、分支、配置和依赖都必须直接服务当前行为并有调用者或验证入口；
+  无法指出用途的增量不生成。选择满足合同的最短清晰路径，不增加转发层、单次包装 Helper、
+  推测性扩展点或兼容分支。
+- 当前行为之外的重构、清理、依赖升级和相邻问题是旁支，只有真实阻塞当前实现时才做最小必要修改。
+  完成可见于生产代码、行为测试和最终验证结果，不通过过程状态、RED 证据或重复报告制造进度。
 
 ### DDL、DML 与数据库边界
 
@@ -169,15 +256,15 @@ python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
 - 禁止臆造 API、硬编码成功、生产 fixture、半实现、无调用者的抽象、无价值新依赖，以及从
   相似代码复制后猜测语义。
 - 边界、空值、范围和顺序问题必须从合同重新推导，并由行为测试固定。
-- Writer 在首次落笔和每个行为切片中主动满足质量基线，机械扫描用于即时反馈；不等最终检查
-  才集中清理问题。
+- Writer 在首次落笔和每个行为切片中主动满足质量基线；不把静态提示当作需要触发完整
+  回归的理由，质量门禁在最终全量测试前统一执行。测试守卫和质量门禁均为静态检查，不得
+  隐式启动测试。
 
 ## 执行记录与停止条件
 
-每个行为 TASK 的结果、实际落点、路由与审查摘要、行为证据、验证命令及退出码、未验证范围、
-覆盖率和结论，严格按 `assets/execution.md` 的已有字段填写。不得增加自定义字段或另写状态
-协议。生成或修复过程中如果某项门禁、Review、编译、测试或 JaCoCo 覆盖率失败，允许在本次
-执行中修复并重新验证；无法修复或反复失败时，将报告状态写为 `停止：<原因>` 并停止。
+每个行为 TASK 的结果、实际落点、审查摘要、行为证据、唯一验证命令及退出码、未验证范围、
+覆盖率范围、覆盖率和结论，严格按 `assets/execution.md` 填写。不得记录测试清单、阶段状态或
+另写证据协议。失败允许在本次执行中修复并重新验证；无法修复时记录 `停止：<原因>` 并停止。
 
 以下情况直接停止并报告：
 
@@ -185,7 +272,7 @@ python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
   和影响范围；
 - 目标项目影响文件存在用户未提交修改，或已有 `execution.md`；
 - 需要擅自改变公共接口、外部行为、数据所有权、依赖方向、事务、并发、幂等或安全边界；
-- 机械门禁、独立 Review、编译、测试或 JaCoCo 增量覆盖率在修复后仍失败；
+- 机械门禁、合并 Review、编译、测试或 JaCoCo 增量覆盖率在修复后仍失败；
 - 需要执行 DDL、配置数据 DML、真实数据库操作、部署、发布或人工运维动作。
 
 停止时只在已有 `execution.md` 模板字段中记录已经发生的事实、未验证范围和恢复/返回原因，

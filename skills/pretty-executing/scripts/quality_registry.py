@@ -24,7 +24,10 @@ RULES = (
     RuleSpec("EMPTY-CATCH", ERROR, "empty catch silently ignores a failure"),
     RuleSpec("BROAD-CATCH-FALLBACK", ERROR, "broad catch hides a failure behind null, empty, or success"),
     RuleSpec("FIELD-INJECTION", ERROR, "production dependency uses field injection"),
-    RuleSpec("CONTROL-FLOW-SKIP", ERROR, "continue obscures the business control flow"),
+    RuleSpec("LABELED-CONTINUE", ERROR, "labeled continue hides a cross-level control-flow jump"),
+    RuleSpec("NUMBERED-STEP-COMMENT", ERROR, "numbered step comment narrates code instead of explaining why"),
+    RuleSpec("WHOLE-OBJECT-LOGGING", ERROR, "whole-object JSON serialization can leak or amplify log payloads"),
+    RuleSpec("SENSITIVE-LOGGING", ERROR, "credentials or authentication headers must not be logged"),
     RuleSpec("MANUAL-DURATION-LOGGING", ERROR, "manual wall-clock timing is used for logging"),
     RuleSpec("NORMALIZATION-HELPER", ERROR, "a normalization helper hides the first trust boundary and invites repeated defense"),
     RuleSpec("GENERIC-NORMALIZATION-HELPER", ERROR, "generic text normalization hides boundary ownership"),
@@ -38,6 +41,7 @@ RULES = (
     RuleSpec("OPTIONAL-GET", REVIEW, "Optional get/isPresent usage requires contract review"),
     RuleSpec("BOOLEAN-FLAG", REVIEW, "boolean parameter may hide two commands"),
     RuleSpec("GENERIC-RESULT-SHAPE", REVIEW, "generic success/code/message/data result shape"),
+    RuleSpec("CONTROL-FLOW-SKIP", REVIEW, "continue requires proof that it keeps the loop's main path linear"),
     RuleSpec("COMPLEX-TERNARY", REVIEW, "nested or repeated ternary makes control flow harder to read"),
 )
 

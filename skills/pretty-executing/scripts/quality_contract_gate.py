@@ -2,8 +2,8 @@
 """Run a stateless mechanical quality scan over changed Java files.
 
 The command deliberately emits findings only. It does not create execution state
-or modify the project. Review-level findings are reported for the independent
-reviewer; error-level findings make the gate fail.
+or modify the project. Review-level findings are reported for the combined
+review pass; error-level findings make the gate fail.
 """
 
 from __future__ import annotations
@@ -33,9 +33,33 @@ class Finding:
 
 
 STRING_OR_COMMENT = re.compile(
-    r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|//[^\n]*|/\*.*?\*/',
+    r'"""(?:\\.|(?!""").)*"""|'
+    r'"(?:\\.|[^"\\\n])*"|'
+    r"'(?:\\.|[^'\\\n])*'|"
+    r"//[^\n]*|/\*.*?\*/",
     re.DOTALL,
 )
+_NUMBERED_STEP_PREFIX = re.compile(
+    r"^[ \t]*(?://+|/\*+|\*+)?[ \t]*(?:"
+    r"(?:step|步骤)[ \t]*#?[ \t]*(?:\d+|[一二三四五六七八九十百零〇两]+)|"
+    r"第[ \t]*(?:\d+|[一二三四五六七八九十百零〇两]+)[ \t]*步|"
+    r"\([ \t]*(?:\d+|[一二三四五六七八九十百零〇两]+)[ \t]*\)|"
+    r"(?:\d+|[一二三四五六七八九十百零〇两]+)[ \t]*[.)、:：]"
+    r")",
+    re.IGNORECASE,
+)
+_LOG_CALL = re.compile(r"\b(?:log|logger)\s*\.\s*(?:trace|debug|info|warn|error)\s*\(", re.IGNORECASE)
+_HEADER_ACCESS = re.compile(r"\b(?:getHeader|header|getFirst|get)\s*\(", re.IGNORECASE)
+_SENSITIVE_HEADER_ARGUMENT = re.compile(
+    r"\s*(?:"
+    r'"(?:Authorization|Cookie|Set-Cookie)"|'
+    r"(?:HttpHeaders\s*\.\s*)?(?:AUTHORIZATION|COOKIE|SET_COOKIE)"
+    r")\s*",
+    re.IGNORECASE,
+)
+_JAVA_IDENTIFIER = re.compile(r"\b[A-Za-z_$][\w$]*\b")
+_SENSITIVE_LOG_TERMS = ("password", "secret", "accesstoken", "refreshtoken")
+_REDACTED_LOG_PREFIXES = ("mask", "redact", "getmask", "getredact", "ismask", "isredact")
 
 
 def _mask(match: re.Match[str]) -> str:
@@ -46,8 +70,23 @@ def _mask_non_code(source: str) -> str:
     return STRING_OR_COMMENT.sub(_mask, source)
 
 
+def _mask_comments(source: str) -> str:
+    return STRING_OR_COMMENT.sub(
+        lambda match: _mask(match) if match.group(0).startswith(("//", "/*")) else match.group(0),
+        source,
+    )
+
+
 def _line_number(source: str, position: int) -> int:
     return source.count("\n", 0, position) + 1
+
+
+def _span_changed(source: str, start: int, end: int, changed_lines: set[int] | None) -> bool:
+    if changed_lines is None:
+        return True
+    first_line = _line_number(source, start)
+    last_line = _line_number(source, max(start, end - 1))
+    return any(first_line <= line <= last_line for line in changed_lines)
 
 
 def _finding(code: str, path: str, source: str, position: int, detail: str | None = None) -> Finding:
@@ -71,8 +110,7 @@ def _matches(
 ) -> list[Finding]:
     findings: list[Finding] = []
     for match in pattern.finditer(masked):
-        line = _line_number(source, match.start())
-        if changed_lines is None or line in changed_lines:
+        if _span_changed(source, match.start(), match.end(), changed_lines):
             findings.append(_finding(code, path, source, match.start(), detail))
     return findings
 
@@ -104,13 +142,13 @@ _IDENTIFIER_HAS_TEXT = re.compile(
 _IDENTIFIER_TRIM = re.compile(_IDENTIFIER_ACCESS + r"\s*\.\s*(?:trim|strip)\s*\(")
 
 
-def _matching_brace(masked: str, opening: int) -> int | None:
+def _matching_delimiter(masked: str, opening: int, opening_char: str, closing_char: str) -> int | None:
     depth = 0
     for position in range(opening, len(masked)):
         char = masked[position]
-        if char == "{":
+        if char == opening_char:
             depth += 1
-        elif char == "}":
+        elif char == closing_char:
             depth -= 1
             if depth == 0:
                 return position
@@ -121,7 +159,7 @@ def _method_spans(masked: str) -> Iterable[tuple[int, int, int]]:
     """Yield (method-name, body-start, body-end) spans for simple Java methods."""
     for match in _METHOD_DECLARATION.finditer(masked):
         opening = masked.find("{", match.start(), match.end())
-        closing = _matching_brace(masked, opening)
+        closing = _matching_delimiter(masked, opening, "{", "}")
         if opening >= 0 and closing is not None:
             yield match.start("name"), opening, closing
 
@@ -130,9 +168,91 @@ def _changed_position(source: str, position: int, changed_lines: set[int] | None
     return changed_lines is None or _line_number(source, position) in changed_lines
 
 
+def _numbered_step_comment_findings(
+    path: str,
+    source: str,
+    changed_lines: set[int] | None,
+) -> list[Finding]:
+    findings: list[Finding] = []
+    for comment in STRING_OR_COMMENT.finditer(source):
+        if not comment.group(0).startswith(("//", "/*")):
+            continue
+        offset = 0
+        for line in comment.group(0).splitlines(keepends=True):
+            position = comment.start() + offset
+            if _NUMBERED_STEP_PREFIX.match(line) and _changed_position(source, position, changed_lines):
+                findings.append(_finding("NUMBERED-STEP-COMMENT", path, source, position))
+            offset += len(line)
+    return findings
+
+
+def _log_call_spans(masked: str) -> Iterable[tuple[int, int]]:
+    for match in _LOG_CALL.finditer(masked):
+        opening = masked.find("(", match.start(), match.end())
+        closing = _matching_delimiter(masked, opening, "(", ")")
+        if opening >= 0 and closing is not None:
+            yield match.start(), closing + 1
+
+
+def _sensitive_identifier_position(masked_log_call: str) -> int | None:
+    for identifier in _JAVA_IDENTIFIER.finditer(masked_log_call):
+        normalized = identifier.group(0).replace("_", "").lower()
+        if normalized.startswith(_REDACTED_LOG_PREFIXES):
+            continue
+        if any(term in normalized for term in _SENSITIVE_LOG_TERMS):
+            return identifier.start()
+    return None
+
+
+def _sensitive_header_position(masked_log_call: str, visible_log_call: str) -> int | None:
+    for access in _HEADER_ACCESS.finditer(masked_log_call):
+        opening = masked_log_call.find("(", access.start(), access.end())
+        closing = _matching_delimiter(masked_log_call, opening, "(", ")")
+        if closing is None:
+            continue
+        argument = visible_log_call[opening + 1:closing]
+        if _SENSITIVE_HEADER_ARGUMENT.fullmatch(argument):
+            return access.start()
+    return None
+
+
+def _unsafe_log_positions(masked_log_call: str, visible_log_call: str) -> list[tuple[str, int]]:
+    rule_positions: list[tuple[str, int]] = []
+    serialized = re.search(r"\bwriteValueAsString\s*\(", masked_log_call)
+    if serialized:
+        rule_positions.append(("WHOLE-OBJECT-LOGGING", serialized.start()))
+
+    sensitive_header = _sensitive_header_position(masked_log_call, visible_log_call)
+    sensitive_identifier = _sensitive_identifier_position(masked_log_call)
+    if sensitive_header is not None:
+        rule_positions.append(("SENSITIVE-LOGGING", sensitive_header))
+    elif sensitive_identifier is not None:
+        rule_positions.append(("SENSITIVE-LOGGING", sensitive_identifier))
+    return rule_positions
+
+
+def _log_findings(
+    path: str,
+    source: str,
+    masked: str,
+    changed_lines: set[int] | None,
+) -> list[Finding]:
+    comments_masked = _mask_comments(source)
+    findings: list[Finding] = []
+    for start, end in _log_call_spans(masked):
+        masked_call = masked[start:end]
+        visible_call = comments_masked[start:end]
+        for code, relative_position in _unsafe_log_positions(masked_call, visible_call):
+            position = start + relative_position
+            if _changed_position(source, position, changed_lines):
+                findings.append(_finding(code, path, source, position))
+    return findings
+
+
 def scan_java_source(path: str, source: str, changed_lines: set[int] | None = None) -> list[Finding]:
     masked = _mask_non_code(source)
     findings: list[Finding] = []
+    findings.extend(_numbered_step_comment_findings(path, source, changed_lines))
     findings.extend(_matches(
         "EMPTY-CATCH", re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}"), path, source, masked, changed_lines,
         "catch block must not silently discard a failure",
@@ -142,7 +262,7 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
     )
     for match in broad_catch.finditer(masked):
         if re.search(r"\breturn\s+(?:null|Optional\.empty\(\)|Collections\.empty\w*\(\)|false)\s*;", match.group("body")):
-            if changed_lines is None or _line_number(source, match.start()) in changed_lines:
+            if _span_changed(source, match.start(), match.end(), changed_lines):
                 findings.append(_finding(
                     "BROAD-CATCH-FALLBACK", path, source, match.start(),
                     "catch a specific recoverable exception or propagate the original failure",
@@ -155,8 +275,12 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
         ), path, source, masked, changed_lines, "inject production dependencies through a constructor",
     ))
     findings.extend(_matches(
+        "LABELED-CONTINUE", re.compile(r"\bcontinue\s+[A-Za-z_$][\w$]*\s*;"),
+        path, source, masked, changed_lines,
+    ))
+    findings.extend(_matches(
         "CONTROL-FLOW-SKIP", re.compile(r"\bcontinue\s*;"), path, source, masked, changed_lines,
-        "replace continue with an explicit, readable control flow",
+        "confirm that this is a top-level guard which lowers nesting without skipping required side effects",
     ))
     findings.extend(_matches(
         "NULL-RETURN", re.compile(r"\breturn\s+null\s*;"), path, source, masked, changed_lines,
@@ -215,7 +339,8 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
         "IDENTIFIER-NORMALIZATION", _IDENTIFIER_TRIM, path, source, masked, changed_lines,
         "do not trim a persisted ID or Code without a documented boundary contract",
     ))
-    if re.search(r"\b(?:log|logger)\.(?:trace|debug|info|warn|error)\s*\(", masked):
+    if _LOG_CALL.search(masked):
+        findings.extend(_log_findings(path, source, masked, changed_lines))
         for match in re.finditer(r"System\.(?:currentTimeMillis|nanoTime)\s*\(", masked):
             if changed_lines is None or _line_number(source, match.start()) in changed_lines:
                 findings.append(_finding(
@@ -257,8 +382,8 @@ def _run_git(repo: Path, args: Sequence[str]) -> str:
     return result.stdout
 
 
-def _changed_lines(repo: Path, base: str) -> dict[str, set[int]]:
-    diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, "--"])
+def _changed_lines(repo: Path, base: str, requested: Sequence[str] = ()) -> dict[str, set[int]]:
+    diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, "--", *requested])
     hunk = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
     result: dict[str, set[int]] = {}
     path: str | None = None
@@ -279,7 +404,10 @@ def _changed_lines(repo: Path, base: str) -> dict[str, set[int]]:
             line_number += 1
         elif not line.startswith("-"):
             line_number += 1
-    for untracked in _run_git(repo, ["ls-files", "--others", "--exclude-standard"]).splitlines():
+    for untracked in _run_git(
+        repo,
+        ["ls-files", "--others", "--exclude-standard", "--", *requested],
+    ).splitlines():
         if untracked.endswith(".java") and (repo / untracked).is_file():
             lines = len((repo / untracked).read_text(encoding="utf-8").splitlines())
             result[untracked] = set(range(1, lines + 1))
@@ -300,7 +428,11 @@ def _safe_path(repo: Path, raw: str) -> str:
 
 def _paths(repo: Path, base: str | None, requested: Iterable[str]) -> dict[str, set[int] | None]:
     if requested:
-        return {path: None for path in sorted({_safe_path(repo, raw) for raw in requested}) if path.endswith(".java")}
+        paths = sorted({_safe_path(repo, raw) for raw in requested})
+        if not base:
+            return {path: None for path in paths if path.endswith(".java")}
+        changed = _changed_lines(repo, base, paths)
+        return {path: changed.get(path, set()) for path in paths if path.endswith(".java")}
     if not base:
         raise ValueError("provide --base or at least one --path")
     return _changed_lines(repo, base)
@@ -309,7 +441,7 @@ def _paths(repo: Path, base: str | None, requested: Iterable[str]) -> dict[str, 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path("."), help="目标仓库根目录")
-    parser.add_argument("--base", help="Git diff 的基线；未提供时必须显式传入 --path")
+    parser.add_argument("--base", help="Git diff 的基线；与 --path 同用时只扫描指定文件的增量")
     parser.add_argument("--path", action="append", default=[], help="要扫描的仓库相对 Java 文件；可重复")
     parser.add_argument("--source", action="append", type=Path, default=[], help="要扫描的任意 Java 源文件；可重复，适合 Plan 临时文件")
     parser.add_argument("--json-output", type=Path, help="可选普通扫描结果 JSON 文件")

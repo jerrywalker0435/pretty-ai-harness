@@ -10,7 +10,20 @@ from pathlib import Path
 from typing import Sequence
 
 
-REQUIRED_HEADINGS = ("## TASK 结果", "## 未验证范围", "## 结论与恢复点")
+REQUIRED_HEADINGS = (
+    "## TASK 结果",
+    "## 审查与验证",
+    "## 未验证范围",
+    "## 结论与恢复点",
+)
+REQUIRED_FIELDS = (
+    "- 实际落点：",
+    "- 行为证据：",
+    "- 审查：",
+    "- 构建验证：",
+    "- 覆盖率范围：",
+    "- 测试覆盖率：",
+)
 ALLOWED_STATUS = ("完成", "已满足（无生产差异）", "停止", "返回 PRD", "返回 Design")
 
 
@@ -18,18 +31,19 @@ def validate(document: str) -> list[str]:
     errors = [f"missing heading: {heading}" for heading in REQUIRED_HEADINGS if heading not in document]
     if re.search(r"<[^>]+>", document):
         errors.append("execution report still contains template placeholders")
-    status_lines = re.findall(r"^-\s*状态：`([^`]+)`", document, re.MULTILINE)
-    for status in status_lines:
-        if "/" in status:
-            continue
-        if not any(status == allowed or status.startswith(allowed + "：") for allowed in ALLOWED_STATUS):
+    for status in re.findall(r"^-\s*状态：`([^`]+)`", document, re.MULTILINE):
+        if "/" not in status and not any(
+            status == allowed or status.startswith(allowed + "：") for allowed in ALLOWED_STATUS
+        ):
             errors.append(f"unsupported execution status: {status}")
     if "### TASK-" not in document:
         errors.append("execution report needs at least one TASK result")
-    if "- 实际落点：" not in document or "- 验证摘要：" not in document:
-        errors.append("each execution report needs actual location and verification summary fields")
-    if "- 测试覆盖率：" not in document:
-        errors.append("execution report needs the template coverage field")
+    missing_fields = [field for field in REQUIRED_FIELDS if field not in document]
+    if missing_fields:
+        errors.append("execution report is missing fields: " + ", ".join(missing_fields))
+    conclusion = document.partition("## 结论与恢复点")[2]
+    if not re.search(r"^-\s*状态：`[^`]+`", conclusion, re.MULTILINE):
+        errors.append("execution report needs a conclusion status")
     return errors
 
 
