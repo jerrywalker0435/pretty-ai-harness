@@ -17,6 +17,7 @@ REQUIRED_SECTIONS = (
     "设计边界",
     "实施影响",
     "验证与风险",
+    "Executing 定位与交付",
 )
 FORBIDDEN_HEADINGS = ("覆盖需求", "需求覆盖", "实施计划", "Plan")
 PLACEHOLDER_PATTERN = re.compile(
@@ -33,7 +34,10 @@ MERMAID_START_PATTERN = re.compile(
 REQ_REF = re.compile(r"\bREQ-\d{3}\b")
 AC_REF = re.compile(r"\bAC-\d{3}\b")
 TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})[：:]\s*\S.+$", re.MULTILINE)
+HANDOFF_TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})\s*$", re.MULTILINE)
 TASK_DELIVERY_FIELDS = ("Execution 交付", "人工运维产物")
+HANDOFF_REQUIRED_FIELDS = ("公共验证入口", "影响锚点", *TASK_DELIVERY_FIELDS)
+HANDOFF_FIELDS = (*HANDOFF_REQUIRED_FIELDS, "依赖")
 PATH_SYMBOL_PATTERN = re.compile(
     r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\.[A-Za-z0-9_-]+#"
     r"[A-Za-z_$][A-Za-z0-9_.$]*(?:\([^\n)]*\))?"
@@ -182,10 +186,10 @@ def _execution_handoff_errors(task: str, body: str) -> list[str]:
     return errors
 
 
-def _has_manual_config_owner(impact: str) -> bool:
+def _has_manual_config_owner(handoff: str) -> bool:
     return any(
         CONFIG_ARTIFACT_PATTERN.search(match.group(1))
-        for match in re.finditer(r"^-\s*人工运维产物：\s*(\S.*)$", impact, re.MULTILINE)
+        for match in re.finditer(r"^-\s*人工运维产物：\s*(\S.*)$", handoff, re.MULTILINE)
     )
 
 
@@ -221,6 +225,64 @@ def _quality_directive_errors(document: str) -> list[str]:
     return sorted(set(errors))
 
 
+def _task_blocks(section: str, heading_pattern: re.Pattern[str]) -> list[tuple[str, str]]:
+    matches = list(heading_pattern.finditer(section))
+    task_blocks = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(section)
+        task_blocks.append((match.group(1), section[match.start():end]))
+    return task_blocks
+
+
+def _missing_fields(body: str, fields: Sequence[str]) -> list[str]:
+    return [
+        field
+        for field in fields
+        if not re.search(rf"^-\s*{field}：\s*\S.*$", body, re.MULTILINE)
+    ]
+
+
+def _impact_errors(impact: str) -> tuple[list[str], list[str]]:
+    task_blocks = _task_blocks(impact, TASK_HEADING)
+    tasks = [task for task, _ in task_blocks]
+    errors: list[str] = []
+    if not tasks:
+        errors.append("实施影响至少需要一个 TASK")
+    if [int(task.split("-")[1]) for task in tasks] != list(range(1, len(tasks) + 1)):
+        errors.append("TASK 编号必须从 TASK-001 连续递增")
+    has_handoff_heading = re.search(r"^###\s+变更职责链路\s*$", impact, re.MULTILINE)
+    if has_handoff_heading or any(_field_value(impact, field) for field in HANDOFF_FIELDS):
+        errors.append("实施影响不得包含变更职责链路或 Executing 定位与交付字段")
+    for task, body in task_blocks:
+        missing = _missing_fields(body, ("结果", "输入与不变量", "失败语义", "验证观察面"))
+        if missing:
+            errors.append(f"{task} 缺少字段：{', '.join(missing)}")
+        if not REQ_REF.search(body) or not AC_REF.search(body):
+            errors.append(f"{task} 必须引用至少一个 REQ-* 和 AC-*")
+    if len(set(tasks)) != len(tasks):
+        errors.append("TASK ID 必须唯一")
+    return tasks, errors
+
+
+def _handoff_errors(document: str, handoff: str, impact_tasks: list[str]) -> list[str]:
+    task_blocks = _task_blocks(handoff, HANDOFF_TASK_HEADING)
+    handoff_tasks = [task for task, _ in task_blocks]
+    errors: list[str] = []
+    if not re.search(r"^###\s+变更职责链路\s*$", handoff, re.MULTILINE):
+        errors.append("Executing 定位与交付需要变更职责链路")
+    if handoff_tasks != impact_tasks:
+        errors.append("Executing 定位与交付的 TASK ID 必须与实施影响一致且顺序相同")
+    if _has_positive_config_change(document) and not _has_manual_config_owner(handoff):
+        errors.append("Design 提及配置数据变更时必须由 Executing TASK 声明人工运维产物")
+    for task, body in task_blocks:
+        missing = _missing_fields(body, HANDOFF_REQUIRED_FIELDS)
+        if missing:
+            errors.append(f"Executing {task} 缺少字段：{', '.join(missing)}")
+        errors.extend(_task_delivery_errors(task, body))
+        errors.extend(_execution_handoff_errors(task, body))
+    return errors
+
+
 def validate_design_document(document: str) -> list[str]:
     """Return deterministic structural errors for a final Design."""
     headings = section_headings(document)
@@ -234,37 +296,10 @@ def validate_design_document(document: str) -> list[str]:
     errors.extend(_delivery_assignment_errors(document))
     errors.extend(_quality_directive_errors(document))
     impact = section_body(document, "实施影响")
-    tasks = TASK_HEADING.findall(impact)
-    if not tasks:
-        errors.append("实施影响至少需要一个 TASK")
-    expected = list(range(1, len(tasks) + 1))
-    actual = [int(task.split("-")[1]) for task in tasks]
-    if actual != expected:
-        errors.append("TASK 编号必须从 TASK-001 连续递增")
-    if "变更职责链路" not in impact:
-        errors.append("实施影响需要变更职责链路")
-    if _has_positive_config_change(document) and not _has_manual_config_owner(impact):
-        errors.append("Design 提及配置数据变更时必须由 TASK 声明人工运维产物")
-    for task in tasks:
-        start = impact.find(f"### {task}")
-        next_task = impact.find("### TASK-", start + 1)
-        body = impact[start: next_task if next_task >= 0 else len(impact)]
-        missing = [
-            field
-            for field in (
-                "结果", "输入与不变量", "失败语义", "公共验证入口",
-                "影响锚点", "验证观察面", *TASK_DELIVERY_FIELDS,
-            )
-            if not re.search(rf"^-\s*{field}：\s*\S.*$", body, re.MULTILINE)
-        ]
-        if missing:
-            errors.append(f"{task} 缺少字段：{', '.join(missing)}")
-        if not REQ_REF.search(body) or not AC_REF.search(body):
-            errors.append(f"{task} 必须引用至少一个 REQ-* 和 AC-*")
-        errors.extend(_task_delivery_errors(task, body))
-        errors.extend(_execution_handoff_errors(task, body))
-    if len(set(tasks)) != len(tasks):
-        errors.append("TASK ID 必须唯一")
+    impact_tasks, impact_errors = _impact_errors(impact)
+    errors.extend(impact_errors)
+    handoff = section_body(document, "Executing 定位与交付")
+    errors.extend(_handoff_errors(document, handoff, impact_tasks))
     return errors
 
 
