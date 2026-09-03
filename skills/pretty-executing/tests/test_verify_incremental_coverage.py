@@ -14,8 +14,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from verify_incremental_coverage import (
     ChangedSource,
+    CoverageBuild,
     LineCoverage,
     SourceCoverage,
+    _maven_coverage_command,
     calculate,
     changed_sources,
     project_thresholds,
@@ -78,6 +80,50 @@ class VerifyIncrementalCoverageTest(unittest.TestCase):
 
         self.assertEqual((91.0, 81.0), thresholds)
         self.assertEqual((99.0, 95.0), repository_thresholds)
+
+    @patch("verify_incremental_coverage._executable", return_value=["mvn"])
+    def test_maven_command_uses_writable_temp_repository_by_default(self, _executable):
+        with tempfile.TemporaryDirectory() as directory:
+            command = _maven_coverage_command(
+                Path(directory),
+                CoverageBuild((), ("test",), ("org.jacoco:jacoco-maven-plugin:report",)),
+            )
+
+        repository_argument = next(
+            argument for argument in command if argument.startswith("-Dmaven.repo.local=")
+        )
+        repository = Path(repository_argument.split("=", 1)[1])
+        self.assertTrue(repository.is_relative_to(Path(tempfile.gettempdir()).resolve()))
+        self.assertNotIn("/.m2/", repository.as_posix())
+
+    @patch("verify_incremental_coverage._executable", return_value=["mvn"])
+    def test_maven_command_preserves_explicit_repository(self, _executable):
+        explicit_repository = "/private/tmp/project-maven-repository"
+        command = _maven_coverage_command(
+            Path("/repo"),
+            CoverageBuild(
+                (f"-Dmaven.repo.local={explicit_repository}",),
+                ("test",),
+                ("report",),
+            ),
+        )
+
+        self.assertEqual(
+            1,
+            sum(argument.startswith("-Dmaven.repo.local=") for argument in command),
+        )
+        self.assertIn(f"-Dmaven.repo.local={explicit_repository}", command)
+
+    @patch("verify_incremental_coverage._executable", return_value=["mvn"])
+    def test_maven_command_preserves_split_define_repository(self, _executable):
+        explicit_repository = "maven.repo.local=/private/tmp/project-maven-repository"
+        command = _maven_coverage_command(
+            Path("/repo"),
+            CoverageBuild(("--define", explicit_repository), (), ()),
+        )
+
+        self.assertEqual(0, sum(argument.startswith("-Dmaven.repo.local=") for argument in command))
+        self.assertEqual(("--define", explicit_repository), tuple(command[1:3]))
 
     @staticmethod
     def write_pom(path: Path, line: str, branch: str) -> None:

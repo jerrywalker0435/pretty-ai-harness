@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -373,6 +374,22 @@ def _tasks(requested: Sequence[str], default: str) -> list[str]:
     return list(dict.fromkeys(requested)) or [default]
 
 
+def _default_maven_repository(repo: Path) -> Path:
+    repository_key = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:16]
+    return Path(tempfile.gettempdir()).resolve() / "pretty-executing" / "maven-repository" / repository_key
+
+
+def _maven_repository_options(repo: Path, arguments: Sequence[str]) -> list[str]:
+    for index, argument in enumerate(arguments):
+        if argument.startswith(("-Dmaven.repo.local=", "--define=maven.repo.local=")):
+            return []
+        if argument in {"-D", "--define"} and index + 1 < len(arguments):
+            if arguments[index + 1].startswith("maven.repo.local="):
+                return []
+
+    return [f"-Dmaven.repo.local={_default_maven_repository(repo)}"]
+
+
 def _validate_build_arguments(tool: str, build: CoverageBuild) -> None:
     if tool != "gradle":
         return
@@ -395,6 +412,7 @@ def _validate_build_arguments(tool: str, build: CoverageBuild) -> None:
 def _maven_coverage_command(repo: Path, build: CoverageBuild) -> list[str]:
     return [
         *_executable(repo, "mvnw", "mvn"),
+        *_maven_repository_options(repo, build.arguments),
         *build.arguments,
         "org.jacoco:jacoco-maven-plugin:prepare-agent",
         *_tasks(build.test_tasks, "test"),

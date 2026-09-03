@@ -232,6 +232,11 @@ python3 -m unittest discover -s skills/pretty-executing/tests -p 'test_*.py'
   重新验证；脚本输出未覆盖行和部分覆盖分支供判断，不据此机械增加测试。仍无法通过则
   停止并报告。
 
+Maven 的 `--run` 由脚本自动追加按仓库隔离的系统临时目录作为
+`-Dmaven.repo.local`，不写用户目录下的 `~/.m2`，因此不需要为本地仓库写权限单独授权。
+如果构建必须使用指定的可写仓库，可通过 `--build-arg=-Dmaven.repo.local=<path>` 显式传入；
+已有新鲜 XML 时使用 `--report` 只读报告，不启动 Maven。
+
 绿路径唯一一次带测试的命令同时完成相关模块全量测试和 JaCoCo：
 
 ```bash
