@@ -34,6 +34,15 @@ REQ_REF = re.compile(r"\bREQ-\d{3}\b")
 AC_REF = re.compile(r"\bAC-\d{3}\b")
 TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})[：:]\s*\S.+$", re.MULTILINE)
 TASK_DELIVERY_FIELDS = ("Execution 交付", "人工运维产物")
+PATH_SYMBOL_PATTERN = re.compile(
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\.[A-Za-z0-9_-]+#"
+    r"[A-Za-z_$][A-Za-z0-9_.$]*(?:\([^\n)]*\))?"
+)
+REPOSITORY_FILE_PATTERN = re.compile(
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\."
+    r"(?:java|xml|gradle|kts|sql|yaml|yml|properties|json)(?=$|[\s`；;,])",
+    re.IGNORECASE,
+)
 CONFIG_ARTIFACT_PATTERN = re.compile(
     r"配置(?:数据|表)?\s*(?:DML|SQL|脚本|迁移)|配置(?:激活|禁用|回滚)|"
     r"事件定义|模板关系|白名单|种子数据|reference\s+data|seed\s+data",
@@ -146,6 +155,33 @@ def _task_delivery_errors(task: str, body: str) -> list[str]:
     return errors
 
 
+def _not_applicable(value: str) -> bool:
+    normalized = value.strip().strip("`")
+    return normalized == "无" or normalized.startswith(("不适用：", "不适用:"))
+
+
+def _execution_handoff_errors(task: str, body: str) -> list[str]:
+    public_entry = _field_value(body, "公共验证入口") or ""
+    anchors = _field_value(body, "影响锚点") or ""
+    delivery = _field_value(body, "Execution 交付") or ""
+    errors: list[str] = []
+    for field, value in (("公共验证入口", public_entry), ("影响锚点", anchors)):
+        if _not_applicable(value):
+            continue
+        if not re.search(r"(?:现有|新增)", value):
+            errors.append(f"{task} 的{field}必须标记现有或新增")
+        if not PATH_SYMBOL_PATTERN.search(value):
+            errors.append(f"{task} 的{field}必须包含仓库相对路径#symbol")
+    if not _not_applicable(delivery):
+        if not re.search(r"(?:构建根|模块)", delivery):
+            errors.append(f"{task} 的 Execution 交付必须声明构建根或模块")
+        if not re.search(r"\b(?:Add|Modify|Test|DDL)\b", delivery):
+            errors.append(f"{task} 的 Execution 交付必须标记 Add/Modify/Test/DDL")
+        if not REPOSITORY_FILE_PATTERN.search(delivery):
+            errors.append(f"{task} 的 Execution 交付必须包含仓库相对文件路径")
+    return errors
+
+
 def _has_manual_config_owner(impact: str) -> bool:
     return any(
         CONFIG_ARTIFACT_PATTERN.search(match.group(1))
@@ -226,6 +262,7 @@ def validate_design_document(document: str) -> list[str]:
         if not REQ_REF.search(body) or not AC_REF.search(body):
             errors.append(f"{task} 必须引用至少一个 REQ-* 和 AC-*")
         errors.extend(_task_delivery_errors(task, body))
+        errors.extend(_execution_handoff_errors(task, body))
     if len(set(tasks)) != len(tasks):
         errors.append("TASK ID 必须唯一")
     return errors

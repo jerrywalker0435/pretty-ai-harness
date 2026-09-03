@@ -53,3 +53,13 @@ flowchart TD
 ### AC-001：<验收结果>
 
 - Given <前置条件>，When <行为>，Then <可验证结果>。（同一结果的不同场景可增加条目，不重复 REQ 原文）
+
+## Design 交接
+
+<!-- 本节按触发保留，遵循“有则必记、无则不查”。这里只记录为确认当前行为已经读取的公共入口/测试定位，不指定未来实现。未读取时删除本节；只读取其中一项时，另一列写“未获取”。 -->
+
+- 定位状态：`已核验`
+
+| REQ/AC | 当前公共行为入口 | 当前公共验证入口 |
+| --- | --- | --- |
+| REQ-001 / AC-001 | `module/src/main/java/example/Entry.java#handle` | `module/src/test/java/example/EntryTest.java#returnsResult` |

@@ -94,7 +94,9 @@ def _is_production_java(path: str) -> bool:
 
 
 def changed_sources(repo: Path, base: str, requested: Sequence[str] = ()) -> tuple[ChangedSource, ...]:
-    diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, "--"])
+    selected = tuple(dict.fromkeys(Path(path).as_posix().removeprefix("./") for path in requested))
+    pathspec = ["--", *selected] if selected else ["--"]
+    diff = _run_git(repo, ["diff", "--no-ext-diff", "--unified=0", base, *pathspec])
     changed: dict[str, set[int]] = {}
     path: str | None = None
     line_number = 0
@@ -114,13 +116,10 @@ def changed_sources(repo: Path, base: str, requested: Sequence[str] = ()) -> tup
             line_number += 1
         elif not line.startswith("-"):
             line_number += 1
-    for raw in _run_git(repo, ["ls-files", "--others", "--exclude-standard"]).splitlines():
+    for raw in _run_git(repo, ["ls-files", "--others", "--exclude-standard", *pathspec]).splitlines():
         source = repo / raw
         if _is_production_java(raw) and source.is_file():
             changed[raw] = set(range(1, len(source.read_text(encoding="utf-8").splitlines()) + 1))
-    if requested:
-        selected = {Path(path).as_posix().lstrip("./") for path in requested}
-        changed = {path: lines for path, lines in changed.items() if path in selected}
     return tuple(ChangedSource(path, frozenset(lines)) for path, lines in sorted(changed.items()))
 
 

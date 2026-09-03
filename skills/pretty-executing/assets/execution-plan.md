@@ -15,6 +15,10 @@ flowchart TD
 约束：
 - <代码无法直接表达的外部合同或兼容限制>
 
+构建范围：`<构建根或模块>`
+
+公共验证入口：`<现有/新增；仓库相对测试路径#symbol>`
+
 **Files:**
 - Modify: `module/src/main/java/example/Target.java`
 - Test: `module/src/test/java/example/TargetTest.java`
