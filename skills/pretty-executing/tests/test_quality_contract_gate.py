@@ -11,10 +11,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from quality_contract_gate import scan_java_source
-from quality_registry import ERROR, REVIEW, registry_errors
+from quality_registry import ERROR, REVIEW, RULE_BY_CODE, registry_errors
 
 
 JAVA_PATH = "src/main/java/example/Example.java"
+REMOVED_RULE_CODES = {
+    "BOOLEAN-FLAG",
+    "CONTROL-FLOW-SKIP",
+    "GENERIC-NORMALIZATION-HELPER",
+    "GENERIC-RESULT-SHAPE",
+    "IDENTIFIER-NORMALIZATION",
+    "IMPLICIT-FIELD-FALLBACK",
+    "NORMALIZATION-HELPER",
+    "NORMALIZATION-OWNERSHIP",
+    "NULL-RETURN",
+    "OPTIONAL-GET",
+    "REPEATED-NORMALIZATION",
+}
 
 
 def findings_for(source: str, changed_lines: set[int] | None = None):
@@ -25,11 +38,40 @@ class QualityContractGateTest(unittest.TestCase):
     def test_registry_is_valid(self):
         self.assertEqual([], registry_errors())
 
-    def test_plain_continue_requires_review(self):
+    def test_removed_rules_are_not_registered(self):
+        self.assertTrue(REMOVED_RULE_CODES.isdisjoint(RULE_BY_CODE))
+
+    def test_plain_continue_is_not_a_mechanical_finding(self):
         findings = findings_for("for (Order order : orders) { continue; }")
 
-        self.assertFinding(findings, "CONTROL-FLOW-SKIP", REVIEW)
+        self.assertNotIn("CONTROL-FLOW-SKIP", self.codes(findings))
         self.assertNotIn("LABELED-CONTINUE", self.codes(findings))
+
+    def test_context_dependent_patterns_are_not_mechanical_findings(self):
+        source = """
+            class Example {
+                String normalizeName(String text) { return text.trim(); }
+                String chooseName(String first, String second) {
+                    return firstNonBlank(first, second);
+                }
+                String read(Optional<String> candidate, boolean enabled, Order order) {
+                    if (candidate.isPresent()) {
+                        return candidate.get();
+                    }
+                    if (enabled && StringUtils.hasText(order.getOrderId())) {
+                        return candidate.orElse("fallback");
+                    }
+                    return null;
+                }
+                void visit(List<Order> orders) {
+                    for (Order order : orders) {
+                        continue;
+                    }
+                }
+            }
+        """
+
+        self.assertEqual([], self.codes(findings_for(source)))
 
     def test_labeled_continue_is_an_error(self):
         findings = findings_for("orders: for (;;) { continue orders; }")

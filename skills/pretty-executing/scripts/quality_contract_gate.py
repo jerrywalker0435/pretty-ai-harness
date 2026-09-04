@@ -115,33 +115,6 @@ def _matches(
     return findings
 
 
-_GENERIC_NORMALIZATION_CALL = re.compile(
-    r"(?<![\w$.])(?:normalizeText|normalizeString|cleanText|trimText|trimToNull)\s*\(",
-)
-_DOMAIN_NORMALIZATION_CALL = re.compile(
-    r"(?<![\w$.])(?:normalize|trim|clean|sanitize|canonicalize|standardize)"
-    r"(?:[A-Z_$][\w$]*)?\s*\(",
-)
-_FIELD_FALLBACK_CALL = re.compile(
-    r"(?<![\w$.])(?:firstNonBlank|firstNonEmpty|coalesce|fallback(?:[A-Z_$][\w$]*)?)\s*\(",
-)
-_METHOD_DECLARATION = re.compile(
-    r"(?m)^[ \t]*(?:(?:public|protected|private|static|final|synchronized|abstract|native|default|strictfp)\s+)*"
-    r"(?:<[^>\n]+>\s+)?[\w$<>, ?\.\[\]]+\s+"
-    r"(?P<name>[A-Za-z_$][\w$]*)\s*\([^;{}]*\)\s*(?:throws [^{]+)?\{",
-)
-_HAS_TEXT_OPERATION = re.compile(r"\b(?:[A-Za-z_$][\w$]*\s*\.\s*)?hasText\s*\(")
-_TRIM_OPERATION = re.compile(r"\.\s*(?:trim|strip|stripLeading|stripTrailing)\s*\(")
-_CASE_OPERATION = re.compile(r"\.\s*to(?:Lower|Upper)Case\s*\(")
-_IDENTIFIER_ACCESS = (
-    r"(?:(?:[A-Za-z_$][\w$]*\s*\.\s*)*)get[A-Za-z_$][\w$]*(?:Id|ID|Code|CODE)\s*\([^)]*\)"
-)
-_IDENTIFIER_HAS_TEXT = re.compile(
-    r"\b(?:StringUtils\s*\.\s*)?hasText\s*\(\s*" + _IDENTIFIER_ACCESS + r"\s*\)"
-)
-_IDENTIFIER_TRIM = re.compile(_IDENTIFIER_ACCESS + r"\s*\.\s*(?:trim|strip)\s*\(")
-
-
 def _matching_delimiter(masked: str, opening: int, opening_char: str, closing_char: str) -> int | None:
     depth = 0
     for position in range(opening, len(masked)):
@@ -153,15 +126,6 @@ def _matching_delimiter(masked: str, opening: int, opening_char: str, closing_ch
             if depth == 0:
                 return position
     return None
-
-
-def _method_spans(masked: str) -> Iterable[tuple[int, int, int]]:
-    """Yield (method-name, body-start, body-end) spans for simple Java methods."""
-    for match in _METHOD_DECLARATION.finditer(masked):
-        opening = masked.find("{", match.start(), match.end())
-        closing = _matching_delimiter(masked, opening, "{", "}")
-        if opening >= 0 and closing is not None:
-            yield match.start("name"), opening, closing
 
 
 def _changed_position(source: str, position: int, changed_lines: set[int] | None) -> bool:
@@ -278,67 +242,6 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
         "LABELED-CONTINUE", re.compile(r"\bcontinue\s+[A-Za-z_$][\w$]*\s*;"),
         path, source, masked, changed_lines,
     ))
-    findings.extend(_matches(
-        "CONTROL-FLOW-SKIP", re.compile(r"\bcontinue\s*;"), path, source, masked, changed_lines,
-        "confirm that this is a top-level guard which lowers nesting without skipping required side effects",
-    ))
-    findings.extend(_matches(
-        "NULL-RETURN", re.compile(r"\breturn\s+null\s*;"), path, source, masked, changed_lines,
-    ))
-    generic_positions = {
-        match.start()
-        for match in _GENERIC_NORMALIZATION_CALL.finditer(masked)
-        if _changed_position(source, match.start(), changed_lines)
-    }
-    for match in _GENERIC_NORMALIZATION_CALL.finditer(masked):
-        if _changed_position(source, match.start(), changed_lines):
-            findings.append(_finding(
-                "GENERIC-NORMALIZATION-HELPER", path, source, match.start(),
-                "normalize at the first trust boundary; do not use a generic text helper",
-            ))
-    for match in _DOMAIN_NORMALIZATION_CALL.finditer(masked):
-        if match.start() not in generic_positions and _changed_position(source, match.start(), changed_lines):
-            findings.append(_finding(
-                "NORMALIZATION-HELPER", path, source, match.start(),
-                "do not hide normalization behind a renamed helper; establish the invariant at the first trust boundary",
-            ))
-    findings.extend(_matches(
-        "IMPLICIT-FIELD-FALLBACK", _FIELD_FALLBACK_CALL, path, source, masked, changed_lines,
-        "alternate-field selection requires an explicit Design, protocol, or Schema contract",
-    ))
-
-    for method_name, body_start, body_end in _method_spans(masked):
-        body = masked[body_start:body_end]
-        operations = (
-            ("hasText", _HAS_TEXT_OPERATION),
-            ("trim/strip", _TRIM_OPERATION),
-            ("case folding", _CASE_OPERATION),
-        )
-        repeated: list[str] = []
-        changed_operation_positions: list[int] = []
-        for label, pattern in operations:
-            matches = list(pattern.finditer(body))
-            if len(matches) > 1:
-                repeated.append(label)
-                changed_operation_positions.extend(
-                    body_start + match.start() for match in matches
-                    if _changed_position(source, body_start + match.start(), changed_lines)
-                )
-        if repeated and (changed_lines is None or changed_operation_positions):
-            position = min(changed_operation_positions) if changed_operation_positions else method_name
-            findings.append(_finding(
-                "REPEATED-NORMALIZATION", path, source, position,
-                f"{', '.join(repeated)} is repeated in one method; prove separate trust boundaries or remove the duplicate",
-            ))
-
-    findings.extend(_matches(
-        "IDENTIFIER-NORMALIZATION", _IDENTIFIER_HAS_TEXT, path, source, masked, changed_lines,
-        "do not normalize a persisted ID or Code without a documented boundary contract",
-    ))
-    findings.extend(_matches(
-        "IDENTIFIER-NORMALIZATION", _IDENTIFIER_TRIM, path, source, masked, changed_lines,
-        "do not trim a persisted ID or Code without a documented boundary contract",
-    ))
     if _LOG_CALL.search(masked):
         findings.extend(_log_findings(path, source, masked, changed_lines))
         for match in re.finditer(r"System\.(?:currentTimeMillis|nanoTime)\s*\(", masked):
@@ -349,19 +252,6 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
                 ))
     findings.extend(_matches(
         "WILDCARD-IMPORT", re.compile(r"^\s*import\s+(?:static\s+)?[\w$.]+\.\*\s*;", re.MULTILINE),
-        path, source, masked, changed_lines,
-    ))
-    findings.extend(_matches(
-        "OPTIONAL-GET", re.compile(r"\b(?:isPresent|isEmpty)\s*\(\s*\).*?\bget\s*\(\s*\)", re.DOTALL),
-        path, source, masked, changed_lines,
-    ))
-    findings.extend(_matches(
-        "BOOLEAN-FLAG",
-        re.compile(r"\b(?:public|protected|private)?\s*(?:static\s+)?[\w<>?,.\[\]]+\s+\w+\s*\([^)]*\bboolean\s+\w+\b[^)]*\)\s*\{"),
-        path, source, masked, changed_lines,
-    ))
-    findings.extend(_matches(
-        "GENERIC-RESULT-SHAPE", re.compile(r"\b(?:success|code|message|data)\b\s*[:=]"),
         path, source, masked, changed_lines,
     ))
     for match in re.finditer(r"\?[^:\n]+:[^;\n]+", masked):
