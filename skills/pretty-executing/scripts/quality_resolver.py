@@ -24,28 +24,25 @@ except ImportError:  # pragma: no cover
 
 ROUTES = {
     "MODULE_BOUNDARY": ("codebase-design", "interface, seam, depth, locality, and module ownership"),
-    "JAVA_OOD": ("121-java-object-oriented-design", "Java responsibility, encapsulation, and object contracts"),
-    "FOCUSED_SOLID": ("solid-principles", "one specifically confirmed SOLID principle"),
     "TYPE_DESIGN": ("122-java-type-design", "domain types, precision, hierarchies, and signature contrast"),
-    "CHANGE_AXIS": ("design-patterns", "an existing second implementation or approved variation axis"),
-    "JAVA_RUNTIME_RISK": ("java-code-review", "null, exception, concurrency, resource, performance, and API risks"),
+    "JAVA_RUNTIME_RISK": (
+        "java-code-review",
+        "Java/Spring concurrency, transaction, resource, reactive, and external API risks",
+    ),
     "BEHAVIOR_TEST": ("tdd", "observable behavior, assertions, and boundary substitutes"),
 }
-JAVA_OOD_RISK = re.compile(
-    r"\b(?:public|protected)\s+(?:(?:abstract|final|sealed|non-sealed|static)\s+)*"
-    r"(?:class|interface|record|enum)\b|\b(?:public|protected)\s+[\w<>?,.\[\] ]+\s+\w+\s*\("
-)
 MODULE_BOUNDARY_RISK = re.compile(
-    r"\b(?:public\s+interface|implements|extends)\b|"
+    r"\bpublic\s+interface\b|"
     r"\b[A-Z][A-Za-z0-9_$]*(?:Gateway|Adapter|Repository|Client|Remote|Controller)\b"
 )
 TYPE_DESIGN_RISK = re.compile(
     r"\b(?:record|enum|BigDecimal|Optional|Comparable)\b|"
     r"\b[A-Z][A-Za-z0-9_$]*(?:Value|Id|Code|Type|Status)\b"
 )
-CHANGE_AXIS_RISK = re.compile(r"\b(?:Strategy|Factory|Registry|Provider)\b")
 JAVA_RUNTIME_RISK = re.compile(
-    r"\b(?:null|throw|catch|synchronized|volatile|CompletableFuture|Executor|ThreadLocal|Transactional)\b|"
+    r"\b(?:synchronized|volatile|CompletableFuture|Executor(?:Service)?|ThreadLocal|"
+    r"InputStream|OutputStream|Reader|Writer|Connection|ResultSet)\b|"
+    r"@(?:Transactional|Async)\b|\b(?:Mono|Flux)\s*<|"
     r"\b[A-Z][A-Za-z0-9_$]*(?:Gateway|Adapter|Repository|Client|Remote)\b"
 )
 BEHAVIOR_TEST_RISK = re.compile(
@@ -121,10 +118,8 @@ def _route_source(repo: Path, paths: Sequence[str], base: str | None) -> str:
 
 def _matched_routes(production_content: str, test_content: str) -> set[str]:
     checks = (
-        ("JAVA_OOD", JAVA_OOD_RISK),
         ("MODULE_BOUNDARY", MODULE_BOUNDARY_RISK),
         ("TYPE_DESIGN", TYPE_DESIGN_RISK),
-        ("CHANGE_AXIS", CHANGE_AXIS_RISK),
         ("JAVA_RUNTIME_RISK", JAVA_RUNTIME_RISK),
     )
     routes = {route for route, pattern in checks if pattern.search(production_content)}
@@ -184,7 +179,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             routes = payload["routes"]
-            print("质量路由：" + ("、".join(item["id"] for item in routes) if routes else "无专项路由；使用通用质量原则"))
+            print(
+                "质量路由："
+                + (
+                    "、".join(item["id"] for item in routes)
+                    if routes
+                    else "无专项路由；使用 clean-code-guard 与执行质量补充"
+                )
+            )
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"质量路由无法解析：{error}", file=sys.stderr)

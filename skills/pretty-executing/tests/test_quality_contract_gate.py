@@ -3,21 +3,30 @@
 
 from __future__ import annotations
 
+import json
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from quality_contract_gate import scan_java_source
-from quality_registry import ERROR, REVIEW, RULE_BY_CODE, registry_errors
+from quality_contract_gate import main, scan_java_source
+from quality_registry import ERROR, RULE_BY_CODE, registry_errors
 
 
 JAVA_PATH = "src/main/java/example/Example.java"
 REMOVED_RULE_CODES = {
     "BOOLEAN-FLAG",
+    "BROAD-CATCH-FALLBACK",
+    "COMPLEX-TERNARY",
     "CONTROL-FLOW-SKIP",
+    "DISABLED-TEST",
+    "EMPTY-CATCH",
+    "FIELD-INJECTION",
     "GENERIC-NORMALIZATION-HELPER",
     "GENERIC-RESULT-SHAPE",
     "IDENTIFIER-NORMALIZATION",
@@ -25,8 +34,10 @@ REMOVED_RULE_CODES = {
     "NORMALIZATION-HELPER",
     "NORMALIZATION-OWNERSHIP",
     "NULL-RETURN",
+    "NUMBERED-STEP-COMMENT",
     "OPTIONAL-GET",
     "REPEATED-NORMALIZATION",
+    "WILDCARD-IMPORT",
 }
 
 
@@ -40,6 +51,15 @@ class QualityContractGateTest(unittest.TestCase):
 
     def test_removed_rules_are_not_registered(self):
         self.assertTrue(REMOVED_RULE_CODES.isdisjoint(RULE_BY_CODE))
+        self.assertEqual(
+            {
+                "LABELED-CONTINUE",
+                "WHOLE-OBJECT-LOGGING",
+                "SENSITIVE-LOGGING",
+                "MANUAL-DURATION-LOGGING",
+            },
+            set(RULE_BY_CODE),
+        )
 
     def test_plain_continue_is_not_a_mechanical_finding(self):
         findings = findings_for("for (Order order : orders) { continue; }")
@@ -49,7 +69,12 @@ class QualityContractGateTest(unittest.TestCase):
 
     def test_context_dependent_patterns_are_not_mechanical_findings(self):
         source = """
+            import java.util.*;
+
             class Example {
+                @Autowired
+                private OrderRepository repository;
+
                 String normalizeName(String text) { return text.trim(); }
                 String chooseName(String first, String second) {
                     return firstNonBlank(first, second);
@@ -63,68 +88,36 @@ class QualityContractGateTest(unittest.TestCase):
                     }
                     return null;
                 }
+                String load() {
+                    try {
+                        return repository.load();
+                    } catch (Exception ignored) {
+                        return null;
+                    }
+                }
+                String classify(boolean cold, boolean large) {
+                    return cold ? "cold" : large ? "large" : "ambient";
+                }
                 void visit(List<Order> orders) {
                     for (Order order : orders) {
                         continue;
                     }
                 }
+                // Step 1: old scaffolding comment
+                @Disabled
+                void skippedTest() {}
             }
         """
 
-        self.assertEqual([], self.codes(findings_for(source)))
+        findings = scan_java_source("src/test/java/example/Example.java", source)
+
+        self.assertEqual([], self.codes(findings))
 
     def test_labeled_continue_is_an_error(self):
         findings = findings_for("orders: for (;;) { continue orders; }")
 
         self.assertFinding(findings, "LABELED-CONTINUE", ERROR)
         self.assertNotIn("CONTROL-FLOW-SKIP", self.codes(findings))
-
-    def test_nested_ternary_requires_review(self):
-        findings = findings_for("return cold ? COLD : large ? OVERSIZED : AMBIENT;")
-
-        self.assertFinding(findings, "COMPLEX-TERNARY", REVIEW)
-
-    def test_numbered_step_comments_are_errors(self):
-        source = """
-            // Step 1: validate
-            validate(command);
-            // 2. persist
-            persist(order);
-            /* 第三步：发布事件 */
-            publish(event);
-            String example = "// Step 4: not a comment";
-        """
-
-        findings = findings_for(source)
-
-        self.assertEqual(3, self.codes(findings).count("NUMBERED-STEP-COMMENT"))
-
-    def test_java_text_block_content_is_not_treated_as_a_comment(self):
-        source = '''
-            String instructions = """
-                One "quoted" word
-                // Step 1: rendered instructions
-                """;
-            // Step 2: actual comment
-        '''
-
-        findings = findings_for(source)
-
-        numbered_comments = [finding for finding in findings if finding.code == "NUMBERED-STEP-COMMENT"]
-        self.assertEqual([6], [finding.line for finding in numbered_comments])
-
-    def test_given_when_then_comments_are_not_numbered_steps(self):
-        source = "// Given\n// When\n// Then\nvoid verifiesOrderPlacement() {}"
-
-        self.assertNotIn("NUMBERED-STEP-COMMENT", self.codes(findings_for(source)))
-
-    def test_numbered_step_comments_respect_changed_lines(self):
-        source = "// Step 1: validate\nvalidate();\n// Step 2: persist\npersist();"
-
-        findings = findings_for(source, changed_lines={3})
-
-        numbered_comments = [finding for finding in findings if finding.code == "NUMBERED-STEP-COMMENT"]
-        self.assertEqual([3], [finding.line for finding in numbered_comments])
 
     def test_whole_object_serialization_in_a_log_is_an_error(self):
         source = 'log.info("request={}", objectMapper.writeValueAsString(request));'
@@ -154,6 +147,35 @@ class QualityContractGateTest(unittest.TestCase):
         '''
 
         self.assertNotIn("SENSITIVE-LOGGING", self.codes(findings_for(source)))
+
+    def test_manual_duration_logging_is_an_error(self):
+        source = """
+            long startedAt = System.nanoTime();
+            execute();
+            log.info("duration={}", System.nanoTime() - startedAt);
+        """
+
+        self.assertEqual(2, self.codes(findings_for(source)).count("MANUAL-DURATION-LOGGING"))
+
+    def test_json_output_contains_only_error_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            source = repo / "Example.java"
+            output = repo / "quality.json"
+            source.write_text("orders: for (;;) { continue orders; }", encoding="utf-8")
+
+            with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+                exit_code = main([
+                    "--repo", str(repo),
+                    "--source", str(source),
+                    "--json-output", str(output),
+                ])
+
+            payload = json.loads(output.read_text(encoding="utf-8"))
+
+        self.assertEqual(1, exit_code)
+        self.assertEqual({"scanned_files", "findings", "errors"}, set(payload))
+        self.assertEqual(["error"], [finding["severity"] for finding in payload["findings"]])
 
     def assertFinding(self, findings, code: str, severity: str):
         matching = [finding for finding in findings if finding.code == code]

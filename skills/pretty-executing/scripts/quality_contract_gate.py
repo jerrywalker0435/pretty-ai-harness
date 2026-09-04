@@ -2,8 +2,7 @@
 """Run a stateless mechanical quality scan over changed Java files.
 
 The command deliberately emits findings only. It does not create execution state
-or modify the project. Review-level findings are reported for the combined
-review pass; error-level findings make the gate fail.
+or modify the project. Every finding is a deterministic gate error.
 """
 
 from __future__ import annotations
@@ -18,9 +17,9 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, Sequence
 
 try:
-    from quality_registry import ERROR, REVIEW, RULE_BY_CODE, registry_errors
+    from quality_registry import ERROR, RULE_BY_CODE, registry_errors
 except ImportError:  # pragma: no cover - supports package execution
-    from .quality_registry import ERROR, REVIEW, RULE_BY_CODE, registry_errors
+    from .quality_registry import ERROR, RULE_BY_CODE, registry_errors
 
 
 @dataclass(frozen=True)
@@ -38,15 +37,6 @@ STRING_OR_COMMENT = re.compile(
     r"'(?:\\.|[^'\\\n])*'|"
     r"//[^\n]*|/\*.*?\*/",
     re.DOTALL,
-)
-_NUMBERED_STEP_PREFIX = re.compile(
-    r"^[ \t]*(?://+|/\*+|\*+)?[ \t]*(?:"
-    r"(?:step|步骤)[ \t]*#?[ \t]*(?:\d+|[一二三四五六七八九十百零〇两]+)|"
-    r"第[ \t]*(?:\d+|[一二三四五六七八九十百零〇两]+)[ \t]*步|"
-    r"\([ \t]*(?:\d+|[一二三四五六七八九十百零〇两]+)[ \t]*\)|"
-    r"(?:\d+|[一二三四五六七八九十百零〇两]+)[ \t]*[.)、:：]"
-    r")",
-    re.IGNORECASE,
 )
 _LOG_CALL = re.compile(r"\b(?:log|logger)\s*\.\s*(?:trace|debug|info|warn|error)\s*\(", re.IGNORECASE)
 _HEADER_ACCESS = re.compile(r"\b(?:getHeader|header|getFirst|get)\s*\(", re.IGNORECASE)
@@ -89,14 +79,9 @@ def _span_changed(source: str, start: int, end: int, changed_lines: set[int] | N
     return any(first_line <= line <= last_line for line in changed_lines)
 
 
-def _finding(code: str, path: str, source: str, position: int, detail: str | None = None) -> Finding:
+def _finding(code: str, path: str, source: str, position: int) -> Finding:
     rule = RULE_BY_CODE[code]
-    return Finding(code, rule.severity, path, _line_number(source, position), detail or rule.description)
-
-
-def _is_test_file(path: str) -> bool:
-    normalized = "/" + path.replace("\\", "/").lower().strip("/") + "/"
-    return "/src/test/" in normalized or "/test/" in normalized
+    return Finding(code, ERROR, path, _line_number(source, position), rule.description)
 
 
 def _matches(
@@ -106,12 +91,11 @@ def _matches(
     source: str,
     masked: str,
     changed_lines: set[int] | None,
-    detail: str | None = None,
 ) -> list[Finding]:
     findings: list[Finding] = []
     for match in pattern.finditer(masked):
         if _span_changed(source, match.start(), match.end(), changed_lines):
-            findings.append(_finding(code, path, source, match.start(), detail))
+            findings.append(_finding(code, path, source, match.start()))
     return findings
 
 
@@ -130,24 +114,6 @@ def _matching_delimiter(masked: str, opening: int, opening_char: str, closing_ch
 
 def _changed_position(source: str, position: int, changed_lines: set[int] | None) -> bool:
     return changed_lines is None or _line_number(source, position) in changed_lines
-
-
-def _numbered_step_comment_findings(
-    path: str,
-    source: str,
-    changed_lines: set[int] | None,
-) -> list[Finding]:
-    findings: list[Finding] = []
-    for comment in STRING_OR_COMMENT.finditer(source):
-        if not comment.group(0).startswith(("//", "/*")):
-            continue
-        offset = 0
-        for line in comment.group(0).splitlines(keepends=True):
-            position = comment.start() + offset
-            if _NUMBERED_STEP_PREFIX.match(line) and _changed_position(source, position, changed_lines):
-                findings.append(_finding("NUMBERED-STEP-COMMENT", path, source, position))
-            offset += len(line)
-    return findings
 
 
 def _log_call_spans(masked: str) -> Iterable[tuple[int, int]]:
@@ -216,28 +182,6 @@ def _log_findings(
 def scan_java_source(path: str, source: str, changed_lines: set[int] | None = None) -> list[Finding]:
     masked = _mask_non_code(source)
     findings: list[Finding] = []
-    findings.extend(_numbered_step_comment_findings(path, source, changed_lines))
-    findings.extend(_matches(
-        "EMPTY-CATCH", re.compile(r"catch\s*\([^)]*\)\s*\{\s*\}"), path, source, masked, changed_lines,
-        "catch block must not silently discard a failure",
-    ))
-    broad_catch = re.compile(
-        r"catch\s*\(\s*(?:Exception|RuntimeException|Throwable)\b[^)]*\)\s*\{(?P<body>.*?)\}", re.DOTALL
-    )
-    for match in broad_catch.finditer(masked):
-        if re.search(r"\breturn\s+(?:null|Optional\.empty\(\)|Collections\.empty\w*\(\)|false)\s*;", match.group("body")):
-            if _span_changed(source, match.start(), match.end(), changed_lines):
-                findings.append(_finding(
-                    "BROAD-CATCH-FALLBACK", path, source, match.start(),
-                    "catch a specific recoverable exception or propagate the original failure",
-                ))
-    findings.extend(_matches(
-        "FIELD-INJECTION",
-        re.compile(
-            r"@(?:Autowired|Resource|Inject)\b[^\n]*(?:\n\s*@[A-Za-z_$][\w$]*(?:\([^\n]*\))?)*\n"
-            r"\s*(?:(?:public|protected|private|static|final)\s+)*[A-Za-z_$][\w$]*(?:\s*<[^;{}\n]+>)?(?:\s*\[\])?\s+[A-Za-z_$][\w$]*\s*;"
-        ), path, source, masked, changed_lines, "inject production dependencies through a constructor",
-    ))
     findings.extend(_matches(
         "LABELED-CONTINUE", re.compile(r"\bcontinue\s+[A-Za-z_$][\w$]*\s*;"),
         path, source, masked, changed_lines,
@@ -246,22 +190,7 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
         findings.extend(_log_findings(path, source, masked, changed_lines))
         for match in re.finditer(r"System\.(?:currentTimeMillis|nanoTime)\s*\(", masked):
             if changed_lines is None or _line_number(source, match.start()) in changed_lines:
-                findings.append(_finding(
-                    "MANUAL-DURATION-LOGGING", path, source, match.start(),
-                    "use the repository tracing or metrics abstraction for elapsed-time logging",
-                ))
-    findings.extend(_matches(
-        "WILDCARD-IMPORT", re.compile(r"^\s*import\s+(?:static\s+)?[\w$.]+\.\*\s*;", re.MULTILINE),
-        path, source, masked, changed_lines,
-    ))
-    for match in re.finditer(r"\?[^:\n]+:[^;\n]+", masked):
-        if (changed_lines is None or _line_number(source, match.start()) in changed_lines) and match.group(0).count("?") > 1:
-            findings.append(_finding("COMPLEX-TERNARY", path, source, match.start()))
-    if _is_test_file(path):
-        findings.extend(_matches(
-            "DISABLED-TEST", re.compile(r"@(Disabled|Ignore|EnabledIf|DisabledIf|EnableIf)\b"),
-            path, source, masked, changed_lines, "do not add or expand disabled/conditional test scope",
-        ))
+                findings.append(_finding("MANUAL-DURATION-LOGGING", path, source, match.start()))
     return findings
 
 
@@ -365,7 +294,6 @@ def main(arguments: Sequence[str] | None = None) -> int:
             "scanned_files": scanned,
             "findings": [asdict(item) for item in findings],
             "errors": [asdict(item) for item in findings if item.severity == ERROR],
-            "review_required": [asdict(item) for item in findings if item.severity == REVIEW],
         }
         if args.json_output:
             output = args.json_output if args.json_output.is_absolute() else repo / args.json_output
@@ -376,7 +304,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if payload["errors"]:
             print(f"Quality Gate: failed ({len(payload['errors'])} error(s))", file=sys.stderr)
             return 1
-        print(f"Quality Gate: passed ({len(scanned)} Java file(s), {len(payload['review_required'])} review finding(s))")
+        print(f"Quality Gate: passed ({len(scanned)} Java file(s))")
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"Quality Gate: unable to run: {error}", file=sys.stderr)
