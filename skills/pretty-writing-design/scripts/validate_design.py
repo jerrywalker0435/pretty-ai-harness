@@ -17,7 +17,7 @@ REQUIRED_SECTIONS = (
     "设计边界",
     "实施影响",
     "验证与风险",
-    "Executing 定位与交付",
+    "Executing交付",
 )
 FORBIDDEN_HEADINGS = ("覆盖需求", "需求覆盖", "实施计划", "Plan")
 PLACEHOLDER_PATTERN = re.compile(
@@ -250,9 +250,10 @@ def _impact_errors(impact: str) -> tuple[list[str], list[str]]:
         errors.append("实施影响至少需要一个 TASK")
     if [int(task.split("-")[1]) for task in tasks] != list(range(1, len(tasks) + 1)):
         errors.append("TASK 编号必须从 TASK-001 连续递增")
-    has_handoff_heading = re.search(r"^###\s+变更职责链路\s*$", impact, re.MULTILINE)
-    if has_handoff_heading or any(_field_value(impact, field) for field in HANDOFF_FIELDS):
-        errors.append("实施影响不得包含变更职责链路或 Executing 定位与交付字段")
+    if not re.search(r"^###\s+变更职责链路\s*$", impact, re.MULTILINE):
+        errors.append("实施影响需要供人工评审的变更职责链路")
+    if any(_field_value(impact, field) for field in HANDOFF_FIELDS):
+        errors.append("实施影响不得包含 Executing交付字段")
     for task, body in task_blocks:
         missing = _missing_fields(body, ("结果", "输入与不变量", "失败语义", "验证观察面"))
         if missing:
@@ -268,10 +269,10 @@ def _handoff_errors(document: str, handoff: str, impact_tasks: list[str]) -> lis
     task_blocks = _task_blocks(handoff, HANDOFF_TASK_HEADING)
     handoff_tasks = [task for task, _ in task_blocks]
     errors: list[str] = []
-    if not re.search(r"^###\s+变更职责链路\s*$", handoff, re.MULTILINE):
-        errors.append("Executing 定位与交付需要变更职责链路")
+    if re.search(r"^###\s+变更职责链路\s*$", handoff, re.MULTILINE):
+        errors.append("变更职责链路应位于实施影响，不得放入 Executing交付")
     if handoff_tasks != impact_tasks:
-        errors.append("Executing 定位与交付的 TASK ID 必须与实施影响一致且顺序相同")
+        errors.append("Executing交付的 TASK ID 必须与实施影响一致且顺序相同")
     if _has_positive_config_change(document) and not _has_manual_config_owner(handoff):
         errors.append("Design 提及配置数据变更时必须由 Executing TASK 声明人工运维产物")
     for task, body in task_blocks:
@@ -298,7 +299,7 @@ def validate_design_document(document: str) -> list[str]:
     impact = section_body(document, "实施影响")
     impact_tasks, impact_errors = _impact_errors(impact)
     errors.extend(impact_errors)
-    handoff = section_body(document, "Executing 定位与交付")
+    handoff = section_body(document, "Executing交付")
     errors.extend(_handoff_errors(document, handoff, impact_tasks))
     return errors
 

@@ -33,6 +33,10 @@ VALID_DESIGN = """# Example Design
 
 ## 实施影响
 
+### 变更职责链路
+
+入口 Handler#execute 到规则所有者 Rule#apply。
+
 ### TASK-001：返回结果
 
 - 对应需求：REQ-001、AC-001
@@ -45,11 +49,7 @@ VALID_DESIGN = """# Example Design
 
 TASK-001 由公共行为测试验证；无额外风险。
 
-## Executing 定位与交付
-
-### 变更职责链路
-
-入口 Handler#execute 到规则所有者 Rule#apply。
+## Executing交付
 
 ### TASK-001
 
@@ -63,6 +63,27 @@ TASK-001 由公共行为测试验证；无额外风险。
 class ValidateDesignHandoffTest(unittest.TestCase):
     def test_separated_execution_handoff_is_valid(self):
         self.assertEqual([], validate_design_document(VALID_DESIGN))
+
+    def test_responsibility_chain_belongs_to_human_review(self):
+        chain = "### 变更职责链路\n\n入口 Handler#execute 到规则所有者 Rule#apply。\n\n"
+        document = VALID_DESIGN.replace(chain, "").replace(
+            "## Executing交付\n\n", "## Executing交付\n\n" + chain
+        )
+
+        errors = validate_design_document(document)
+
+        self.assertIn("实施影响需要供人工评审的变更职责链路", errors)
+        self.assertIn("变更职责链路应位于实施影响，不得放入 Executing交付", errors)
+
+    def test_responsibility_chain_cannot_be_duplicated_in_handoff(self):
+        document = VALID_DESIGN.replace(
+            "## Executing交付\n\n",
+            "## Executing交付\n\n### 变更职责链路\n\n入口到规则所有者。\n\n",
+        )
+
+        errors = validate_design_document(document)
+
+        self.assertIn("变更职责链路应位于实施影响，不得放入 Executing交付", errors)
 
     def test_root_level_file_is_a_valid_repository_relative_path(self):
         document = VALID_DESIGN.replace(
@@ -99,20 +120,17 @@ class ValidateDesignHandoffTest(unittest.TestCase):
 
         errors = validate_design_document(document)
 
-        self.assertIn("Executing 定位与交付的 TASK ID 必须与实施影响一致且顺序相同", errors)
+        self.assertIn("Executing交付的 TASK ID 必须与实施影响一致且顺序相同", errors)
 
     def test_execution_content_cannot_remain_in_impact(self):
         document = VALID_DESIGN.replace(
-            "## 实施影响\n",
-            "## 实施影响\n\n### 变更职责链路\n\n入口到规则所有者。\n",
-        ).replace(
             "- 验证观察面：结果和异常",
             "- 验证观察面：结果和异常\n- 公共验证入口：现有；HandlerTest.java#returnsResult",
         )
 
         errors = validate_design_document(document)
 
-        self.assertIn("实施影响不得包含变更职责链路或 Executing 定位与交付字段", errors)
+        self.assertIn("实施影响不得包含 Executing交付字段", errors)
 
 
 if __name__ == "__main__":

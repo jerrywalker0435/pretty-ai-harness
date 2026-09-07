@@ -85,8 +85,8 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
 
 按输入路径执行：
 
-- **Design → Plan**：直接投影 `实施影响` 中的 TASK 语义，以及文档末尾
-  `Executing 定位与交付` 中的职责链路、公共验证入口、影响锚点、交付文件和构建模块，不重建
+- **Design → Plan**：直接投影 `实施影响` 中的变更职责链路和 TASK 语义，以及文档末尾
+  `Executing交付` 中的公共验证入口、影响锚点、交付文件和构建模块，不重建
   合同或输出前置分析。锚点已知后，用一个并行批次读取候选文件当前内容、公共测试、必要直接
   依赖、构建配置、质量补充和仓库规则；不重新读取 PRD、Context 或 ADR 证明 Design 已关闭的知识。
 - **Prompt-only → Plan**：只做一次受限的内部 Design-lite 调查，确定可观察结果、失败语义、
@@ -107,8 +107,8 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
 
 开始修改前按输入路径获取范围：
 
-- **Design → Execution**：直接采用 `实施影响` 中的 Design TASK，并从文档末尾的
-  `Executing 定位与交付` 获取变更职责链路、公共验证入口、影响锚点、Execution 交付和构建
+- **Design → Execution**：直接采用 `实施影响` 中的变更职责链路和 Design TASK，并从文档末尾的
+  `Executing交付` 获取公共验证入口、影响锚点、Execution 交付和构建
   模块。两部分按 TASK ID 对应；业务结果、失败语义、不变量、所有权和依赖方向不再从 PRD、
   Context、ADR 或全仓搜索中重新获取。
 - **Plan → Execution**：直接采用已确认 Plan 的 Files、Symbol、测试、构建模块和顺序，并与
