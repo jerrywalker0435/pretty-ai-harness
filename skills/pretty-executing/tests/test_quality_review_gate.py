@@ -25,6 +25,13 @@ def review_document(findings=None):
         "review_type": "full-discovery",
         "full_review_count": 1,
         "reviewed_paths": [PRODUCTION_PATH],
+        "type_necessity_checks": [],
+        "type_necessity_not_applicable": "only method bodies changed; no new types or changed type responsibilities",
+        "cqs_checks": [],
+        "cqs_not_applicable": {
+            "reason": "no changed non-void production methods",
+            "facts": "the affected file contains only a data carrier",
+        },
         "findings": [] if findings is None else findings,
     }
 
@@ -47,12 +54,268 @@ def fixed_finding():
 
 
 class QualityReviewGateTest(unittest.TestCase):
+    def type_review(self, conclusion="necessary", findings=None):
+        document = review_document(findings)
+        document.pop("type_necessity_not_applicable")
+        document["type_necessity_checks"] = [{
+            "type": f"{PRODUCTION_PATH}:10#OrderRequest",
+            "caller_locations": [f"{PRODUCTION_PATH}:20#submit"],
+            "responsibility": "two-field request DTO for the published API",
+            "necessity_evidence": "the serializer binds this DTO to the published request schema",
+            "caller_usage": "one controller reads both fields to invoke the service",
+            "deletion_impact": "removing the DTO breaks the published request schema binding",
+            "wrapper_assessment": "data carrier with a required protocol contract",
+            "contract_constraints": "published API schema requires this request shape",
+            "conclusion": conclusion,
+            "finding_ids": [] if findings is None else [finding["id"] for finding in findings],
+        }]
+        return document
+
+    def test_type_review_requires_records_or_explicit_non_applicability(self):
+        document = review_document()
+        document.pop("type_necessity_checks")
+        self.assertIn("type_necessity_checks must be a list", validate(document))
+        document["type_necessity_checks"] = []
+        document.pop("type_necessity_not_applicable")
+        self.assertTrue(validate(document))
+
+    def test_two_field_dto_with_one_caller_can_pass(self):
+        self.assertEqual([], validate_closed(self.type_review()))
+
+    def test_value_object_and_single_implementation_port_can_pass(self):
+        for responsibility, evidence, impact in (
+            ("two-field Money value object", "constructor enforces amount and currency consistency",
+             "removal duplicates currency validation in consumers"),
+            ("single implementation query port", "domain owns the query contract consumed by application",
+             "removal introduces a domain dependency on infrastructure"),
+        ):
+            with self.subTest(responsibility=responsibility):
+                document = self.type_review()
+                document["type_necessity_checks"][0].update(
+                    responsibility=responsibility, necessity_evidence=evidence, deletion_impact=impact)
+                self.assertEqual([], validate_closed(document))
+
+    def test_type_review_rejects_placeholders_and_conflicting_declarations(self):
+        document = self.type_review()
+        document["type_necessity_checks"][0]["deletion_impact"] = "todo"
+        self.assertTrue(validate(document))
+        document = self.type_review()
+        document["type_necessity_not_applicable"] = "no types apply"
+        self.assertTrue(validate(document))
+        self.assertTrue(validate(self.type_review(findings=[fixed_finding()])))
+
+    def test_malformed_type_records_return_errors(self):
+        for value in (None, "unchecked", [], 42):
+            with self.subTest(value=value):
+                document = self.type_review()
+                document["type_necessity_checks"] = [value]
+                self.assertTrue(validate(document))
+        document = self.type_review()
+        document["type_necessity_checks"][0]["finding_ids"] = [{}]
+        self.assertTrue(validate(document))
+
+    def test_type_review_requires_each_evidence_field(self):
+        for field in ("type", "caller_locations", "responsibility", "necessity_evidence", "caller_usage",
+                      "deletion_impact", "wrapper_assessment", "contract_constraints", "conclusion", "finding_ids"):
+            with self.subTest(field=field):
+                document = self.type_review()
+                document["type_necessity_checks"][0].pop(field)
+                self.assertTrue(validate(document))
+
+    def test_type_and_caller_locations_must_stay_in_review_scope(self):
+        for field, value in (("type", "other.java#Other"), ("caller_locations", ["other.java#call"])):
+            with self.subTest(field=field):
+                document = self.type_review()
+                document["type_necessity_checks"][0][field] = value
+                self.assertIn("included in reviewed_paths", " ".join(validate(document)))
+
+    def test_duplicate_types_ignore_line_numbers(self):
+        document = self.type_review()
+        duplicate = dict(document["type_necessity_checks"][0], type=f"{PRODUCTION_PATH}:99#OrderRequest")
+        document["type_necessity_checks"].append(duplicate)
+        self.assertIn("duplicate type necessity check", " ".join(validate(document)))
+
+    def test_no_callers_requires_search_or_framework_evidence(self):
+        document = self.type_review()
+        check = document["type_necessity_checks"][0]
+        check["caller_locations"] = []
+        self.assertTrue(validate(document))
+        check["no_callers_evidence"] = "framework binds the DTO through the registered endpoint schema"
+        self.assertEqual([], validate(document))
+
+    def test_unnecessary_type_requires_real_finding_and_open_blocks_delivery(self):
+        document = self.type_review("unnecessary")
+        self.assertIn("requires finding_ids", " ".join(validate(document)))
+        finding = fixed_finding()
+        finding.update(status="open", attempts=0, source="122-java-type-design", rule="unnecessary-wrapper")
+        document = self.type_review("unnecessary", [finding])
+        document["type_necessity_checks"][0]["contract_constraints"] = "Design explicitly specifies this type; deletion awaits user authorization"
+        self.assertEqual([], validate(document))
+        self.assertIn("blocking findings remain open", " ".join(validate_closed(document)))
+        document["type_necessity_checks"][0]["finding_ids"] = ["QF-999"]
+        self.assertIn("unknown finding", " ".join(validate(document)))
+
+    def test_repaired_type_retains_original_review_and_closed_finding(self):
+        finding = fixed_finding()
+        finding.update(source="122-java-type-design", rule="unnecessary-wrapper",
+                       resolution="user explicitly authorized deletion; inlined fields into caller")
+        self.assertEqual([], validate_closed(self.type_review("unnecessary", [finding])))
+
     def test_closed_review_with_no_findings_is_valid(self):
         self.assertEqual([], validate_closed(review_document(), [PRODUCTION_PATH]))
+
+    def test_cqs_checks_are_required(self):
+        document = review_document()
+        document.pop("cqs_checks")
+
+        self.assertIn("cqs_checks must be a list", validate(document))
+
+    def test_empty_cqs_checks_require_non_applicable_evidence(self):
+        document = review_document()
+        document.pop("cqs_not_applicable")
+
+        self.assertIn("cqs_not_applicable must include reason and facts", " ".join(validate(document)))
+
+    def test_clear_cqs_check_requires_no_side_effects(self):
+        document = review_document()
+        document["cqs_checks"] = [{
+            "method": f"{PRODUCTION_PATH}:12#loadOrder",
+            "call_chain": [f"{PRODUCTION_PATH}:12#loadOrder"],
+            "side_effects": [{"kind": "persistence", "location": f"{PRODUCTION_PATH}:18#save"}],
+            "caller_consumption": [],
+            "return_use": "logged",
+            "finding_ids": [],
+            "status": "clear",
+        }]
+        document.pop("cqs_not_applicable")
+
+        errors = validate(document)
+
+        self.assertIn("status clear cannot contain side_effects", " ".join(errors))
+
+    def test_cqs_finding_requires_callers_and_rule_four_finding(self):
+        document = review_document([fixed_finding()])
+        document["cqs_checks"] = [{
+            "method": f"{PRODUCTION_PATH}:12#save",
+            "call_chain": [f"{PRODUCTION_PATH}:12#save", f"{PRODUCTION_PATH}:18#insert"],
+            "side_effects": [{"kind": "persistence", "location": f"{PRODUCTION_PATH}:18#insert"}],
+            "caller_consumption": [],
+            "return_use": "discarded",
+            "finding_ids": ["QF-001"],
+            "status": "finding",
+        }]
+        document.pop("cqs_not_applicable")
+
+        errors = validate(document)
+
+        self.assertIn("requires caller_consumption evidence", " ".join(errors))
+        self.assertIn("must reference clean-code-guard rule 4", " ".join(errors))
+
+    def test_valid_cqs_finding_links_rule_four_finding(self):
+        finding = fixed_finding()
+        finding.update(
+            rule="4",
+            location=f"{PRODUCTION_PATH}:12#save",
+            side_effect_locations=[f"{PRODUCTION_PATH}:18#insert"],
+            caller_consumption_locations=[f"{PRODUCTION_PATH}:30#create"],
+        )
+        document = review_document([finding])
+        document["cqs_checks"] = [{
+            "method": f"{PRODUCTION_PATH}:12#save",
+            "call_chain": [f"{PRODUCTION_PATH}:12#save", f"{PRODUCTION_PATH}:18#insert"],
+            "side_effects": [{"kind": "persistence", "location": f"{PRODUCTION_PATH}:18#insert"}],
+            "caller_consumption": [{
+                "location": f"{PRODUCTION_PATH}:30#create",
+                "use": "discarded",
+                "evidence": "caller ignores the returned execution result",
+            }],
+            "return_use": "discarded",
+            "finding_ids": ["QF-001"],
+            "status": "finding",
+        }]
+        document.pop("cqs_not_applicable")
+
+        self.assertEqual([], validate_closed(document, [PRODUCTION_PATH]))
+
+    def test_cqs_exception_requires_exception_finding(self):
+        finding = fixed_finding()
+        finding.update(
+            rule="4",
+            location=f"{PRODUCTION_PATH}:12#save",
+            side_effect_locations=[f"{PRODUCTION_PATH}:18#insert"],
+            caller_consumption_locations=[f"{PRODUCTION_PATH}:30#create"],
+        )
+        document = review_document([finding])
+        document["cqs_checks"] = [{
+            "method": f"{PRODUCTION_PATH}:12#save",
+            "call_chain": [f"{PRODUCTION_PATH}:12#save", f"{PRODUCTION_PATH}:18#insert"],
+            "side_effects": [{"kind": "persistence", "location": f"{PRODUCTION_PATH}:18#insert"}],
+            "caller_consumption": [{
+                "location": f"{PRODUCTION_PATH}:30#create",
+                "use": "discarded",
+                "evidence": "caller ignores the returned execution result",
+            }],
+            "return_use": "discarded",
+            "finding_ids": ["QF-001"],
+            "status": "exception",
+        }]
+        document.pop("cqs_not_applicable")
+
+        self.assertIn("requires exception findings", " ".join(validate(document)))
+
+    def test_rule_four_finding_requires_both_evidence_location_lists(self):
+        finding = fixed_finding()
+        finding.update(rule="4")
+        document = review_document([finding])
+
+        errors = validate(document)
+
+        joined_errors = " ".join(errors)
+        self.assertIn("side_effect_locations", joined_errors)
+        self.assertIn("caller_consumption_locations", joined_errors)
 
     def test_open_finding_blocks_closed_review(self):
         finding = fixed_finding()
         finding.update(status="open", attempts=2)
+
+        errors = validate_closed(review_document([finding]), [PRODUCTION_PATH])
+
+        self.assertIn("blocking findings remain open", " ".join(errors))
+
+    def test_control_flow_rule_requires_clean_code_guard_source_and_line(self):
+        finding = fixed_finding()
+        finding.update(
+            source="pretty-executing",
+            rule="21",
+            location=f"{PRODUCTION_PATH}#execute",
+            evidence="tail return",
+        )
+
+        errors = validate(review_document([finding]))
+
+        joined_errors = " ".join(errors)
+        self.assertIn("source must be clean-code-guard for rule 21", joined_errors)
+        self.assertIn("path:line#symbol for rule 21", joined_errors)
+
+    def test_valid_closed_control_flow_finding_is_accepted(self):
+        finding = fixed_finding()
+        finding.update(
+            rule="21",
+            location=f"{PRODUCTION_PATH}:42#execute",
+            evidence="void execute ends with an unconditional return statement",
+        )
+
+        self.assertEqual([], validate_closed(review_document([finding]), [PRODUCTION_PATH]))
+
+    def test_open_control_flow_finding_blocks_closed_review(self):
+        finding = fixed_finding()
+        finding.update(
+            rule="21",
+            location=f"{PRODUCTION_PATH}:42#execute",
+            evidence="void execute ends with an unconditional return statement",
+            status="open",
+            attempts=0,
+        )
 
         errors = validate_closed(review_document([finding]), [PRODUCTION_PATH])
 

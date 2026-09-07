@@ -31,6 +31,22 @@ class Finding:
     message: str
 
 
+@dataclass(frozen=True)
+class _JavaToken:
+    value: str
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
+class _ControlFlowScan:
+    path: str
+    source: str
+    changed_lines: set[int] | None
+    tokens: Sequence[_JavaToken]
+    block_pairs: dict[int, int]
+
+
 STRING_OR_COMMENT = re.compile(
     r'"""(?:\\.|(?!""").)*"""|'
     r'"(?:\\.|[^"\\\n])*"|'
@@ -50,6 +66,23 @@ _SENSITIVE_HEADER_ARGUMENT = re.compile(
 _JAVA_IDENTIFIER = re.compile(r"\b[A-Za-z_$][\w$]*\b")
 _SENSITIVE_LOG_TERMS = ("password", "secret", "accesstoken", "refreshtoken")
 _REDACTED_LOG_PREFIXES = ("mask", "redact", "getmask", "getredact", "ismask", "isredact")
+_JAVA_TOKEN = re.compile(
+    r"[A-Za-z_$][\w$]*|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[fFdDlL]?|"
+    r"->|==|!=|<=|>=|&&|\|\||\+\+|--|[{}()\[\];,:.]|\S"
+)
+_CONTROL_FLOW_PREFIXES = {
+    "if",
+    "else",
+    "for",
+    "while",
+    "do",
+    "switch",
+    "catch",
+    "finally",
+    "try",
+    "synchronized",
+}
+_TERMINATORS = {"return", "throw", "break", "continue"}
 
 
 def _mask(match: re.Match[str]) -> str:
@@ -161,6 +194,199 @@ def _unsafe_log_positions(masked_log_call: str, visible_log_call: str) -> list[t
     return rule_positions
 
 
+def _java_tokens(masked: str) -> list[_JavaToken]:
+    """Tokenize enough Java syntax for block/control-flow checks.
+
+    This is intentionally not a Java parser. Strings and comments have already
+    been blanked, so the token stream can safely be used for delimiter matching
+    without treating braces or keywords in prose as code.
+    """
+    return [_JavaToken(match.group(0), match.start(), match.end()) for match in _JAVA_TOKEN.finditer(masked)]
+
+
+def _matching_token(tokens: Sequence[_JavaToken], opening: int, opening_value: str, closing_value: str) -> int | None:
+    depth = 0
+    for index in range(opening, len(tokens)):
+        token_value = tokens[index].value
+        if token_value == opening_value:
+            depth += 1
+        elif token_value == closing_value:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _block_pairs(tokens: Sequence[_JavaToken]) -> dict[int, int]:
+    stack: list[int] = []
+    pairs: dict[int, int] = {}
+    for index, token in enumerate(tokens):
+        if token.value == "{":
+            stack.append(index)
+        elif token.value == "}" and stack:
+            pairs[stack.pop()] = index
+    return pairs
+
+
+def _method_bodies(tokens: Sequence[_JavaToken], pairs: dict[int, int]) -> Iterable[tuple[int, int]]:
+    """Yield ``{``/``}`` token pairs belonging to void method declarations."""
+    for index, token in enumerate(tokens):
+        if token.value != "void" or index + 2 >= len(tokens):
+            continue
+        if not re.fullmatch(r"[A-Za-z_$][\w$]*", tokens[index + 1].value):
+            continue
+        if tokens[index + 2].value != "(":
+            continue
+        closing_parenthesis = _matching_token(tokens, index + 2, "(", ")")
+        if closing_parenthesis is None:
+            continue
+        body_opening = closing_parenthesis + 1
+        while body_opening < len(tokens) and tokens[body_opening].value not in {"{", ";", "->"}:
+            body_opening += 1
+        if body_opening >= len(tokens) or tokens[body_opening].value != "{":
+            continue
+        body_closing = pairs.get(body_opening)
+        if body_closing is not None:
+            yield body_opening, body_closing
+
+
+def _direct_token_indexes(
+    tokens: Sequence[_JavaToken],
+    pairs: dict[int, int],
+    opening: int,
+    closing: int,
+) -> list[int]:
+    """Keep one block's tokens while collapsing nested blocks and expressions."""
+    indexes: list[int] = []
+    cursor = opening + 1
+    while cursor < closing:
+        indexes.append(cursor)
+        token_value = tokens[cursor].value
+        if token_value == "{" and (nested_closing := pairs.get(cursor)) is not None:
+            indexes.append(nested_closing)
+            cursor = nested_closing + 1
+            continue
+        if token_value in {"(", "["}:
+            closing_value = ")" if token_value == "(" else "]"
+            expression_closing = _matching_token(tokens, cursor, token_value, closing_value)
+            if expression_closing is not None:
+                cursor = expression_closing + 1
+                continue
+        cursor += 1
+    return indexes
+
+
+def _statement_semicolon(tokens: Sequence[_JavaToken], direct: Sequence[int], position: int) -> int | None:
+    for cursor in range(position + 1, len(direct)):
+        if tokens[direct[cursor]].value == ";":
+            return cursor
+    return None
+
+
+def _is_unconditional_terminator(tokens: Sequence[_JavaToken], direct: Sequence[int], position: int) -> bool:
+    """Exclude terminators which are the body of a conditional statement."""
+    for cursor in range(position - 1, -1, -1):
+        value = tokens[direct[cursor]].value
+        if value in {";", "{", "}"}:
+            break
+        if value in _CONTROL_FLOW_PREFIXES:
+            return False
+    return True
+
+
+def _next_statement(direct: Sequence[int], tokens: Sequence[_JavaToken], semicolon: int) -> int | None:
+    cursor = semicolon + 1
+    if cursor >= len(direct):
+        return None
+    if tokens[direct[cursor]].value in {"}", "else", "catch", "finally", "case", "default"}:
+        return None
+    return cursor
+
+
+def _statement_end(tokens: Sequence[_JavaToken], direct: Sequence[int], position: int) -> int:
+    for cursor in range(position, len(direct)):
+        if tokens[direct[cursor]].value in {";", "}"}:
+            return tokens[direct[cursor]].end
+    return tokens[direct[position]].end
+
+
+def _unreachable_findings(scan: _ControlFlowScan) -> list[Finding]:
+    findings: list[Finding] = []
+    for opening, closing in scan.block_pairs.items():
+        direct = _direct_token_indexes(scan.tokens, scan.block_pairs, opening, closing)
+        for position, token_index in enumerate(direct):
+            token = scan.tokens[token_index]
+            if token.value not in _TERMINATORS or not _is_unconditional_terminator(scan.tokens, direct, position):
+                continue
+            semicolon = _statement_semicolon(scan.tokens, direct, position)
+            if semicolon is None:
+                continue
+            next_position = _next_statement(direct, scan.tokens, semicolon)
+            if next_position is None:
+                continue
+            next_token = scan.tokens[direct[next_position]]
+            statement_end = _statement_end(scan.tokens, direct, next_position)
+            if _span_changed(scan.source, token.start, statement_end, scan.changed_lines):
+                findings.append(_finding("UNREACHABLE_STATEMENT", scan.path, scan.source, next_token.start))
+    return findings
+
+
+def _void_tail_return_findings(scan: _ControlFlowScan) -> list[Finding]:
+    findings: list[Finding] = []
+    for body_opening, body_closing in _method_bodies(scan.tokens, scan.block_pairs):
+        direct = _direct_token_indexes(scan.tokens, scan.block_pairs, body_opening, body_closing)
+        for position, token_index in enumerate(direct):
+            if scan.tokens[token_index].value != "return":
+                continue
+            if not _is_unconditional_terminator(scan.tokens, direct, position):
+                continue
+            semicolon = _statement_semicolon(scan.tokens, direct, position)
+            if semicolon != position + 1 or semicolon != len(direct) - 1:
+                continue
+            return_position = scan.tokens[token_index].start
+            method_end = scan.tokens[body_closing].end
+            if _span_changed(scan.source, scan.tokens[body_opening].start, method_end, scan.changed_lines):
+                findings.append(_finding("VOID_TAIL_RETURN", scan.path, scan.source, return_position))
+    return findings
+
+
+def _empty_catch_findings(scan: _ControlFlowScan) -> list[Finding]:
+    findings: list[Finding] = []
+    for index, token in enumerate(scan.tokens):
+        if token.value != "catch" or index + 1 >= len(scan.tokens) or scan.tokens[index + 1].value != "(":
+            continue
+        closing_parenthesis = _matching_token(scan.tokens, index + 1, "(", ")")
+        if closing_parenthesis is None or closing_parenthesis + 1 >= len(scan.tokens):
+            continue
+        body_opening = closing_parenthesis + 1
+        if scan.tokens[body_opening].value != "{":
+            continue
+        body_closing = scan.block_pairs.get(body_opening)
+        if body_closing is None:
+            continue
+        body_values = {scan.tokens[cursor].value for cursor in range(body_opening + 1, body_closing)}
+        if body_values - {"{", "}", ";"}:
+            continue
+        if _span_changed(scan.source, token.start, scan.tokens[body_closing].end, scan.changed_lines):
+            findings.append(_finding("EMPTY_CATCH", scan.path, scan.source, token.start))
+    return findings
+
+
+def _control_flow_findings(
+    path: str,
+    source: str,
+    masked: str,
+    changed_lines: set[int] | None,
+) -> list[Finding]:
+    tokens = _java_tokens(masked)
+    scan = _ControlFlowScan(path, source, changed_lines, tokens, _block_pairs(tokens))
+    return [
+        *_unreachable_findings(scan),
+        *_void_tail_return_findings(scan),
+        *_empty_catch_findings(scan),
+    ]
+
+
 def _log_findings(
     path: str,
     source: str,
@@ -182,6 +408,7 @@ def _log_findings(
 def scan_java_source(path: str, source: str, changed_lines: set[int] | None = None) -> list[Finding]:
     masked = _mask_non_code(source)
     findings: list[Finding] = []
+    findings.extend(_control_flow_findings(path, source, masked, changed_lines))
     findings.extend(_matches(
         "LABELED-CONTINUE", re.compile(r"\bcontinue\s+[A-Za-z_$][\w$]*\s*;"),
         path, source, masked, changed_lines,

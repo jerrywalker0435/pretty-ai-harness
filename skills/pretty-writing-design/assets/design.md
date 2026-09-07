@@ -74,14 +74,14 @@ flowchart TD
 
 - 人工外部验证：<TASK ID、验证事项及本地测试不能证明的范围>；不作为 Plan/Execution 门禁。
 
-## Executing交付
+## Executing 交接
 
-<!-- 本节只供 pretty-executing 定位和交付，按相同 TASK ID 对应“实施影响”，不重复设计语义。 -->
+<!-- 本节只供 pretty-executing 定位和交接，按相同 TASK ID 对应“实施影响”，不重复设计语义。 -->
 
 ### TASK-001
 
 - 公共验证入口：<现有/新增；仓库相对路径#symbol>
 - 影响锚点：<按链路顺序列出现有/新增的仓库相对路径#symbol>
-- Execution 交付：<构建根或模块；Add/Modify/Test/DDL 仓库相对路径，或无>
+- Execution 交接：<构建根或模块；Add/Modify/Test/DDL 仓库相对路径，或无>
 - 人工运维产物：<配置数据 DML，或无>
 - 依赖：（按需）

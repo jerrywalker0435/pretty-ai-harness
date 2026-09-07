@@ -25,7 +25,6 @@ REMOVED_RULE_CODES = {
     "COMPLEX-TERNARY",
     "CONTROL-FLOW-SKIP",
     "DISABLED-TEST",
-    "EMPTY-CATCH",
     "FIELD-INJECTION",
     "GENERIC-NORMALIZATION-HELPER",
     "GENERIC-RESULT-SHAPE",
@@ -54,6 +53,9 @@ class QualityContractGateTest(unittest.TestCase):
         self.assertEqual(
             {
                 "LABELED-CONTINUE",
+                "VOID_TAIL_RETURN",
+                "UNREACHABLE_STATEMENT",
+                "EMPTY_CATCH",
                 "WHOLE-OBJECT-LOGGING",
                 "SENSITIVE-LOGGING",
                 "MANUAL-DURATION-LOGGING",
@@ -119,10 +121,171 @@ class QualityContractGateTest(unittest.TestCase):
         self.assertFinding(findings, "LABELED-CONTINUE", ERROR)
         self.assertNotIn("CONTROL-FLOW-SKIP", self.codes(findings))
 
+    def test_void_tail_return_is_an_error(self):
+        source = """
+            class Example {
+                void execute() {
+                    doWork();
+                    return;
+                }
+            }
+        """
+
+        self.assertFinding(findings_for(source), "VOID_TAIL_RETURN", ERROR)
+
+    def test_early_void_return_is_allowed(self):
+        source = """
+            class Example {
+                void execute(boolean skip) {
+                    if (skip) {
+                        return;
+                    }
+                    doWork();
+                }
+            }
+        """
+
+        self.assertNotIn("VOID_TAIL_RETURN", self.codes(findings_for(source)))
+
+    def test_unreachable_statement_after_return_is_an_error(self):
+        source = """
+            class Example {
+                void execute() {
+                    return;
+                    doWork();
+                }
+            }
+        """
+
+        findings = findings_for(source)
+
+        self.assertFinding(findings, "UNREACHABLE_STATEMENT", ERROR)
+        self.assertNotIn("VOID_TAIL_RETURN", self.codes(findings))
+
+    def test_unreachable_statement_after_throw_break_and_continue_is_an_error(self):
+        source = """
+            class Example {
+                void fail() {
+                    throw new IllegalStateException();
+                    recover();
+                }
+                void stop() {
+                    while (active()) {
+                        break;
+                        recover();
+                    }
+                }
+                void skip() {
+                    while (active()) {
+                        continue;
+                        recover();
+                    }
+                }
+            }
+        """
+
+        self.assertEqual(3, self.codes(findings_for(source)).count("UNREACHABLE_STATEMENT"))
+
+    def test_conditional_return_before_a_statement_is_allowed(self):
+        source = """
+            class Example {
+                void execute(boolean skip) {
+                    if (skip) return;
+                    doWork();
+                }
+            }
+        """
+
+        self.assertNotIn("UNREACHABLE_STATEMENT", self.codes(findings_for(source)))
+
+    def test_empty_catch_is_an_error_even_when_it_contains_only_a_comment(self):
+        source = """
+            class Example {
+                void execute() {
+                    try {
+                        doWork();
+                    } catch (RuntimeException ignored) {
+                        // intentionally ignored
+                    }
+                }
+            }
+        """
+
+        self.assertFinding(findings_for(source), "EMPTY_CATCH", ERROR)
+
+    def test_catch_with_a_handling_statement_is_allowed(self):
+        source = """
+            class Example {
+                void execute() {
+                    try {
+                        doWork();
+                    } catch (RuntimeException error) {
+                        throw translate(error);
+                    }
+                }
+            }
+        """
+
+        self.assertNotIn("EMPTY_CATCH", self.codes(findings_for(source)))
+
+    def test_control_flow_findings_respect_changed_lines(self):
+        source = """class Example {
+    void oldMethod() {
+        return;
+    }
+    void changedMethod() {
+        doWork();
+    }
+}
+"""
+
+        findings = findings_for(source, {6})
+
+        self.assertNotIn("VOID_TAIL_RETURN", self.codes(findings))
+
+    def test_tail_return_is_checked_when_an_earlier_line_in_the_method_changes(self):
+        source = """class Example {
+    void changedMethod() {
+        doWork();
+        return;
+    }
+}
+"""
+
+        findings = findings_for(source, {3})
+
+        self.assertFinding(findings, "VOID_TAIL_RETURN", ERROR)
+
     def test_whole_object_serialization_in_a_log_is_an_error(self):
         source = 'log.info("request={}", objectMapper.writeValueAsString(request));'
 
         self.assertFinding(findings_for(source), "WHOLE-OBJECT-LOGGING", ERROR)
+
+    def test_control_flow_boundaries_do_not_report_valid_code(self):
+        sources = [
+            'class X { void f() { Runnable r = () -> { return; }; work(); } }',
+            'class X { void f(int x) { switch(x) { case 1: return; default: work(); } } }',
+            'class X { void f(boolean x) { if (x) work(); else return; work(); } }',
+            'class X { String f() { return "return; work(); catch (E e) {}"; } }',
+            'class X { void f() { /* return; work(); */ work(); } }',
+        ]
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual([], findings_for(source))
+
+    def test_unreachable_statement_changed_without_changing_terminator(self):
+        source = 'class X { void f() {\nreturn;\nwork();\n} }'
+        findings = findings_for(source, {3})
+        self.assertFinding(findings, "UNREACHABLE_STATEMENT", ERROR)
+        self.assertEqual(3, findings[0].line)
+
+    def test_empty_catch_with_empty_statements_is_rejected(self):
+        source = 'class X { void f() { try { work(); } catch (E e) { {}; } } }'
+        self.assertFinding(findings_for(source), "EMPTY_CATCH", ERROR)
+
+    def test_anonymous_exception_does_not_hide_unreachable_statement(self):
+        source = 'class X { void f() { throw new E() {}; work(); } }'
+        self.assertFinding(findings_for(source), "UNREACHABLE_STATEMENT", ERROR)
 
     def test_sensitive_header_and_credentials_are_errors(self):
         source = """

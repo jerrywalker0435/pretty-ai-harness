@@ -20,6 +20,9 @@ class RuleSpec:
 
 RULES = (
     RuleSpec("LABELED-CONTINUE", "labeled continue hides a cross-level control-flow jump"),
+    RuleSpec("VOID_TAIL_RETURN", "void methods must not end with an unconditional return statement"),
+    RuleSpec("UNREACHABLE_STATEMENT", "a statement after an unconditional control-flow terminator is unreachable"),
+    RuleSpec("EMPTY_CATCH", "catch blocks must contain handling statements"),
     RuleSpec("WHOLE-OBJECT-LOGGING", "whole-object JSON serialization can leak or amplify log payloads"),
     RuleSpec("SENSITIVE-LOGGING", "credentials or authentication headers must not be logged"),
     RuleSpec(

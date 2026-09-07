@@ -50,6 +50,15 @@ class ValidateExecutionTest(unittest.TestCase):
     def test_completed_execution_is_valid(self):
         self.assertEqual([], validate(VALID_EXECUTION))
 
+    def test_completed_execution_rejects_insufficient_coverage(self):
+        document = VALID_EXECUTION.replace(
+            "增量行覆盖率 100.00%，分支覆盖率 90.00%",
+            "增量行覆盖率 41.18%，分支覆盖率 35.14%",
+        )
+        errors = validate(document)
+        self.assertTrue(any("line coverage below 90%" in error for error in errors))
+        self.assertTrue(any("branch coverage below 80%" in error for error in errors))
+
     def test_missing_shared_verification_is_rejected(self):
         document = VALID_EXECUTION.replace("- 构建验证：", "- 其他：")
 

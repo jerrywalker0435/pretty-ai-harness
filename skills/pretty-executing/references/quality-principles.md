@@ -54,9 +54,25 @@
 机械门禁只保留无需理解业务上下文即可判定的 Java/Spring 交付错误：
 
 - `LABELED-CONTINUE`
+- `VOID_TAIL_RETURN`
+- `UNREACHABLE_STATEMENT`
+- `EMPTY_CATCH`
 - `WHOLE-OBJECT-LOGGING`
 - `SENSITIVE-LOGGING`
 - `MANUAL-DURATION-LOGGING`
+
+优先使用项目已接入的 Checkstyle/PMD 和编译器规则，并核实实际配置及运行结果；不能仅因存在
+配置文件就视为通过。本仓库的辅助门禁提供无新增依赖的受限词法扫描作为补充：
+
+- `VOID_TAIL_RETURN`：检查受影响 `void` 方法体的最后一条直接语句是否为无条件 `return;`。
+- `UNREACHABLE_STATEMENT`：检查同一块内无条件 `return/throw/break/continue` 后的直接语句；
+  条件提前返回、下一 `case/default` 不算命中。
+- `EMPTY_CATCH`：捕获体仅含空白、注释、空语句或空块时失败。
+
+该扫描不是完整 Java AST/控制流分析；跨分支终止推导、无限循环、复杂标签和 Unicode 转义等仍由
+项目编译器、静态分析及全量 Review 核验。带 `--base` 时按新增/修改行限定扫描，纯删除造成的
+控制流变化也必须在 Review 和编译中检查；需要扫描完整指定文件时省略 `--base`。
+方法末尾的冗余 `return;` 通常不会导致编译失败，必须执行对应静态规则。
 
 门禁 finding 均为 `error`，发现即失败。通用可读性、异常处理、依赖注入和复杂度由
 `clean-code-guard` 判断；测试禁用由测试守卫判断；import 风格交给项目既有工具，不再增加正则式
@@ -90,6 +106,10 @@ Review：纯格式或 import 排序、只改注释/文档、纯数据载体或�
 | primitive obsession、值对象、类型层级、签名混淆 | `$122-java-type-design` | Java 类型与签名设计 |
 | 并发、事务、资源、响应式链路或外部依赖 API 风险 | `$java-code-review` | Java/Spring 运行时专项检查 |
 | 逻辑行为、测试 seam、行为断言或边界替身 | `$tdd` | 行为测试设计 |
+
+新增或修改职责的生产类型必须按[类型必要性核验](quality-review-contract.md#生产类型必要性核验)
+检查定义、实际调用方和删除影响，并将适用路由规则落实为证据及 finding。字段数、调用方数量不能
+代替语义判断；新增纯数据载体也要核验其必要契约，测试和覆盖率豁免不构成类型免审。
 
 所有命中路由与 `clean-code-guard` 在一次全量发现 Review 中执行；后续按
 [质量 Review 合同](quality-review-contract.md)，只允许围绕已发现 finding 及其实际修复增量进行

@@ -34,6 +34,7 @@ QUALITY_GATE = re.compile(
     r"found=(\d+) fixed=(\d+) exception=(\d+) open=(\d+)`\s*$",
     re.MULTILINE,
 )
+COVERAGE = re.compile(r"^-\s*测试覆盖率：`增量行覆盖率\s+([^%，]+)%.*?分支覆盖率\s+([^%`]+)%", re.MULTILINE)
 
 
 def _field_value(document: str, field: str) -> str | None:
@@ -94,6 +95,25 @@ def _quality_gate_errors(document: str) -> list[str]:
     ]
 
 
+def _coverage_errors(document: str) -> list[str]:
+    status = _conclusion_status(document)
+    if not _is_completed_status(status):
+        return []
+    match = COVERAGE.search(document)
+    if not match:
+        return ["completed execution needs parseable coverage results"]
+    try:
+        line, branch = float(match.group(1)), float(match.group(2))
+    except ValueError:
+        return ["completed execution needs numeric coverage results"]
+    errors = []
+    if line < 90:
+        errors.append(f"completed execution has incremental line coverage below 90%: {line:.2f}%")
+    if branch < 80:
+        errors.append(f"completed execution has incremental branch coverage below 80%: {branch:.2f}%")
+    return errors
+
+
 def validate(document: str) -> list[str]:
     errors = [f"missing heading: {heading}" for heading in REQUIRED_HEADINGS if heading not in document]
     if re.search(r"<[^>]+>", document):
@@ -109,6 +129,7 @@ def validate(document: str) -> list[str]:
     if _conclusion_status(document) is None:
         errors.append("execution report needs a conclusion status")
     errors.extend(_quality_gate_errors(document))
+    errors.extend(_coverage_errors(document))
     return errors
 
 
