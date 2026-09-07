@@ -133,5 +133,46 @@ class ValidateDesignHandoffTest(unittest.TestCase):
         self.assertIn("实施影响不得包含 Executing交付字段", errors)
 
 
+class ValidateExternalVerificationTest(unittest.TestCase):
+    def with_risk(self, risk):
+        return VALID_DESIGN.replace("TASK-001 由公共行为测试验证；无额外风险。", risk)
+
+    def test_external_requirements_without_manual_owner_are_rejected(self):
+        for risk in (
+            "TASK-001 需要应用单元测试及真实事务/唯一约束集成测试。",
+            "TASK-001 需要 repository 查询集成测试。",
+            "执行阶段以同店同桌单日数据验证执行计划。",
+            "TASK-001 必须通过 Testcontainers 验证提交失败。",
+        ):
+            with self.subTest(risk=risk):
+                self.assertTrue(validate_design_document(self.with_risk(risk)))
+
+    def test_manual_external_verification_preserves_local_completion(self):
+        risk = (
+            "TASK-001 使用本地行为测试验证提交异常分支。\n"
+            "- 人工外部验证：TASK-001 需要真实事务/唯一约束集成测试及 SQL 执行计划验证；"
+            "mock 不能证明数据库语义，列为未验证范围；不作为 Plan/Execution 门禁。"
+        )
+        self.assertEqual([], validate_design_document(self.with_risk(risk)))
+
+    def test_manual_owner_alone_does_not_remove_gate(self):
+        risk = "- 人工外部验证：TASK-001 需要真实事务集成测试，通过后 Execution 才能完成。"
+        self.assertTrue(validate_design_document(self.with_risk(risk)))
+
+    def test_manual_verification_does_not_authorize_external_handoff(self):
+        document = self.with_risk(
+            "- 人工外部验证：TASK-001 的集成测试；不作为 Plan/Execution 门禁。"
+        )
+        document += "\n- 依赖：集成测试通过\n"
+        self.assertTrue(validate_design_document(document))
+
+    def test_local_protocol_tests_and_database_limitations_are_allowed(self):
+        risk = (
+            "TASK-001 需要本地 HTTP/Dubbo 契约测试及 adapter 协议映射测试。\n"
+            "mock 不能证明真实数据库事务与唯一约束，数据库语义未验证。"
+        )
+        self.assertEqual([], validate_design_document(self.with_risk(risk)))
+
+
 if __name__ == "__main__":
     unittest.main()

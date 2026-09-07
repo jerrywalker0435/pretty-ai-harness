@@ -38,6 +38,16 @@ HANDOFF_TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})\s*$", re.MULTILINE)
 TASK_DELIVERY_FIELDS = ("Execution 交付", "人工运维产物")
 HANDOFF_REQUIRED_FIELDS = ("公共验证入口", "影响锚点", *TASK_DELIVERY_FIELDS)
 HANDOFF_FIELDS = (*HANDOFF_REQUIRED_FIELDS, "依赖")
+EXTERNAL_VALIDATION_PATTERN = re.compile(
+    r"集成测试|integration\s+tests?|Testcontainers|端到端测试|\bE2E\b|"
+    r"真实(?:数据库|事务)|(?:SQL\s*)?执行计划|联调",
+    re.IGNORECASE,
+)
+VALIDATION_REQUIREMENT_PATTERN = re.compile(
+    r"需要|必须|应当|执行阶段|验收|前置条件|完成条件|门禁|"
+    r"公共验证入口|Execution\s*交付|依赖",
+    re.IGNORECASE,
+)
 PATH_SYMBOL_PATTERN = re.compile(
     r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\.[A-Za-z0-9_-]+#"
     r"[A-Za-z_$][A-Za-z0-9_.$]*(?:\([^\n)]*\))?"
@@ -205,6 +215,24 @@ def _delivery_assignment_errors(document: str) -> list[str]:
     return sorted(set(errors))
 
 
+def _external_validation_errors(document: str) -> list[str]:
+    risk_lines = set(section_body(document, "验证与风险").splitlines())
+    handoff_lines = set(section_body(document, "Executing交付").splitlines())
+    errors = []
+    for line in document.splitlines():
+        if not EXTERNAL_VALIDATION_PATTERN.search(line):
+            continue
+        manual = line.startswith("- 人工外部验证：")
+        if manual and line in risk_lines and "不作为 Plan/Execution 门禁" in line:
+            continue
+        if line in handoff_lines or manual or VALIDATION_REQUIREMENT_PATTERN.search(line):
+            errors.append(
+                "外部验证不得作为 Execution 交付或门禁；请在验证与风险使用独立的"
+                "人工外部验证条目，并声明不作为 Plan/Execution 门禁"
+            )
+    return sorted(set(errors))
+
+
 def _quality_directive_errors(document: str) -> list[str]:
     errors = []
     for line in document.splitlines():
@@ -295,6 +323,7 @@ def validate_design_document(document: str) -> list[str]:
         errors.append("Design 仍包含占位内容或未决项")
     errors.extend(validate_mermaid_blocks(document))
     errors.extend(_delivery_assignment_errors(document))
+    errors.extend(_external_validation_errors(document))
     errors.extend(_quality_directive_errors(document))
     impact = section_body(document, "实施影响")
     impact_tasks, impact_errors = _impact_errors(impact)
