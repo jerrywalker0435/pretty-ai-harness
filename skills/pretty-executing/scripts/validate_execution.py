@@ -20,11 +20,78 @@ REQUIRED_FIELDS = (
     "- 实际落点：",
     "- 行为证据：",
     "- 审查：",
+    "- 质量门禁：",
+    "- 限定修复：",
+    "- 质量例外：",
     "- 构建验证：",
     "- 覆盖率范围：",
     "- 测试覆盖率：",
 )
 ALLOWED_STATUS = ("完成", "已满足（无生产差异）", "停止", "返回 PRD", "返回 Design")
+COMPLETED_STATUS = ("完成", "已满足（无生产差异）")
+QUALITY_GATE = re.compile(
+    r"^-\s*质量门禁：`clean-code-guard "
+    r"found=(\d+) fixed=(\d+) exception=(\d+) open=(\d+)`\s*$",
+    re.MULTILINE,
+)
+
+
+def _field_value(document: str, field: str) -> str | None:
+    match = re.search(rf"^-\s*{re.escape(field)}：`([^`]*)`\s*$", document, re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def _conclusion_status(document: str) -> str | None:
+    conclusion = document.partition("## 结论与恢复点")[2]
+    match = re.search(r"^-\s*状态：`([^`]+)`", conclusion, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _matches_status(status: str, allowed: str) -> bool:
+    return status == allowed or status.startswith(allowed + "：")
+
+
+def _is_completed_status(status: str | None) -> bool:
+    return status is not None and any(_matches_status(status, completed) for completed in COMPLETED_STATUS)
+
+
+def _quality_count_errors(document: str, counts: tuple[int, int, int, int]) -> list[str]:
+    found, fixed, exception_count, open_count = counts
+    errors: list[str] = []
+    if found != fixed + exception_count + open_count:
+        errors.append("quality gate counts are inconsistent")
+    conclusion_status = _conclusion_status(document)
+    if _is_completed_status(conclusion_status) and open_count:
+        errors.append("completed execution cannot contain open quality findings")
+    return errors
+
+
+def _quality_evidence_errors(document: str, fixed: int, exception_count: int) -> list[str]:
+    errors: list[str] = []
+    repair = _field_value(document, "限定修复")
+    if repair is None:
+        errors.append("bounded repair field must use backtick value format")
+    elif fixed and repair in {"", "无"}:
+        errors.append("fixed quality findings need bounded repair evidence")
+    exception_detail = _field_value(document, "质量例外")
+    if exception_detail is None:
+        errors.append("quality exception field must use backtick value format")
+    elif exception_count and exception_detail in {"", "无"}:
+        errors.append("quality exceptions need contract evidence and a revisit trigger")
+    elif not exception_count and exception_detail != "无":
+        errors.append("quality exception detail must be 无 when exception=0")
+    return errors
+
+
+def _quality_gate_errors(document: str) -> list[str]:
+    match = QUALITY_GATE.search(document)
+    if not match:
+        return ["quality gate result has an unsupported format"]
+    counts = tuple(int(count_text) for count_text in match.groups())
+    return [
+        *_quality_count_errors(document, counts),
+        *_quality_evidence_errors(document, counts[1], counts[2]),
+    ]
 
 
 def validate(document: str) -> list[str]:
@@ -32,18 +99,16 @@ def validate(document: str) -> list[str]:
     if re.search(r"<[^>]+>", document):
         errors.append("execution report still contains template placeholders")
     for status in re.findall(r"^-\s*状态：`([^`]+)`", document, re.MULTILINE):
-        if "/" not in status and not any(
-            status == allowed or status.startswith(allowed + "：") for allowed in ALLOWED_STATUS
-        ):
+        if not any(_matches_status(status, allowed) for allowed in ALLOWED_STATUS):
             errors.append(f"unsupported execution status: {status}")
     if "### TASK-" not in document:
         errors.append("execution report needs at least one TASK result")
     missing_fields = [field for field in REQUIRED_FIELDS if field not in document]
     if missing_fields:
         errors.append("execution report is missing fields: " + ", ".join(missing_fields))
-    conclusion = document.partition("## 结论与恢复点")[2]
-    if not re.search(r"^-\s*状态：`[^`]+`", conclusion, re.MULTILINE):
+    if _conclusion_status(document) is None:
         errors.append("execution report needs a conclusion status")
+    errors.extend(_quality_gate_errors(document))
     return errors
 
 

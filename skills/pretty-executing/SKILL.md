@@ -47,9 +47,11 @@ Design 或 execution plan 不得覆盖用户当前明确的目标和授权；文
 
 ### 质量来源与事实约束
 
-`clean-code-guard` 负责通用代码质量；[质量补充](references/quality-principles.md)只负责执行合同、
-Java/Spring 语义、运行观测和行为测试。AGENTS、Trellis 等项目规则决定仓库本地惯例；它们都不能
-覆盖用户、Design 或 Plan 已明确的业务合同。
+`clean-code-guard` 负责通用代码质量，并作为执行模式[非平凡生产代码](references/quality-principles.md#非平凡生产代码判定)
+的阻断质量合同；
+[质量补充](references/quality-principles.md)只负责执行合同、Java/Spring 语义、运行观测和行为测试。
+AGENTS、Trellis 等项目规则决定仓库本地惯例；它们都不能覆盖用户、Design 或 Plan 已明确的业务
+合同。`clean-code-guard` 有具体代码证据的违反项默认阻断交付，只有下文允许的质量例外可以关闭。
 
 真实 API、Schema、Java/JDK、依赖版本和运行结果以仓库事实为准；既有实现不能代替 Design、Plan
 或 Prompt 决定本次业务语义。外部或遗留合同确需例外时，必须绑定具体 symbol、不可修改原因，
@@ -94,12 +96,14 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
 - **已有 Plan 修订**：只有用户明确要求更新时才处理，并只重新读取受反馈或上游合同变化影响的
   TASK 和锚点；其余内容不重新调查。
 
-路径或 symbol 失效时只围绕该锚点搜索。成稿后只执行一次结构检查、静态质量扫描和合并 Review；
-三者属于同一收尾批次，不生成额外证据。Plan 不执行编译、测试、测试守卫或覆盖率。
+路径或 symbol 失效时只围绕该锚点搜索。成稿后只执行一次结构检查、静态质量扫描和全量发现 Review；
+阻断问题集中修复后只复核受影响的 Plan 片段，不生成额外全量证据。三者属于同一收尾批次。Plan
+不执行编译、测试、测试守卫或覆盖率。
 
 ### 执行模式
 
-执行模式直接在当前真实代码库生成代码，不创建隔离工作树，也不生成额外的运行状态协议。
+执行模式直接在当前真实代码库生成代码，不创建隔离工作树或项目内交接文档；质量闭环允许在系统
+临时目录保留一个不交付、不提交的 Review JSON，供限定修复期间的门禁复核。
 
 开始修改前按输入路径获取范围：
 
@@ -116,11 +120,12 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
   Design，不猜测执行。
 
 范围已知后只执行一个并行预检批次：读取候选生产文件、公共测试、必要直接依赖、构建配置、
-质量补充及适用 AGENTS/Trellis；同时检查候选文件的未提交修改、路径与 symbol 新鲜度，以及
-`docs/pretty/<topic>/execution.md` 是否已存在。Design/Plan 标记为新增的路径或 symbol 不要求
-预先存在。候选文件已有用户修改或已有 `execution.md` 时停止；不相关脏文件不阻塞，也不得
-触碰。只有单个锚点失效时才围绕它定向搜索；职责、所有权、依赖方向或外部合同漂移时返回
-Design。ADR 只在 Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
+`clean-code-guard`、质量补充及适用 AGENTS/Trellis；同时检查候选文件的未提交修改、路径与
+symbol 新鲜度，以及 `docs/pretty/<topic>/execution.md` 是否已存在。同一调用内这些质量说明只读
+一次并持续用于后续生成、Review 和修复。Design/Plan 标记为新增的路径或 symbol 不要求预先存在。
+候选文件已有用户修改或已有 `execution.md` 时停止；不相关脏文件不阻塞，也不得触碰。只有单个
+锚点失效时才围绕它定向搜索；职责、所有权、依赖方向或外部合同漂移时返回 Design。ADR 只在
+Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
 
 将 Design TASK 或 Plan 测试直接投影为简短内部测试清单；Prompt-only 才自行提取不同的成功
 结果、失败语义和状态迁移。不给清单分配 ID、状态或证据字段，不输出前置分析，也不创建额外
@@ -150,12 +155,12 @@ Design。ADR 只在 Prompt-only 路径或 Design 明确引用的例外需要核�
 
 ## 质量驱动实现
 
-在预检批次中完整读取或复用本次会话未变化的[质量补充](references/quality-principles.md)，同一
-调用只读一次。`clean-code-guard` 作为通用基线；再根据 Design/Plan、真实受影响链路和计划修改的
-symbol、类型、依赖与行为风险选择最小专项路由。生成后以实际代码增量确认最终路由，不使用无关
-历史代码或全仓盘点扩大范围。
+在预检批次中完整读取或复用本次会话未变化的 `clean-code-guard` 和
+[质量补充](references/quality-principles.md)。`clean-code-guard` 的规则从首次生成到最终交付持续
+生效；再根据 Design/Plan、真实受影响链路和计划修改的 symbol、类型、依赖与行为风险选择最小
+专项路由。生成后以实际代码增量确认最终路由，不使用无关历史代码或全仓盘点扩大范围。
 
-- 命中路由时，在同一次合并 Review 中应用其专项约束；没有命中时继续使用通用基线和质量补充。
+- 命中路由时，在同一次全量发现 Review 中应用其专项约束；没有命中时继续使用通用基线和质量补充。
 - 路由只指导生成和 Review，不要求把路由字段写入 `execution.md`，也不把专项 Skill 的
   流程、命令或阈值复制进本 Skill。
 - 只有真实事实证明需要时才增加模块边界、类型设计、Java 运行时或行为测试专项约束。
@@ -165,12 +170,26 @@ symbol、类型、依赖与行为风险选择最小专项路由。生成后以�
 
 1. **静态批次**：代码和测试全部完成后，并行执行一次质量路由解析和一次机械质量门禁；两者
    共享相同 Git 基线和实际影响文件，不分别扩展扫描范围。
-2. **合并 Review**：消费静态批次结果，一次性运行 `clean-code-guard`、全部命中专项路由和测试
-   守卫。Reviewer 对有具体代码、合同或行为依据的问题直接修复；需要改变上游合同或超出范围时
-   标记并停止。测试守卫检查新增/修改测试是否通过公共入口覆盖内部清单中的结果、状态和异常，
-   是否包含本次行为产生的查询未命中、解析失败、依赖缺失及远程空/失败/异常响应，并拒绝测试禁用、
-   private 方法测试、内部协作者调用次数或复制生产算法。修复后只复核受影响的静态项；需要确认
-   修复的编译性或定向行为时可以使用上述中间反馈，但不启动全量测试或 JaCoCo。
+2. **强制质量闭环**：只执行一次覆盖完整实际增量的全量发现 Review，同时应用
+   `clean-code-guard`、全部命中专项路由和测试守卫。Reviewer 将每个有具体代码、合同或行为证据的
+   问题记录为阻断 finding，至少包含稳定 ID、根因组、规则、`path:line#symbol` 证据、允许修复的
+   范围和 `open / fixed / exception` 状态；finding 位置和允许范围必须处于实际影响或明确授权文件
+   内，没有证据的偏好不得成为 finding。按
+   [质量 Review 合同](references/quality-review-contract.md) 将清单写入系统临时目录，并先用
+   `scripts/quality_review_gate.py` 校验结构。测试守卫检查新增/修改测试是否通过公共入口覆盖内部
+   清单中的结果、状态和异常，是否包含本次行为产生的查询未命中、解析失败、依赖缺失及远程空/失败/
+   异常响应，并拒绝测试禁用、private 方法测试、内部协作者调用次数或复制生产算法。
+
+   对 `open` finding 按共同根因分组执行限定修复。命名、异常和局部控制流等问题直接最小修复；
+   只有职责、抽象、耦合或方法结构问题才调用 `refactor`，并把输入限制为 finding 证据、允许文件和
+   symbol、必须保持的行为及禁止改变的边界。每组最多两次修复尝试；每次后只复核该组 finding、
+   实际修改的 symbol 及修复新增的代码，不再次执行全量 Review。受影响文件重跑机械门禁；只有
+   签名、装配或可观察行为可能变化时才运行最小相关编译或定向测试，不启动全量测试或 JaCoCo。
+
+   质量例外只能由当前 Prompt、Design、Plan、项目强制规则或不可修改的外部/遗留合同证明，必须
+   记录具体 symbol、原因、测试/Schema/签名事实和复查触发条件。两次修复后仍为 `open`、修复需要
+   扩大任务范围或改变上游合同时停止。只有全部阻断 finding 均为 `fixed` 或有效 `exception`，即
+   `open=0`，并且 `quality_review_gate.py --require-closed` 返回 `0`，才可进入最终验证。
 3. **最终验证**：每个受影响构建根在绿路径只执行一次最终验收调用，在同一 Maven/Gradle 调用中
    完成增量编译、相关模块全量测试和 JaCoCo XML。此前的受限编译或定向测试不计入这一次最终
    验收，也不能替代它；最终验收前不得预跑相关模块全量测试或覆盖率。多模块或自定义项目通过
@@ -178,8 +197,10 @@ symbol、类型、依赖与行为风险选择最小专项路由。生成后以�
    再次启动测试。只有纯数据载体或生成代码且没有可执行行为时，覆盖率可以不适用，但仍按项目
    需要执行一次最小相关最终编译/测试。多个构建根只有在不共享数据库、端口、生成目录或全局
    状态且资源允许时并行，否则串行；同一构建根的最终验收绝不拆分。
-4. **记录**：验证通过后一次性创建并填写 `execution.md`，再执行一次
-   `scripts/validate_execution.py`。修复记录不得触发编译、测试、Review、门禁或 JaCoCo。
+4. **记录**：最终成功或停止时一次性创建并填写 `execution.md`。质量门禁必须使用
+   `clean-code-guard found=<n> fixed=<n> exception=<n> open=<n>`，且四项计数一致；限定修复按
+   根因组和 finding ID 记录次数，质量例外记录上述依据。完成状态必须为 `open=0`，再执行一次
+   `scripts/validate_execution.py`。填写或修正记录不得触发编译、测试、Review、门禁或 JaCoCo。
 5. **失败收敛**：最终验收的编译、测试或覆盖率失败时，保留完整失败事实并定位当前已知问题；
    修复后尽可能先用最小范围的 `compile` 或定向测试确认，再重跑同一条最终验收命令。重跑发现
    新的、任务范围内且有明确修复依据的问题时，继续同一收敛循环。固定的是单一最终验收入口，
@@ -188,18 +209,20 @@ symbol、类型、依赖与行为风险选择最小专项路由。生成后以�
    启动完整验收。覆盖率不足时只为遗漏的可观察行为补测试；无独立行为时简化死分支，纯载体
    误入范围时更正覆盖文件集合。没有新的诊断证据或范围内修复动作时停止。
 
-成功路径的固定性能预算是一次并行预检、一次静态批次、一次合并 Review、每个构建根一次最终
-全量测试与 JaCoCo、一次执行记录写入与校验；实现阶段可另有上述按需中间反馈。中间反馈只由
-尚未确认的编译风险或已闭环切片的行为风险触发，并限制在最小相关范围，同一代码与命令不重复
-执行。Design/Plan 快速路径不得增加合同调查；任何额外调查、静态复核、全量测试或覆盖率运行
-必须由锚点漂移、校验失败或真实运行失败触发，每次失败路径的完整重跑还必须具备上述进展证据，
-不能为了保存 RED、GREEN 或阶段性覆盖率证据而增加。
+成功且没有 finding 的固定性能预算是一次并行预检、一次静态批次、一次全量发现 Review、每个
+构建根一次最终全量测试与 JaCoCo、一次执行记录写入与校验。存在 finding 时只增加每组最多两次
+限定修复、局部复核以及确有风险时的最小中间反馈，不增加第二次全量 Review。中间反馈只由尚未
+确认的编译风险或已闭环切片的行为风险触发，并限制在最小相关范围，同一代码与命令不重复执行。
+Design/Plan 快速路径不得增加合同调查；任何额外调查、静态复核、全量测试或覆盖率运行必须由
+锚点漂移、校验失败或真实运行失败触发，每次失败路径的完整重跑还必须具备上述进展证据，不能
+为了保存 RED、GREEN 或阶段性覆盖率证据而增加。
 
 执行模式的常用辅助命令如下；`<base>` 是开始修改前记录的 Git 基线，输出仅供当前执行判断：
 
 ```bash
 python3 skills/pretty-executing/scripts/quality_resolver.py --repo . --base <base> --path <affected-java-file> --json
 python3 skills/pretty-executing/scripts/quality_contract_gate.py --repo . --base <base> --path <affected-java-file>
+python3 skills/pretty-executing/scripts/quality_review_gate.py <system-temp>/quality-review.json --path <affected-java-file> --require-closed
 python3 skills/pretty-executing/scripts/validate_execution.py docs/pretty/<topic>/execution.md
 ```
 
@@ -292,8 +315,9 @@ python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
   和影响范围；
 - 目标项目影响文件存在用户未提交修改，或已有 `execution.md`；
 - 需要擅自改变公共接口、外部行为、数据所有权、依赖方向、事务、并发、幂等或安全边界；
-- 机械门禁、合并 Review、编译、测试或 JaCoCo 增量覆盖率失败，且没有新的诊断证据或任务范围内
+- 机械门禁失败，或强制质量闭环在限定修复后仍有 `open` finding，且没有新的诊断证据或任务范围内
   有明确依据的修复动作；
+- 编译、测试或 JaCoCo 增量覆盖率失败，且没有新的诊断证据或任务范围内有明确依据的修复动作；
 - 需要执行 DDL、配置数据 DML、真实数据库操作、部署、发布或人工运维动作。
 
 停止时只按 `assets/execution.md` 一次性记录已经发生的事实、未验证范围和恢复/返回原因，不

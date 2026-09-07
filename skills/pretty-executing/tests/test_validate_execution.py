@@ -26,7 +26,10 @@ VALID_EXECUTION = """# Example Execution
 
 ## 审查与验证
 
-- 审查：`合并 Review、测试守卫和机械门禁通过`
+- 审查：`一次全量发现 Review、限定复核、测试守卫和机械门禁通过`
+- 质量门禁：`clean-code-guard found=0 fixed=0 exception=0 open=0`
+- 限定修复：`无`
+- 质量例外：`无`
 - 构建验证：`mvn test jacoco:report；exit 0`
 - 覆盖率范围：`纳入 Handler.java；排除无`
 - 测试覆盖率：`增量行覆盖率 100.00%，分支覆盖率 90.00%`
@@ -61,6 +64,95 @@ class ValidateExecutionTest(unittest.TestCase):
         document = VALID_EXECUTION.replace("- 状态：`完成`", "- 状态：`处理中`", 1)
 
         self.assertIn("unsupported execution status: 处理中", validate(document))
+
+    def test_completed_execution_rejects_open_quality_findings(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=0 exception=0 open=1",
+        )
+
+        self.assertIn("completed execution cannot contain open quality findings", validate(document))
+
+    def test_completed_execution_with_reason_rejects_open_quality_findings(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=0 exception=0 open=1",
+        ).replace(
+            "- 状态：`完成`\n- 交付范围：",
+            "- 状态：`完成：附带说明`\n- 交付范围：",
+        )
+
+        self.assertIn("completed execution cannot contain open quality findings", validate(document))
+
+    def test_status_choice_list_is_rejected(self):
+        document = VALID_EXECUTION.replace(
+            "- 状态：`完成`\n- 交付范围：",
+            "- 状态：`完成 / 停止`\n- 交付范围：",
+        )
+
+        self.assertIn("unsupported execution status: 完成 / 停止", validate(document))
+
+    def test_inconsistent_quality_counts_are_rejected(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=2 fixed=1 exception=0 open=0",
+        ).replace("- 限定修复：`无`", "- 限定修复：`QF-001@1 Handler#execute`")
+
+        self.assertIn("quality gate counts are inconsistent", validate(document))
+
+    def test_fixed_finding_requires_repair_evidence(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=1 exception=0 open=0",
+        )
+
+        self.assertIn("fixed quality findings need bounded repair evidence", validate(document))
+
+    def test_quality_fields_require_backtick_values(self):
+        document = VALID_EXECUTION.replace("- 限定修复：`无`", "- 限定修复：无")
+
+        self.assertIn("bounded repair field must use backtick value format", validate(document))
+
+    def test_quality_exception_requires_details(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=0 exception=1 open=0",
+        )
+
+        self.assertIn("quality exceptions need contract evidence", " ".join(validate(document)))
+
+    def test_fixed_quality_finding_with_repair_evidence_is_valid(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=1 exception=0 open=0",
+        ).replace(
+            "- 限定修复：`无`",
+            "- 限定修复：`QF-001@1 src/main/java/Handler.java#execute`",
+        )
+
+        self.assertEqual([], validate(document))
+
+    def test_quality_exception_with_contract_evidence_is_valid(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=0 exception=1 open=0",
+        ).replace(
+            "- 质量例外：`无`",
+            "- 质量例外：`QF-001 Handler#execute；外部签名固定；下个主版本复查`",
+        )
+
+        self.assertEqual([], validate(document))
+
+    def test_stopped_execution_can_record_open_quality_findings(self):
+        document = VALID_EXECUTION.replace(
+            "found=0 fixed=0 exception=0 open=0",
+            "found=1 fixed=0 exception=0 open=1",
+        ).replace(
+            "- 状态：`完成`\n- 交付范围：",
+            "- 状态：`停止：QF-001 两次修复后仍未关闭`\n- 交付范围：",
+        )
+
+        self.assertEqual([], validate(document))
 
 
 if __name__ == "__main__":
