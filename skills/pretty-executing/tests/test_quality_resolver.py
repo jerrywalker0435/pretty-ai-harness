@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from quality_resolver import ROUTES, _matched_routes
+from quality_resolver import ROUTES, _matched_routes, main
 
 
 class QualityResolverTest(unittest.TestCase):
@@ -48,6 +50,13 @@ class QualityResolverTest(unittest.TestCase):
             {"MODULE_BOUNDARY", "TYPE_DESIGN", "JAVA_RUNTIME_RISK", "BEHAVIOR_TEST"},
             _matched_routes(production_content, test_content),
         )
+
+    @patch("quality_resolver._paths", return_value=[])
+    def test_json_output_writes_route_receipt(self, _paths):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "routes.json"
+            self.assertEqual(0, main(["--repo", directory, "--json-output", str(output)]))
+            self.assertIn('"routes": []', output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

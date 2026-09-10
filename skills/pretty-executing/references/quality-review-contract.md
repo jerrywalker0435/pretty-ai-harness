@@ -11,6 +11,7 @@
 {
   "review_type": "full-discovery",
   "full_review_count": 1,
+  "routes_applied": ["clean-code-guard", "tdd"],
   "reviewed_paths": [
     "module/src/main/java/example/OrderService.java",
     "module/src/main/java/example/OrderRepository.java"
@@ -49,6 +50,11 @@
   ]
 }
 ```
+
+`routes_applied` 记录本次 Review 实际执行的质量路由。存在非平凡生产变更时必须包含
+`clean-code-guard`；其他项来自 `quality_resolver.py` 的命中结果及当前明确选择的适用路由。最终
+执行门禁会拒绝缺少该字段或未执行通用 `clean-code-guard` 的生产代码完成记录。
+该字段必须是非空且不重复的 Skill 名称列表；没有专项命中时也填写 `clean-code-guard`。
 
 - ID 使用连续的 `QF-001` 形式，在本次执行中保持稳定。
 - `reviewed_paths` 覆盖最终实际修改、必要调用链证据及明确允许限定修复的生产、测试和其他代码文件；

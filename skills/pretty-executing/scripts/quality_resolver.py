@@ -167,7 +167,25 @@ def _parser() -> argparse.ArgumentParser:
         help="本次实际影响的 Java 文件；可重复，配合 --base 时忽略未变化文件",
     )
     parser.add_argument("--json", action="store_true", help="输出 JSON；默认输出简短路由列表")
+    parser.add_argument("--json-output", type=Path, help="可选 JSON 结果文件，供最终执行门禁读取")
     return parser
+
+
+def _write_json_output(payload: dict[str, object], output_path: Path | None, repo: Path) -> None:
+    if output_path is None:
+        return
+    output = output_path if output_path.is_absolute() else repo / output_path
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _print_payload(payload: dict[str, object], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    routes = payload["routes"]
+    labels = "、".join(item["id"] for item in routes) if routes else "无专项路由；使用 clean-code-guard 与执行质量补充"
+    print("质量路由：" + labels)
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
@@ -175,18 +193,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
     try:
         repo = args.repo.resolve()
         payload = resolve(repo, _paths(repo, args.base, args.path), args.base)
-        if args.json:
-            print(json.dumps(payload, ensure_ascii=False, indent=2))
-        else:
-            routes = payload["routes"]
-            print(
-                "质量路由："
-                + (
-                    "、".join(item["id"] for item in routes)
-                    if routes
-                    else "无专项路由；使用 clean-code-guard 与执行质量补充"
-                )
-            )
+        _write_json_output(payload, args.json_output, repo)
+        _print_payload(payload, args.json)
         return 0
     except (OSError, RuntimeError, ValueError) as error:
         print(f"质量路由无法解析：{error}", file=sys.stderr)

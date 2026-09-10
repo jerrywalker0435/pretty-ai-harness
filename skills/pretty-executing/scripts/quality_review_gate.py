@@ -549,6 +549,17 @@ def _reviewed_paths(payload: dict[str, object]) -> tuple[list[str], list[str]]:
     return paths, []
 
 
+def _routes_applied_errors(payload: dict[str, object]) -> list[str]:
+    routes = payload.get("routes_applied")
+    if not isinstance(routes, list) or not routes:
+        return ["routes_applied must be a non-empty list"]
+    if any(not _non_empty_string(route) for route in routes):
+        return ["routes_applied entries must be non-empty strings"]
+    if len(routes) != len(set(routes)):
+        return ["routes_applied must not contain duplicates"]
+    return []
+
+
 def _finding_id_errors(finding_ids: list[str]) -> list[str]:
     duplicates = sorted({finding_id for finding_id in finding_ids if finding_ids.count(finding_id) > 1})
     if duplicates:
@@ -669,6 +680,7 @@ def validate(
         errors.append("full_review_count must be exactly 1")
     reviewed_paths, path_errors = _reviewed_paths(payload)
     errors.extend(path_errors)
+    errors.extend(_routes_applied_errors(payload))
     if expected_paths and set(reviewed_paths) != set(expected_paths):
         errors.append("reviewed_paths do not match the requested affected paths")
     findings = payload.get("findings")

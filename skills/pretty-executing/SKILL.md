@@ -123,11 +123,11 @@ Plan 模式只写 `docs/pretty/<topic>/execution-plan.md`，不修改生产代�
 
 范围已知后只执行一个并行预检批次：读取候选生产文件、公共测试、必要直接依赖、构建配置、
 `clean-code-guard`、质量补充及适用 AGENTS/Trellis；同时检查候选文件的未提交修改、路径与
-symbol 新鲜度，以及 `docs/pretty/<topic>/execution.md` 是否已存在。同一调用内这些质量说明只读
-一次并持续用于后续生成、Review 和修复。Design/Plan 标记为新增的路径或 symbol 不要求预先存在。
-候选文件已有用户修改时停止；不相关脏文件不阻塞，也不得触碰。若主题已有 `execution.md`，用户再次执行同一主题时读取历史事实并继续，不得覆盖旧记录；本次结果写入递增批次文件（`execution-002.md`、`execution-003.md` 等）。首次执行使用 `execution.md`。只有单个
-锚点失效时才围绕它定向搜索；职责、所有权、依赖方向或外部合同漂移时返回 Design。ADR 只在
-Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
+symbol 新鲜度，以及该主题是否已有执行记录。同一调用内这些质量说明只读一次并持续用于后续生成、
+Review 和修复。Design/Plan 标记为新增的路径或 symbol 不要求预先存在。候选文件已有用户修改时
+停止；不相关脏文件不阻塞，也不得触碰。历史执行记录、批次选择和继续执行规则统一见“执行记录与停止
+条件”。只有单个锚点失效时才围绕它定向搜索；职责、所有权、依赖方向或外部合同漂移时返回 Design。
+ADR 只在 Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
 
 将 Design TASK 或 Plan 测试直接投影为简短内部测试清单；Prompt-only 才自行提取不同的成功
 结果、失败语义和状态迁移。不给清单分配 ID、状态或证据字段，不输出前置分析，也不创建额外
@@ -138,17 +138,15 @@ Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
 检查可靠确认，或者一个切片闭环后需要尽早验证公共行为时，可以执行受影响模块的 `compile` 或
 该切片相关的定向测试。中间反馈只使用最小相关模块和测试选择，不运行相关模块全量测试、JaCoCo
 或覆盖率验收，也不为保存 RED/GREEN 证据机械触发；代码和命令输入未变化时复用已有结果，失败
-修复后可以重跑。`execution.md` 不预先创建；最终成功或停止时按
-[execution 模板](assets/execution.md) 一次性写入。
+修复后可以重跑。最终成功或停止时按 [execution 模板](assets/execution.md) 写入当前批次文件。
 
 ### 测试范围
 
 - Plan 和 Execution 不以非 UT 测试或外部环境验证作为前置条件或完成条件。执行范围内的单元/
   行为测试不依赖真实数据库、外部服务或部署环境；协议映射使用本地隔离测试。
-- Design 的“人工外部验证”不投影为执行 TASK、测试文件或依赖。真实事务、唯一约束、repository
-  查询集成测试、SQL 执行计划及服务/设备联调保留为 `execution.md` 的未验证范围和声明限制；
-  本地 mock 测试不证明这些事实。若 Design 将其设为执行门禁，返回 Design 修正验证归属；
-  不改变业务合同，不擅自连接数据库，也不把未执行的验证声明为通过。返回 Design 只修正门禁归属，不停止本次其余本地实现。
+- Design 的“人工外部验证”不投影为执行 TASK、测试文件或依赖；真实事务、唯一约束、repository
+  查询集成测试、SQL 执行计划及服务/设备联调只写入 `execution.md` 的未验证范围和声明限制。
+  本地 mock 测试不证明这些事实；若 Design 将其设为执行门禁，返回 Design 修正验证归属后继续本地任务。
 
 ### 未验证事项分类决策
 
@@ -190,7 +188,8 @@ Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
    问题记录为阻断 finding，至少包含稳定 ID、根因组、规则、`path:line#symbol` 证据、允许修复的
    范围和 `open / fixed / exception` 状态；finding 位置和允许范围必须处于实际影响或明确授权文件
    内，没有证据的偏好不得成为 finding。按
-   [质量 Review 合同](references/quality-review-contract.md) 将清单写入系统临时目录，并先用
+   [质量 Review 合同](references/quality-review-contract.md) 将清单写入系统临时目录，并在顶层记录实际执行的
+   `routes_applied`（非平凡生产变更必须包含 `clean-code-guard`），再用
    `scripts/quality_review_gate.py` 校验结构。测试守卫检查新增/修改测试是否通过公共入口覆盖内部
    清单中的结果、状态和异常，是否包含本次行为产生的查询未命中、解析失败、依赖缺失及远程空/失败/
    异常响应，并拒绝测试禁用、private 方法测试、内部协作者调用次数或复制生产算法。
@@ -231,10 +230,11 @@ Prompt-only 路径或 Design 明确引用的例外需要核验时读取。
    再次启动测试。只有纯数据载体或生成代码且没有可执行行为时，覆盖率可以不适用，但仍按项目
    需要执行一次最小相关最终编译/测试。多个构建根只有在不共享数据库、端口、生成目录或全局
    状态且资源允许时并行，否则串行；同一构建根的最终验收绝不拆分。
-4. **记录**：最终成功或停止时一次性创建并填写 `execution.md`。质量门禁必须使用
+4. **记录**：最终成功或停止时一次性创建并填写当前执行批次记录。质量门禁必须使用
    `clean-code-guard found=<n> fixed=<n> exception=<n> open=<n>`，且四项计数一致；限定修复按
-   根因组和 finding ID 记录次数，质量例外记录上述依据。完成状态必须为 `open=0`，再执行一次
-   `scripts/validate_execution.py`。填写或修正记录不得触发编译、测试、Review、门禁或 JaCoCo。
+   根因组和 finding ID 记录次数，质量例外记录上述依据。使用 `scripts/validate_execution.py --final`
+   对 Design/Plan、TASK、实际生产 diff、Review JSON 和覆盖率 JSON 做最终门禁；填写或修正记录不得
+   触发编译、测试、Review、门禁或 JaCoCo。
 5. **失败收敛**：最终验收的编译、测试或覆盖率失败时，保留完整失败事实并定位当前已知问题；
    修复后尽可能先用最小范围的 `compile` 或定向测试确认，再重跑同一条最终验收命令。重跑发现
    新的、任务范围内且有明确修复依据的问题时，继续同一收敛循环。固定的是单一最终验收入口，
@@ -254,10 +254,10 @@ Design/Plan 快速路径不得增加合同调查；任何额外调查、静态�
 执行模式的常用辅助命令如下；`<base>` 是开始修改前记录的 Git 基线，输出仅供当前执行判断：
 
 ```bash
-python3 skills/pretty-executing/scripts/quality_resolver.py --repo . --base <base> --path <affected-java-file> --json
+python3 skills/pretty-executing/scripts/quality_resolver.py --repo . --base <base> --path <affected-java-file> \
+  --json --json-output <system-temp>/quality-routes.json
 python3 skills/pretty-executing/scripts/quality_contract_gate.py --repo . --base <base> --path <affected-java-file>
 python3 skills/pretty-executing/scripts/quality_review_gate.py <system-temp>/quality-review.json --path <affected-java-file> --require-closed
-python3 skills/pretty-executing/scripts/validate_execution.py docs/pretty/<topic>/execution.md
 ```
 
 `tests/` 仅存放上述辅助脚本的回归测试，不属于正常执行路径；只有修改辅助脚本时才运行：
@@ -294,7 +294,8 @@ Maven 的 `--run` 由脚本自动追加按仓库隔离的系统临时目录作�
 python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
   --repo . --base <base> --path <behavior-java-file> --run \
   --build-arg=-pl --build-arg=<module> --build-arg=-am \
-  --test-task=test --jacoco-task=org.jacoco:jacoco-maven-plugin:report
+  --test-task=test --jacoco-task=org.jacoco:jacoco-maven-plugin:report \
+  --json-output <system-temp>/coverage.json
 ```
 
 Gradle 多模块项目将任务本身限定到目标模块，例如
@@ -307,7 +308,7 @@ Gradle 多模块项目将任务本身限定到目标模块，例如
 ```bash
 python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
   --repo . --base <base> --path <behavior-java-file> \
-  --report <jacoco-xml-report>
+  --report <jacoco-xml-report> --json-output <system-temp>/coverage.json
 ```
 
 ## 执行范围与代码生成约束
@@ -339,24 +340,39 @@ python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
 ## 执行记录与停止条件
 
 每个行为 TASK 的结果、实际落点、审查摘要、行为证据、最终验收命令、执行次数及最终退出码、
-未验证范围、覆盖率范围、覆盖率和结论，严格按 `assets/execution.md` 一次性填写。不得记录
-测试清单、阶段状态或另写证据协议。失败允许在本次执行中修复并重新验证；无法修复时创建最终
-记录并填写 `停止：<原因>`，然后停止。
+未验证范围、覆盖率范围、覆盖率和结论，严格按 `assets/execution.md` 填写。记录写入后、向用户声明
+完成或停止前必须运行：
 
-编译或测试因本机环境失败时，先区分代码失败与环境失败。Maven 出现 `~/.m2`、缓存或临时目录不可写、`Operation not permitted` 等仓库权限错误时，必须改用仓库内或系统临时目录的可写 Maven 本地仓库（覆盖率脚本使用 `--build-arg=-Dmaven.repo.local=<path>` 或其自动临时仓库）重试；Gradle 缓存或生成目录权限错误也应切换到可写临时目录后重试。未完成该恢复尝试，不得以“授权不足”或“本机权限”作为执行停止理由。只有替代目录重试仍失败，并有完整命令和错误证据时，才可停止。
+```bash
+python3 skills/pretty-executing/scripts/validate_execution.py \
+  docs/pretty/<topic>/<execution-batch>.md --final \
+  --contract docs/pretty/<topic>/design.md --repo . --base <base> \
+  --coverage-json <system-temp>/coverage.json --review-json <system-temp>/quality-review.json \
+  --routes-json <system-temp>/quality-routes.json \
+  --path <reviewed-file>
+```
 
-最终记录必须列出 Design/Plan 中的完整 TASK 集合，并填写每个 TASK 的最终状态。只有全部 TASK 均已完成、质量门禁 `open=0`、编译/测试通过且增量覆盖率达到实际阈值时，结论状态才可为“完成”或“已满足（无生产差异）”。存在未完成 TASK 时只能继续执行，或在具备明确阻塞证据时填写“停止：<原因>”。编译、测试、覆盖率或单个 TASK 成功只能作为中间验证结果，绝不能触发执行结束；收尾前必须核对完整 TASK 集合与实际生产代码 diff。没有本次授权范围内的生产代码变更时，不得声称实现完成；若没有真实阻塞，应继续执行。
+首个批次使用 `execution.md`；再次执行先运行
+`python3 skills/pretty-executing/scripts/execution_batch.py docs/pretty/<topic>` 选择下一个未占用的批次
+文件，旧记录只读。完成门禁要求完整 TASK 集合、每项最终状态、实际生产 diff、质量 `open=0`、最终编译/测试
+和覆盖率结果一致；质量路由 JSON、Review 路径、生产 diff 以及执行记录中的覆盖率必须互相匹配。
+停止记录同样要求完整 TASK 集合和阻塞证据，但允许保留与停止代码对应的 `open` finding，不得声明完成。
+`--path` 必须重复传入本次 Review 的完整路径集合；提供该集合时最终 diff 只在该执行范围内核对，
+避免把预先存在的无关脏文件算入本次结果。
+覆盖率适用时，构建验证必须记录包含测试和 JaCoCo 的最终 Maven/Gradle 命令；覆盖率不适用时记录最终
+编译和测试命令。两者都必须记录执行次数及成功退出码。编译、测试、
+覆盖率或单个 TASK 成功只能作为中间验证，不能触发收尾；没有明确阻塞时必须继续后续 TASK。失败
+允许修复并重跑；无法修复时才记录带 `停止代码` 和 `停止证据` 的 `停止：<具体阻塞证据>`。
+停止记录也必须列出合同中的全部 TASK；尚未开始或未闭环的项逐项记录其停止状态和同一阻塞事实，不能
+省略为“剩余任务待处理”。
 
-以下情况直接停止并报告：
+编译或测试因本机环境失败时，先区分代码失败与环境失败。Maven 的 `~/.m2`、缓存或临时目录权限
+错误必须切换可写 Maven 本地仓库重试；Gradle 缓存或生成目录错误必须切换可写临时目录重试。未完成
+恢复尝试不得以“授权不足”或“本机权限”停止；替代目录仍失败时记录完整命令和错误证据。人工外部验证
+按前文规则写入未验证范围，不阻塞本地实现、编译、测试或覆盖率。
 
-- 输入合同、Design、execution plan 与仓库事实冲突，或无法确定真实职责、失败语义、观察面
-  和影响范围；
-- 目标项目影响文件存在用户未提交修改；已有 `execution.md` 不再单独构成停止条件，用户再次执行同一主题时应继续；
-- 需要擅自改变公共接口、外部行为、数据所有权、依赖方向、事务、并发、幂等或安全边界；
-- 机械门禁失败，或强制质量闭环在限定修复后仍有 `open` finding，且没有新的诊断证据或任务范围内
-  有明确依据的修复动作；
-- 编译、测试或 JaCoCo 增量覆盖率失败，且没有新的诊断证据或任务范围内有明确依据的修复动作；
-- 仅当本次执行实际需要执行 DDL、配置数据 DML、真实数据库操作、部署、发布或人工运维动作时停止；若只是人工外部验证范围，跳过并记录未验证范围，继续本地实现。
-
-停止时只按 `assets/execution.md` 一次性记录已经发生的事实、未验证范围和恢复/返回原因，不
-自动覆盖或回滚用户已有修改。再次执行已有主题时，旧记录只读，按递增批次文件写入本次记录，不覆盖历史事实。
+以下情况才允许停止：输入合同与仓库事实冲突且无法在新增实现范围内解决；存在用户未提交修改；需要
+改变公共接口、数据所有权、依赖方向、事务、并发、幂等或安全边界；质量 finding 在限定修复后仍无法
+关闭；最终编译/测试/覆盖率失败且没有新的诊断证据或任务范围内修复动作；或当前授权明确要求执行
+DDL、配置数据 DML、真实数据库操作、部署、发布或人工运维等本 Skill 不执行的外部变更。Design 标记
+的人工外部验证本身不属于停止理由。

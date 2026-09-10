@@ -24,6 +24,7 @@ def review_document(findings=None):
     return {
         "review_type": "full-discovery",
         "full_review_count": 1,
+        "routes_applied": ["clean-code-guard"],
         "reviewed_paths": [PRODUCTION_PATH],
         "type_necessity_checks": [],
         "type_necessity_not_applicable": "only method bodies changed; no new types or changed type responsibilities",
@@ -163,6 +164,16 @@ class QualityReviewGateTest(unittest.TestCase):
 
     def test_closed_review_with_no_findings_is_valid(self):
         self.assertEqual([], validate_closed(review_document(), [PRODUCTION_PATH]))
+
+    def test_review_requires_routes_applied_receipt(self):
+        document = review_document()
+        document.pop("routes_applied")
+        self.assertIn("routes_applied must be a non-empty list", validate(document))
+
+    def test_review_rejects_duplicate_routes(self):
+        document = review_document()
+        document["routes_applied"] = ["clean-code-guard", "clean-code-guard"]
+        self.assertIn("routes_applied must not contain duplicates", validate(document))
 
     def test_cqs_checks_are_required(self):
         document = review_document()
