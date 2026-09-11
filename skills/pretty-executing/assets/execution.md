@@ -28,7 +28,7 @@
 - TASK 完成情况：`TASK-001、TASK-002、…；逐项填写最终状态`
 - 实际生产代码变更：`<本次新增或修改的生产文件与 symbol；无变更时必须说明原因>`
 - 停止代码：`无 / CONTRACT_CONFLICT / USER_CHANGES / BOUNDARY_CHANGE / QUALITY_OPEN / VALIDATION_FAILED / AUTHORIZATION_REQUIRED`
-- 停止证据：`无 / <阻塞命令、错误、重试和无法继续的具体事实>`
+- 停止证据：`无 / <阻塞命令、错误、重试和无法继续的具体事实；合同阻塞须列 TASK/条款、path#symbol 或协议/Schema 事实、缺少或矛盾的决定、受影响 TASK 及依赖、恢复所需的最小决定>`
 - 状态：`完成 / 已满足（无生产差异） / 停止：<具体阻塞证据> / 返回 PRD：<原因> / 返回 Design：<原因>`
 - 交付范围：`<证据证明的范围>`
 - 声明限制：`<不能由本地验证推断的结论>`
