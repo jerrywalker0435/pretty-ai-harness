@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import shutil
@@ -25,6 +24,7 @@ except ImportError:  # pragma: no cover - supports package execution
 
 UNMEASURABLE = 2
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+MAVEN_REPOSITORY_IGNORE = "/.pretty/maven-repository/"
 
 
 @dataclass(frozen=True)
@@ -375,8 +375,18 @@ def _tasks(requested: Sequence[str], default: str) -> list[str]:
 
 
 def _default_maven_repository(repo: Path) -> Path:
-    repository_key = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:16]
-    return Path(tempfile.gettempdir()).resolve() / "pretty-executing" / "maven-repository" / repository_key
+    return repo.resolve() / ".pretty" / "maven-repository"
+
+
+def _ensure_default_maven_repository_ignored(repo: Path) -> None:
+    gitignore = repo.resolve() / ".gitignore"
+    content = gitignore.read_bytes() if gitignore.is_file() else b""
+    ignore_entry = MAVEN_REPOSITORY_IGNORE.encode("utf-8")
+    if ignore_entry in content.splitlines():
+        return
+    newline = b"\r\n" if b"\r\n" in content else b"\n"
+    separator = b"" if not content or content.endswith((b"\n", b"\r")) else newline
+    gitignore.write_bytes(content + separator + ignore_entry + newline)
 
 
 def _maven_repository_options(repo: Path, arguments: Sequence[str]) -> list[str]:
@@ -431,12 +441,17 @@ def _gradle_coverage_command(repo: Path, build: CoverageBuild, init_script: str)
     ]
 
 
-def _run_coverage(repo: Path, tool: str, build: CoverageBuild) -> tuple[int, list[str]]:
+def _run_coverage(repo: Path, tool: str, build: CoverageBuild, work_dir: Path) -> tuple[int, list[str]]:
     _validate_build_arguments(tool, build)
     if tool == "maven":
+        if _maven_repository_options(repo, build.arguments):
+            _ensure_default_maven_repository_ignored(repo)
         command = _maven_coverage_command(repo, build)
         return subprocess.run(command, cwd=repo, check=False).returncode, command
-    with tempfile.NamedTemporaryFile("w", suffix=".gradle", encoding="utf-8") as init_script:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".gradle", encoding="utf-8", dir=work_dir
+    ) as init_script:
         init_script.write(_gradle_init_script())
         init_script.flush()
         command = _gradle_coverage_command(repo, build, init_script.name)
@@ -517,6 +532,11 @@ def _parser() -> argparse.ArgumentParser:
         help="执行最终一次相关模块测试并生成新鲜 JaCoCo 报告",
     )
     parser.add_argument("--json-output", type=Path, help="可选普通结果 JSON 文件")
+    parser.add_argument(
+        "--work-dir",
+        type=Path,
+        help="--run 使用的项目内临时目录，例如 docs/pretty/<topic>/tmp",
+    )
     return parser
 
 
@@ -530,6 +550,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if not 0 <= line_threshold <= 100 or not 0 <= branch_threshold <= 100:
             raise ValueError("覆盖率阈值必须在 0 到 100 之间")
         if args.run:
+            if args.work_dir is None:
+                raise ValueError("--run 必须通过 --work-dir 指定项目内临时目录")
             forbidden = re.compile(
                 r"skipTests|maven\.test\.skip|test\.enabled\s*=\s*false|(?:^|\s)(?:-x|--exclude-task)(?:\s|=)",
                 re.IGNORECASE,
@@ -542,7 +564,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 tuple(args.test_task),
                 tuple(args.jacoco_task),
             )
-            exit_code, command = _run_coverage(repo, tool, build)
+            work_dir = args.work_dir if args.work_dir.is_absolute() else repo / args.work_dir
+            exit_code, command = _run_coverage(repo, tool, build, work_dir.resolve())
             if exit_code:
                 raise RuntimeError(f"覆盖率测试命令失败（退出码 {exit_code}）：{' '.join(command)}")
         changed = changed_sources(repo, args.base, args.path)

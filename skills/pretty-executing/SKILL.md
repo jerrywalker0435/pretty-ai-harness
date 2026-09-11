@@ -136,8 +136,8 @@ Plan 收尾检查至少确认：TASK 数量和依赖顺序完整；所有 Files 
 
 ### 执行模式
 
-执行模式直接在当前真实代码库生成代码，不创建隔离工作树或项目内交接文档；质量闭环允许在系统
-临时目录保留一个不交付、不提交的 Review JSON，供限定修复期间的门禁复核。
+执行模式直接在当前真实代码库生成代码，不创建隔离工作树或项目内交接文档；质量闭环在
+`docs/pretty/<topic>/tmp/` 保留当前执行所需、且不交付不提交的临时证据，供限定修复和最终门禁复核。
 
 **外部验证绝不阻塞实现。** Design 标记为“人工外部验证”的事项不是执行前置条件；不得因其未完成而停止实现、测试或本地交付。继续完成可本地验证的生产代码、行为测试、编译和覆盖率，并记录外部事项为未执行。
 
@@ -222,7 +222,7 @@ ADR 只在 Prompt-only 路径或 Design 明确引用的例外需要核验时读�
    问题记录为阻断 finding，至少包含稳定 ID、根因组、规则、`path:line#symbol` 证据、允许修复的
    范围和 `open / fixed / exception` 状态；finding 位置和允许范围必须处于实际影响或明确授权文件
    内，没有证据的偏好不得成为 finding。按
-   [质量 Review 合同](references/quality-review-contract.md) 将清单写入系统临时目录，并在顶层记录实际执行的
+   [质量 Review 合同](references/quality-review-contract.md) 将清单写入 `docs/pretty/<topic>/tmp/`，并在顶层记录实际执行的
    `routes_applied`（非平凡生产变更必须包含 `clean-code-guard`），再用
    `scripts/quality_review_gate.py` 校验结构。测试守卫检查新增/修改测试是否通过公共入口覆盖内部
    清单中的结果、状态和异常，是否包含本次行为产生的查询未命中、解析失败、依赖缺失及远程空/失败/
@@ -289,9 +289,9 @@ Design/Plan 快速路径不得增加合同调查；任何额外调查、静态�
 
 ```bash
 python3 skills/pretty-executing/scripts/quality_resolver.py --repo . --base <base> --path <affected-java-file> \
-  --json --json-output <system-temp>/quality-routes.json
+  --json --json-output docs/pretty/<topic>/tmp/quality-routes.json
 python3 skills/pretty-executing/scripts/quality_contract_gate.py --repo . --base <base> --path <affected-java-file>
-python3 skills/pretty-executing/scripts/quality_review_gate.py <system-temp>/quality-review.json --path <affected-java-file> --require-closed
+python3 skills/pretty-executing/scripts/quality_review_gate.py docs/pretty/<topic>/tmp/quality-review.json --path <affected-java-file> --require-closed
 ```
 
 `tests/` 仅存放上述辅助脚本的回归测试，不属于正常执行路径；只有修改辅助脚本时才运行：
@@ -317,9 +317,11 @@ python3 -m unittest discover -s skills/pretty-executing/tests -p 'test_*.py'
   重新验证；脚本输出未覆盖行和部分覆盖分支供判断，不据此机械增加测试。仍无法通过则
   停止并报告。
 
-Maven 的 `--run` 由脚本自动追加按仓库隔离的系统临时目录作为
-`-Dmaven.repo.local`，不写用户目录下的 `~/.m2`，因此不需要为本地仓库写权限单独授权。
-如果构建必须使用指定的可写仓库，可通过 `--build-arg=-Dmaven.repo.local=<path>` 显式传入；
+Maven 的 `--run` 默认使用项目根目录下持久保留的 `.pretty/maven-repository/` 作为
+`-Dmaven.repo.local`，不写用户目录下的 `~/.m2`，也不在执行结束时删除。脚本在执行 Maven
+的目标项目根目录更新 `.gitignore`，缺失时追加 `/.pretty/maven-repository/`，不修改安装
+本 Skill 的仓库。若构建必须使用指定的可写仓库，可通过
+`--build-arg=-Dmaven.repo.local=<path>` 显式传入；
 已有新鲜 XML 时使用 `--report` 只读报告，不启动 Maven。
 
 绿路径唯一一次带测试的命令同时完成相关模块全量测试和 JaCoCo：
@@ -327,9 +329,10 @@ Maven 的 `--run` 由脚本自动追加按仓库隔离的系统临时目录作�
 ```bash
 python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
   --repo . --base <base> --path <behavior-java-file> --run \
+  --work-dir docs/pretty/<topic>/tmp \
   --build-arg=-pl --build-arg=<module> --build-arg=-am \
   --test-task=test --jacoco-task=org.jacoco:jacoco-maven-plugin:report \
-  --json-output <system-temp>/coverage.json
+  --json-output docs/pretty/<topic>/tmp/coverage.json
 ```
 
 Gradle 多模块项目将任务本身限定到目标模块，例如
@@ -342,7 +345,7 @@ Gradle 多模块项目将任务本身限定到目标模块，例如
 ```bash
 python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
   --repo . --base <base> --path <behavior-java-file> \
-  --report <jacoco-xml-report> --json-output <system-temp>/coverage.json
+  --report <jacoco-xml-report> --json-output docs/pretty/<topic>/tmp/coverage.json
 ```
 
 ## 执行范围与代码生成约束
@@ -381,10 +384,15 @@ python3 skills/pretty-executing/scripts/verify_incremental_coverage.py \
 python3 skills/pretty-executing/scripts/validate_execution.py \
   docs/pretty/<topic>/<execution-batch>.md --final \
   --contract docs/pretty/<topic>/design.md --repo . --base <base> \
-  --coverage-json <system-temp>/coverage.json --review-json <system-temp>/quality-review.json \
-  --routes-json <system-temp>/quality-routes.json \
+  --coverage-json docs/pretty/<topic>/tmp/coverage.json \
+  --review-json docs/pretty/<topic>/tmp/quality-review.json \
+  --routes-json docs/pretty/<topic>/tmp/quality-routes.json \
   --path <reviewed-file>
 ```
+
+最终记录校验成功或停止记录完成后，删除当前执行在 `docs/pretty/<topic>/tmp/` 中创建的临时
+证据和 Gradle init script，并在目录为空时删除 `tmp/`。不得删除持久 Maven 仓库
+`.pretty/maven-repository/`。异常退出留下的 topic 临时文件在该 topic 下次执行开始时清理。
 
 首个批次使用 `execution.md`；再次执行先运行
 `python3 skills/pretty-executing/scripts/execution_batch.py docs/pretty/<topic>` 选择下一个未占用的批次

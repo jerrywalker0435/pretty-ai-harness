@@ -18,6 +18,7 @@ from verify_incremental_coverage import (
     LineCoverage,
     SourceCoverage,
     _maven_coverage_command,
+    _run_coverage,
     calculate,
     changed_sources,
     project_thresholds,
@@ -82,10 +83,11 @@ class VerifyIncrementalCoverageTest(unittest.TestCase):
         self.assertEqual((99.0, 95.0), repository_thresholds)
 
     @patch("verify_incremental_coverage._executable", return_value=["mvn"])
-    def test_maven_command_uses_writable_temp_repository_by_default(self, _executable):
+    def test_maven_command_uses_persistent_project_repository_by_default(self, _executable):
         with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
             command = _maven_coverage_command(
-                Path(directory),
+                repo,
                 CoverageBuild((), ("test",), ("org.jacoco:jacoco-maven-plugin:report",)),
             )
 
@@ -93,12 +95,11 @@ class VerifyIncrementalCoverageTest(unittest.TestCase):
             argument for argument in command if argument.startswith("-Dmaven.repo.local=")
         )
         repository = Path(repository_argument.split("=", 1)[1])
-        self.assertTrue(repository.is_relative_to(Path(tempfile.gettempdir()).resolve()))
-        self.assertNotIn("/.m2/", repository.as_posix())
+        self.assertEqual(repo.resolve() / ".pretty" / "maven-repository", repository)
 
     @patch("verify_incremental_coverage._executable", return_value=["mvn"])
     def test_maven_command_preserves_explicit_repository(self, _executable):
-        explicit_repository = "/private/tmp/project-maven-repository"
+        explicit_repository = "/custom/project-maven-repository"
         command = _maven_coverage_command(
             Path("/repo"),
             CoverageBuild(
@@ -116,7 +117,7 @@ class VerifyIncrementalCoverageTest(unittest.TestCase):
 
     @patch("verify_incremental_coverage._executable", return_value=["mvn"])
     def test_maven_command_preserves_split_define_repository(self, _executable):
-        explicit_repository = "maven.repo.local=/private/tmp/project-maven-repository"
+        explicit_repository = "maven.repo.local=/custom/project-maven-repository"
         command = _maven_coverage_command(
             Path("/repo"),
             CoverageBuild(("--define", explicit_repository), (), ()),
@@ -124,6 +125,42 @@ class VerifyIncrementalCoverageTest(unittest.TestCase):
 
         self.assertEqual(0, sum(argument.startswith("-Dmaven.repo.local=") for argument in command))
         self.assertEqual(("--define", explicit_repository), tuple(command[1:3]))
+
+    @patch("verify_incremental_coverage.subprocess.run")
+    def test_maven_run_updates_executed_project_gitignore_once(self, run):
+        run.return_value.returncode = 0
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            repo = Path(directory)
+            gitignore = repo / ".gitignore"
+            gitignore.write_text("target/\n", encoding="utf-8")
+            build = CoverageBuild((), ("test",), ("report",))
+
+            _run_coverage(repo, "maven", build, repo / "docs" / "pretty" / "orders" / "tmp")
+            _run_coverage(repo, "maven", build, repo / "docs" / "pretty" / "orders" / "tmp")
+
+            self.assertEqual(
+                "target/\n/.pretty/maven-repository/\n",
+                gitignore.read_text(encoding="utf-8"),
+            )
+
+    @patch("verify_incremental_coverage.subprocess.run")
+    def test_gradle_init_script_uses_and_cleans_project_work_dir(self, run):
+        run.return_value.returncode = 0
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as directory:
+            repo = Path(directory)
+            work_dir = repo / "docs" / "pretty" / "orders" / "tmp"
+
+            exit_code, command = _run_coverage(
+                repo,
+                "gradle",
+                CoverageBuild((), ("test",), ("jacocoTestReport",)),
+                work_dir,
+            )
+
+            init_script = Path(command[command.index("--init-script") + 1])
+            self.assertEqual(work_dir.resolve(), init_script.parent.resolve())
+            self.assertFalse(init_script.exists())
+            self.assertEqual(0, exit_code)
 
     @staticmethod
     def write_pom(path: Path, line: str, branch: str) -> None:

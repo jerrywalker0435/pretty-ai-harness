@@ -1,7 +1,7 @@
 # 强制质量闭环合同
 
-本合同只用于执行模式中非平凡生产代码的一次全量发现 Review 及其限定修复。Review 在系统临时
-目录写入 JSON；该文件不属于项目交付物，不写入 `docs/pretty/`，也不提交到仓库。
+本合同只用于执行模式中非平凡生产代码的一次全量发现 Review 及其限定修复。Review 在
+`docs/pretty/<topic>/tmp/` 写入 JSON；该文件不属于项目交付物，也不提交到仓库。
 
 ## Review JSON
 
@@ -171,7 +171,7 @@ Design/Plan 且尚无当前用户明确删除授权，保持 open，报告合同
 
 ```bash
 python3 skills/pretty-executing/scripts/quality_review_gate.py \
-  <系统临时目录>/quality-review.json \
+  docs/pretty/<topic>/tmp/quality-review.json \
   --path module/src/main/java/example/OrderService.java \
   --path module/src/main/java/example/OrderRepository.java
 ```
@@ -180,7 +180,7 @@ python3 skills/pretty-executing/scripts/quality_review_gate.py \
 
 ```bash
 python3 skills/pretty-executing/scripts/quality_review_gate.py \
-  <系统临时目录>/quality-review.json \
+  docs/pretty/<topic>/tmp/quality-review.json \
   --path module/src/main/java/example/OrderService.java \
   --path module/src/main/java/example/OrderRepository.java \
   --require-closed
