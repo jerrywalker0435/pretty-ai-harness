@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pretty E2E Test"
+  short_description: "执行端到端测试"
+  default_prompt: "Use $pretty-e2e-test to run end-to-end tests."
