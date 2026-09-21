@@ -103,18 +103,39 @@ Codex 支持项目级与用户级 `.agents/skills/`，会自动发现新安装�
 
 需求与技术边界尚未确定时，按 **PRD → 用户 Review → Design → 用户 Review → Executing** 推进。PRD 和 Design 完成后都会停止，由用户审阅并显式发起下一阶段。
 
-```mermaid
-flowchart TD
-    A[业务目标] --> B[pretty-writing-prd]
-    B --> C[用户 Review PRD]
-    C --> D[pretty-writing-design]
-    D --> E[用户 Review Design]
-    E --> F[pretty-executing]
-    F --> G[默认：实施全部 TASK 与本地验证]
-    F --> H[显式 Plan：详细实现计划]
-    H --> I[用户审阅并发起执行]
-    I --> G
-    G --> J[执行记录与未验证范围]
+```text
+业务目标
+  |
+  v
+pretty-writing-prd
+  |
+  v
+用户 Review PRD
+  |
+  v
+pretty-writing-design
+  |
+  v
+用户 Review Design
+  |
+  v
+pretty-executing
+  |
+  +-- 默认
+  |     |
+  |     v
+  |   实施全部 TASK 与本地验证 --> 执行记录与未验证范围
+  |
+  +-- 显式 Plan
+        |
+        v
+      详细实现计划
+        |
+        v
+      用户审阅并发起执行
+        |
+        v
+      实施全部 TASK 与本地验证 --> 执行记录与未验证范围
 ```
 
 | 当前情况 | 从哪里开始 |
