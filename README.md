@@ -2,6 +2,7 @@
 
 面向 Java/Spring 项目的 AI 工程工作流，通过 **PRD、Design、Executing 三个 Skill**，把业务目标转化为可评审的需求与设计，再落实为代码、行为测试和可核验的执行记录。
 
+<<<<<<< HEAD
 - [第一部分：pretty-ai-harness是什么、能做什么、如何安装与使用](#第一部分是什么能做什么如何安装与使用)
 - [第二部分：从软件工程工作流到 AI Harness：基于三个 Skill 的工程实践](#第二部分从软件工程工作流到-ai-harness基于三个-skill-的工程实践)
 
