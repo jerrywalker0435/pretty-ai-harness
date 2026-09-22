@@ -69,7 +69,7 @@ Design 或 execution plan 不得覆盖用户当前明确的目标和授权。Des
 
 `clean-code-guard` 负责通用代码质量，并作为执行模式[非平凡生产代码](references/quality-principles.md#非平凡生产代码判定)
 的阻断质量合同；
-[质量补充](references/quality-principles.md)只负责执行合同、Java/Spring 语义、运行观测和行为测试。
+[质量补充](references/quality-principles.md)负责执行合同、Java/Spring 语义、注释与运行观测的信息充分性和行为测试。
 AGENTS、Trellis 等项目规则决定仓库本地惯例；它们都不能覆盖用户、Design 或 Plan 已明确的业务
 合同。`clean-code-guard` 有具体代码证据的违反项默认阻断交付，只有下文允许的质量例外可以关闭。
 
@@ -211,6 +211,9 @@ ADR 只在 Prompt-only 路径或 Design 明确引用的例外需要核验时读�
 - 路由只指导生成和 Review，不要求把路由字段写入 `execution.md`，也不把专项 Skill 的
   流程、命令或阈值复制进本 Skill。
 - 只有真实事实证明需要时才增加模块边界、类型设计、Java 运行时或行为测试专项约束。
+- Plan 与 Execution 均按[信息充分性原则](references/quality-principles.md#注释与日志的信息充分性)
+  主动补充受影响链路中必要的注释与日志，无须需求逐项声明；全量发现 Review 按
+  [对应语义审查要求](references/quality-review-contract.md#注释与日志信息充分性核验)检查具体缺口并纳入限定修复。
 
 路由匹配后，在每个行为切片首次生成时直接落实约束。执行模式只保留以下收尾关键路径；Plan
 模式使用前文规定的收尾批次，不执行真实项目验证：

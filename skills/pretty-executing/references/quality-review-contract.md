@@ -59,7 +59,10 @@
 - ID 使用连续的 `QF-001` 形式，在本次执行中保持稳定。
 - `reviewed_paths` 覆盖最终实际修改、必要调用链证据及明确允许限定修复的生产、测试和其他代码文件；
   命令中为每个路径重复传入 `--path`，CQS 位置、finding 位置及允许范围都不得逸出该集合。
-- `source` 使用 `clean-code-guard`、`pretty-executing-test-guard` 或实际命中的专项路由名。
+- `source` 使用 `clean-code-guard`、`pretty-executing-quality`（本地质量补充）、
+  `pretty-executing-test-guard`（内置测试审查）或实际命中的专项路由名。
+  `pretty-executing-quality` 和 `pretty-executing-test-guard` 均为内置规则的来源标签，不是独立 Skill，
+  不加入 `routes_applied`；测试审查规则见 [SKILL.md](../SKILL.md) 的“强制质量闭环”步骤。
 - `location` 和 `allowed_scope` 必须定位到 `path#symbol`；行号只作为辅助证据。
 - 同一根因使用相同且稳定的 `QG-001` 形式 `repair_group`；`attempts` 表示该组共享的累计修复次数，
   组内所有 finding 必须一致且最多为两次。
@@ -74,6 +77,20 @@
 此项使用 `source=clean-code-guard`、`rule="21"`，并在 finding 中提供具体的
 `path:line#symbol` 位置和控制流证据。未修复时 `status="open"`，`--require-closed` 必须拒绝进入
 最终验收；例外仍须满足本合同的 `reason`、`facts` 和 `revisit_trigger` 要求。
+
+## 注释与日志信息充分性核验
+
+在同一次全量发现 Review 中，按[信息充分性原则](quality-principles.md#注释与日志的信息充分性)
+检查实际受影响链路。核对关键操作的结果、影响预期结果的跳过/降级/部分成功、异常记录边界，
+以及代码无法表达的业务原因、隐含约束、调用合同和兼容取舍；同时核对现有观测与注释，避免重复。
+
+满足补充条件却缺失时，记录阻断 finding：`source=pretty-executing-quality`，`rule` 使用
+`COMMENT-INFORMATION-GAP` 或 `LOG-INFORMATION-GAP`。`evidence` 必须说明缺少的信息、可能造成的
+维护/调用误判或无法定位的运行问题，以及现有代码表达或观测为何不足；`location` 指向应补充的
+具体 symbol，`allowed_scope` 限定必要修复位置。“注释太少”“日志太少”不构成有效 finding。
+
+沿用现有 `open / fixed / exception` 和限定复核流程，不新增独立 Review、JSON 清单或机械扫描。
+复核补充内容是否真实、足够且无重复；不以数量、比例或正则判定信息充分性。
 
 ## CQS 调用链核验
 
