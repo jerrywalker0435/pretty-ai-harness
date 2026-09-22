@@ -19,6 +19,7 @@ REQUIRED_SECTIONS = (
 )
 REQ_HEADING = re.compile(r"^REQ-\d{3}：\S.+$")
 AC_HEADING = re.compile(r"^AC-\d{3}：\S.+$")
+CONTRACT_REFERENCE_PATTERN = re.compile(r"(?:REQ|AC)-\d+", re.IGNORECASE)
 FORBIDDEN_HEADINGS = ("约束与未决问题", "未决问题")
 PLACEHOLDER_PATTERN = re.compile(
     r"<[^>\n]+>|\b(?:TODO|TBD|FIXME)\b|待用户选择|待确认|未澄清",
@@ -138,6 +139,8 @@ def validate_prd_document(document: str) -> list[str]:
     errors.extend(f"禁止章节：{heading}" for heading in FORBIDDEN_HEADINGS if heading in headings)
     if PLACEHOLDER_PATTERN.search(document):
         errors.append("PRD 仍包含占位内容或未澄清项")
+    if CONTRACT_REFERENCE_PATTERN.search(section_body(document, "用户与场景")):
+        errors.append("用户与场景禁止引用需求编号或验收编号，请直接描述业务触发和可观察结果")
     requirement_headings = [line[4:].strip() for line in document.splitlines() if line.startswith("### REQ-")]
     acceptance_headings = [line[4:].strip() for line in document.splitlines() if line.startswith("### AC-")]
     if not requirement_headings:

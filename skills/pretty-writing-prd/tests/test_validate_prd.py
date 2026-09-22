@@ -57,6 +57,34 @@ HANDOFF = """\n## Design 交接
 """
 
 
+class ValidatePrdScenariosTest(unittest.TestCase):
+    def test_scenarios_reject_requirement_and_acceptance_references(self):
+        for scenario in (
+            "用户按 REQ-001 查询结果。",
+            "用户按 AC-001 核对结果。",
+            "### 查询结果（REQ-001）\n\n用户发起查询。",
+            "- 用户发起查询。（AC-001）",
+            "| 角色 | 结果 |\n| --- | --- |\n| 用户 | REQ-001 |",
+            "用户发起查询，查看[查询规则](#req-001)。",
+            "用户发起查询，查看[验收结果](#ac-001)。",
+        ):
+            with self.subTest(scenario=scenario):
+                document = BASE_PRD.replace("用户发起查询并需要明确结果。", scenario)
+
+                self.assertIn(
+                    "用户与场景禁止引用需求编号或验收编号，请直接描述业务触发和可观察结果",
+                    validate_prd_document(document),
+                )
+
+    def test_natural_language_scenarios_and_contract_traceability_remain_valid(self):
+        document = (BASE_PRD + HANDOFF).replace(
+            "用户发起查询并需要明确结果。",
+            "用户查询不存在的数据时，看到明确的缺失结果，能够与查询失败区分。",
+        ).replace("### AC-001：区分结果", "### AC-001：区分结果\n\n关联 REQ-001。")
+
+        self.assertEqual([], validate_prd_document(document))
+
+
 class ValidatePrdHandoffTest(unittest.TestCase):
     def test_prd_without_repository_snapshot_remains_valid(self):
         self.assertEqual([], validate_prd_document(BASE_PRD))
