@@ -21,7 +21,9 @@ VALID_DESIGN = """# Example Design
 
 ## 方案全景
 
-职责关系保持不变。
+### 技术流程
+
+沿用 Handler#execute → Rule#apply → 返回领域结果的主链路，扩展返回结果。
 
 ## 关键设计与权衡
 
@@ -172,6 +174,68 @@ class ValidateExternalVerificationTest(unittest.TestCase):
             "mock 不能证明真实数据库事务与唯一约束，数据库语义未验证。"
         )
         self.assertEqual([], validate_design_document(self.with_risk(risk)))
+
+
+class ValidateDesignDDLTest(unittest.TestCase):
+    def with_schema_change(self, sql_content):
+        document = VALID_DESIGN.replace(
+            "## 关键设计与权衡",
+            "### 持久化实体\n\n"
+            "#### 表结构变更 DDL\n\n"
+            "数据库：MySQL 8.0。为 work_order 增加 version 列，历史记录初始化为 0。\n\n"
+            f"{sql_content}\n\n"
+            "## 关键设计与权衡",
+        )
+        return document.replace(
+            "；Test `module/src/test/java/example/HandlerTest.java`",
+            "；Test `module/src/test/java/example/HandlerTest.java`；DDL `db/schema.sql`",
+        )
+
+    def test_schema_delivery_requires_inline_sql(self):
+        document = VALID_DESIGN.replace(
+            "；Test `module/src/test/java/example/HandlerTest.java`",
+            "；Test `module/src/test/java/example/HandlerTest.java`；DDL `db/schema.sql`",
+        )
+        self.assertTrue(validate_design_document(document))
+
+    def test_schema_section_requires_ddl_even_without_delivery_declaration(self):
+        document = self.with_schema_change("DDL 见 `db/schema.sql`。").replace(
+            "；DDL `db/schema.sql`", ""
+        )
+        self.assertTrue(validate_design_document(document))
+
+    def test_empty_comments_and_dml_cannot_replace_ddl(self):
+        for content in (
+            "```sql\n\n```",
+            "```sql\n-- ALTER TABLE work_order ADD COLUMN version BIGINT;\n```",
+            "```sql\n/*\nALTER TABLE work_order ADD COLUMN version BIGINT;\n*/\n```",
+            "```sql\nUPDATE work_order SET version = 0;\n```",
+            "ALTER TABLE work_order ADD COLUMN version BIGINT NOT NULL DEFAULT 0;",
+        ):
+            with self.subTest(content=content):
+                self.assertTrue(validate_design_document(self.with_schema_change(content)))
+
+    def test_inline_ddl_and_file_delivery_are_allowed(self):
+        for statement in (
+            "CREATE TABLE work_order (id BIGINT PRIMARY KEY);",
+            "ALTER TABLE work_order ADD COLUMN version BIGINT NOT NULL DEFAULT 0;",
+            "CREATE UNIQUE INDEX uk_work_order_id ON work_order (id);",
+            "ALTER TABLE work_order ADD CONSTRAINT chk_version CHECK (version >= 0);",
+            "DROP INDEX idx_work_order_status ON work_order;",
+            "RENAME TABLE work_order TO work_order_archive;",
+        ):
+            with self.subTest(statement=statement):
+                document = self.with_schema_change(f"```sql\n{statement}\n```")
+                self.assertEqual([], validate_design_document(document))
+
+    def test_unchanged_schema_does_not_require_sql(self):
+        for declaration in ("DDL 无", "DDL：无", "DDL 不适用：复用现有列"):
+            with self.subTest(declaration=declaration):
+                document = VALID_DESIGN.replace(
+                    "；Test `module/src/test/java/example/HandlerTest.java`",
+                    f"；Test `module/src/test/java/example/HandlerTest.java`；{declaration}",
+                )
+                self.assertEqual([], validate_design_document(document))
 
 
 if __name__ == "__main__":

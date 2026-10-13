@@ -31,6 +31,19 @@ MERMAID_START_PATTERN = re.compile(
     r"^(?:flowchart|graph|sequenceDiagram|stateDiagram(?:-v2)?|classDiagram|erDiagram)\b",
     re.IGNORECASE,
 )
+SQL_BLOCK_PATTERN = re.compile(
+    r"^[ \t]*```sql[ \t]*\n(?P<body>.*?)^[ \t]*```[ \t]*$",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
+DDL_STATEMENT_PATTERN = re.compile(
+    r"^\s*(?:CREATE\s+(?:(?:TEMPORARY|UNIQUE)\s+)?(?:TABLE|INDEX)|"
+    r"ALTER\s+TABLE|DROP\s+(?:TABLE|INDEX)|RENAME\s+TABLE)\s+\S",
+    re.IGNORECASE | re.MULTILINE,
+)
+DDL_DELIVERY_PATTERN = re.compile(
+    r"\bDDL\b(?![ \t：:]*(?:无|不适用)(?:$|[\s；;，,：:]))",
+    re.IGNORECASE,
+)
 REQ_REF = re.compile(r"\bREQ-\d{3}\b")
 AC_REF = re.compile(r"\bAC-\d{3}\b")
 TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})[：:]\s*\S.+$", re.MULTILINE)
@@ -144,6 +157,23 @@ def validate_mermaid_blocks(document: str) -> list[str]:
 def _field_value(document: str, field: str) -> str | None:
     match = re.search(rf"^-\s*{re.escape(field)}：\s*(\S.*)$", document, re.MULTILINE)
     return match.group(1).strip() if match else None
+
+
+def _ddl_code_errors(document: str) -> list[str]:
+    panorama = section_body(document, "方案全景")
+    ddl_heading = re.search(r"^####\s+表结构变更 DDL(?:[（(].*)?\s*$", panorama, re.MULTILINE)
+    has_ddl_delivery = any(
+        DDL_DELIVERY_PATTERN.search(line)
+        for line in section_body(document, "Executing交付").splitlines()
+        if line.startswith("- Execution 交付：")
+    )
+    if not ddl_heading and not has_ddl_delivery:
+        return []
+    for block in SQL_BLOCK_PATTERN.finditer(panorama):
+        sql = re.sub(r"/\*.*?\*/|--[^\n]*", "", block.group("body"), flags=re.DOTALL)
+        if DDL_STATEMENT_PATTERN.search(sql):
+            return []
+    return ["声明表结构变更 DDL 或 DDL 交付时，方案全景必须直接包含提供 DDL 语句的 sql 代码块"]
 
 
 def _has_positive_config_change(document: str) -> bool:
@@ -322,6 +352,7 @@ def validate_design_document(document: str) -> list[str]:
     if PLACEHOLDER_PATTERN.search(document):
         errors.append("Design 仍包含占位内容或未决项")
     errors.extend(validate_mermaid_blocks(document))
+    errors.extend(_ddl_code_errors(document))
     errors.extend(_delivery_assignment_errors(document))
     errors.extend(_external_validation_errors(document))
     errors.extend(_quality_directive_errors(document))
