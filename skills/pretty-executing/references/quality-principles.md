@@ -32,7 +32,8 @@ Plan 和 Execution 在完整满足合同与项目必要边界的前提下，优�
 
 ## 受影响链路与合同归属
 
-已批准 Design 或 Plan 提供有效锚点时直接采用其链路；只有 Prompt-only 或锚点失效时才定向确认：
+已批准 Design 或 Plan 提供有效锚点时直接采用其链路；Prompt-only 或锚点失效时定向确认，
+已读事实出现具体复用疑点时按 `../SKILL.md` 的“变更边界”补查必要定义、调用方和边界：
 
 ```text
 入口 → caller → callee → Adapter → 持久化或外部系统
