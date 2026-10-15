@@ -155,17 +155,40 @@ def validate_mermaid_blocks(document: str) -> list[str]:
 
 
 def _field_value(document: str, field: str) -> str | None:
-    match = re.search(rf"^-\s*{re.escape(field)}：\s*(\S.*)$", document, re.MULTILINE)
-    return match.group(1).strip() if match else None
+    lines = document.splitlines()
+    marker = re.compile(rf"^-\s*{re.escape(field)}：\s*(.*)$")
+    for index, line in enumerate(lines):
+        match = marker.match(line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if value:
+            return value
+
+        # Handoff fields may use a fenced block so that every entry is
+        # readable on its own line. Read only until the next task field.
+        entries: list[str] = []
+        in_fence = False
+        for following in lines[index + 1 :]:
+            stripped = following.strip()
+            if stripped.startswith("```"):
+                in_fence = not in_fence
+                continue
+            is_next_field = stripped.startswith("- ") or stripped.startswith("### ") or stripped.startswith("## ")
+            if not in_fence and is_next_field:
+                break
+            if stripped:
+                entries.append(stripped)
+        return "\n".join(entries) or None
+    return None
 
 
 def _ddl_code_errors(document: str) -> list[str]:
     panorama = section_body(document, "方案全景")
     ddl_heading = re.search(r"^####\s+表结构变更 DDL(?:[（(].*)?\s*$", panorama, re.MULTILINE)
     has_ddl_delivery = any(
-        DDL_DELIVERY_PATTERN.search(line)
-        for line in section_body(document, "Executing交付").splitlines()
-        if line.startswith("- Execution 交付：")
+        DDL_DELIVERY_PATTERN.search(_field_value(body, "Execution 交付") or "")
+        for _, body in _task_blocks(section_body(document, "Executing交付"), HANDOFF_TASK_HEADING)
     )
     if not ddl_heading and not has_ddl_delivery:
         return []
@@ -212,9 +235,12 @@ def _execution_handoff_errors(task: str, body: str) -> list[str]:
     for field, value in (("公共验证入口", public_entry), ("影响锚点", anchors)):
         if _not_applicable(value):
             continue
-        if not re.search(r"(?:现有|新增)", value):
+        entries = [entry.strip(" `") for entry in value.splitlines() if entry.strip(" `")]
+        if not entries:
+            entries = [value.strip(" `")]
+        if any(not re.search(r"(?:现有|新增)", entry) for entry in entries):
             errors.append(f"{task} 的{field}必须标记现有或新增")
-        if not PATH_SYMBOL_PATTERN.search(value):
+        if any(not PATH_SYMBOL_PATTERN.search(entry) for entry in entries):
             errors.append(f"{task} 的{field}必须包含仓库相对路径#symbol")
     if not _not_applicable(delivery):
         if not re.search(r"(?:构建根|模块)", delivery):
@@ -228,8 +254,8 @@ def _execution_handoff_errors(task: str, body: str) -> list[str]:
 
 def _has_manual_config_owner(handoff: str) -> bool:
     return any(
-        CONFIG_ARTIFACT_PATTERN.search(match.group(1))
-        for match in re.finditer(r"^-\s*人工运维产物：\s*(\S.*)$", handoff, re.MULTILINE)
+        CONFIG_ARTIFACT_PATTERN.search(_field_value(body, "人工运维产物") or "")
+        for _, body in _task_blocks(handoff, HANDOFF_TASK_HEADING)
     )
 
 
@@ -296,7 +322,7 @@ def _missing_fields(body: str, fields: Sequence[str]) -> list[str]:
     return [
         field
         for field in fields
-        if not re.search(rf"^-\s*{field}：\s*\S.*$", body, re.MULTILINE)
+        if _field_value(body, field) is None
     ]
 
 

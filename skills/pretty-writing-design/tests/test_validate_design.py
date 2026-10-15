@@ -61,10 +61,77 @@ TASK-001 由公共行为测试验证；无额外风险。
 - 人工运维产物：无
 """
 
+FENCED_DESIGN = VALID_DESIGN.split("## Executing交付")[0] + """## Executing交付
+
+### TASK-001
+
+- 公共验证入口：
+
+```text
+现有 module/src/test/java/example/HandlerTest.java#returnsResult
+新增 module/src/test/java/example/HandlerTest.java#rejectsMissingId
+```
+
+- 影响锚点：
+
+```text
+现有 module/src/main/java/example/Handler.java#execute
+新增 module/src/main/java/example/Rule.java#apply
+```
+
+- Execution 交付：
+
+```text
+构建模块 module
+Modify module/src/main/java/example/Handler.java
+Add module/src/main/java/example/Rule.java
+Test module/src/test/java/example/HandlerTest.java
+```
+
+- 人工运维产物：
+
+```text
+无
+```
+"""
+
 
 class ValidateDesignHandoffTest(unittest.TestCase):
     def test_separated_execution_handoff_is_valid(self):
         self.assertEqual([], validate_design_document(VALID_DESIGN))
+
+    def test_all_handoff_fields_in_fenced_blocks_are_valid(self):
+        self.assertEqual([], validate_design_document(FENCED_DESIGN))
+
+    def test_fenced_manual_config_artifacts_are_recognized(self):
+        document = FENCED_DESIGN.replace(
+            "\n无\n",
+            "\n配置数据 DML db/event-config.sql\n配置激活由人工运维完成\n",
+        )
+
+        self.assertEqual([], validate_design_document(document))
+
+    def test_fenced_execution_delivery_cannot_include_config_dml(self):
+        document = FENCED_DESIGN.replace(
+            "构建模块 module\n",
+            "构建模块 module\n配置数据 DML db/event-config.sql\n",
+        )
+
+        self.assertIn(
+            "TASK-001 不得把配置数据 DML 或配置运维动作列入 Execution 交付",
+            validate_design_document(document),
+        )
+
+    def test_empty_fenced_delivery_does_not_consume_next_field(self):
+        document = FENCED_DESIGN.replace(
+            "构建模块 module\n"
+            "Modify module/src/main/java/example/Handler.java\n"
+            "Add module/src/main/java/example/Rule.java\n"
+            "Test module/src/test/java/example/HandlerTest.java\n",
+            "",
+        )
+
+        self.assertIn("Executing TASK-001 缺少字段：Execution 交付", validate_design_document(document))
 
     def test_responsibility_chain_belongs_to_human_review(self):
         chain = "### 变更职责链路\n\n入口 Handler#execute 到规则所有者 Rule#apply。\n\n"
@@ -168,6 +235,15 @@ class ValidateExternalVerificationTest(unittest.TestCase):
         document += "\n- 依赖：集成测试通过\n"
         self.assertTrue(validate_design_document(document))
 
+    def test_fenced_dependencies_do_not_authorize_external_verification(self):
+        document = FENCED_DESIGN + "\n- 依赖：\n\n```text\n集成测试通过\n```\n"
+
+        self.assertIn(
+            "外部验证不得作为 Execution 交付或门禁；请在验证与风险使用独立的"
+            "人工外部验证条目，并声明不作为 Plan/Execution 门禁",
+            validate_design_document(document),
+        )
+
     def test_local_protocol_tests_and_database_limitations_are_allowed(self):
         risk = (
             "TASK-001 需要本地 HTTP/Dubbo 契约测试及 adapter 协议映射测试。\n"
@@ -197,6 +273,33 @@ class ValidateDesignDDLTest(unittest.TestCase):
             "；Test `module/src/test/java/example/HandlerTest.java`；DDL `db/schema.sql`",
         )
         self.assertTrue(validate_design_document(document))
+
+    def test_fenced_ddl_delivery_requires_inline_sql(self):
+        document = FENCED_DESIGN.replace(
+            "构建模块 module\n", "构建模块 module\nDDL db/schema.sql\n"
+        )
+
+        self.assertIn(
+            "声明表结构变更 DDL 或 DDL 交付时，方案全景必须直接包含提供 DDL 语句的 sql 代码块",
+            validate_design_document(document),
+        )
+
+        document = document.replace(
+            "## 关键设计与权衡",
+            "```sql\nALTER TABLE work_order ADD COLUMN version BIGINT NOT NULL DEFAULT 0;\n```\n\n"
+            "## 关键设计与权衡",
+        )
+        self.assertEqual([], validate_design_document(document))
+
+    def test_fenced_ddl_delivery_cannot_request_execution(self):
+        document = FENCED_DESIGN.replace(
+            "构建模块 module\n", "构建模块 module\n执行 DDL db/schema.sql\n"
+        )
+
+        self.assertIn(
+            "TASK-001 的 DDL 只能作为文件交付，不得列为 Execution 执行动作",
+            validate_design_document(document),
+        )
 
     def test_schema_section_requires_ddl_even_without_delivery_declaration(self):
         document = self.with_schema_change("DDL 见 `db/schema.sql`。").replace(
@@ -236,6 +339,9 @@ class ValidateDesignDDLTest(unittest.TestCase):
                     f"；Test `module/src/test/java/example/HandlerTest.java`；{declaration}",
                 )
                 self.assertEqual([], validate_design_document(document))
+
+                fenced = FENCED_DESIGN.replace("构建模块 module\n", f"构建模块 module\n{declaration}\n")
+                self.assertEqual([], validate_design_document(fenced))
 
 
 if __name__ == "__main__":
