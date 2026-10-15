@@ -21,6 +21,15 @@ VALID_DESIGN = """# Example Design
 
 ## 方案全景
 
+### 业务流程
+
+```mermaid
+flowchart LR
+    submit[提交申请] --> review{是否符合受理条件}
+    review -->|是| accept[受理申请]
+    review -->|否| reject[告知不受理原因]
+```
+
 ### 技术流程
 
 沿用 Handler#execute → Rule#apply → 返回领域结果的主链路，扩展返回结果。
@@ -34,10 +43,6 @@ VALID_DESIGN = """# Example Design
 不改变外部协议所有权。
 
 ## 实施影响
-
-### 变更职责链路
-
-入口 Handler#execute 到规则所有者 Rule#apply。
 
 ### TASK-001：返回结果
 
@@ -133,27 +138,6 @@ class ValidateDesignHandoffTest(unittest.TestCase):
 
         self.assertIn("Executing TASK-001 缺少字段：Execution 交付", validate_design_document(document))
 
-    def test_responsibility_chain_belongs_to_human_review(self):
-        chain = "### 变更职责链路\n\n入口 Handler#execute 到规则所有者 Rule#apply。\n\n"
-        document = VALID_DESIGN.replace(chain, "").replace(
-            "## Executing交付\n\n", "## Executing交付\n\n" + chain
-        )
-
-        errors = validate_design_document(document)
-
-        self.assertIn("实施影响需要供人工评审的变更职责链路", errors)
-        self.assertIn("变更职责链路应位于实施影响，不得放入 Executing交付", errors)
-
-    def test_responsibility_chain_cannot_be_duplicated_in_handoff(self):
-        document = VALID_DESIGN.replace(
-            "## Executing交付\n\n",
-            "## Executing交付\n\n### 变更职责链路\n\n入口到规则所有者。\n\n",
-        )
-
-        errors = validate_design_document(document)
-
-        self.assertIn("变更职责链路应位于实施影响，不得放入 Executing交付", errors)
-
     def test_root_level_file_is_a_valid_repository_relative_path(self):
         document = VALID_DESIGN.replace(
             "module/src/test/java/example/HandlerTest.java#returnsResult",
@@ -200,6 +184,60 @@ class ValidateDesignHandoffTest(unittest.TestCase):
         errors = validate_design_document(document)
 
         self.assertIn("实施影响不得包含 Executing交付字段", errors)
+
+
+class ValidateBusinessFlowTest(unittest.TestCase):
+    def business_section(self):
+        return VALID_DESIGN.split("### 业务流程")[1].split("### 技术流程")[0]
+
+    def test_business_flow_is_required(self):
+        document = VALID_DESIGN.replace("### 业务流程" + self.business_section(), "")
+
+        self.assertIn("方案全景必须包含业务流程小节", validate_design_document(document))
+
+    def test_business_flow_must_precede_technical_flow(self):
+        business = "### 业务流程" + self.business_section()
+        document = VALID_DESIGN.replace(business, "").replace(
+            "## 关键设计与权衡", business + "## 关键设计与权衡"
+        )
+
+        self.assertIn("业务流程必须位于技术流程之前", validate_design_document(document))
+
+    def test_business_flow_requires_its_own_flowchart(self):
+        for replacement in (
+            "\n提交申请后受理或告知不受理原因。\n\n",
+            "\n```mermaid\nsequenceDiagram\n用户->>业务系统: 提交申请\n```\n\n",
+            "\n<!--" + self.business_section() + "-->\n\n",
+        ):
+            with self.subTest(replacement=replacement):
+                document = VALID_DESIGN.replace(self.business_section(), replacement).replace(
+                    "沿用 Handler#execute", "```mermaid\nflowchart LR\nA --> B\n```\n\n沿用 Handler#execute"
+                )
+
+                self.assertIn(
+                    "业务流程必须包含 Mermaid flowchart 流程图",
+                    validate_design_document(document),
+                )
+
+    def test_cross_system_swimlanes_are_valid(self):
+        business = """
+```mermaid
+flowchart LR
+    subgraph orders[订单系统]
+        submit[提交订单]
+        confirm[确认订单]
+    end
+    subgraph payments[支付系统]
+        pay[完成支付]
+    end
+    submit -->|发起支付| pay
+    pay -->|支付成功| confirm
+```
+
+"""
+        document = VALID_DESIGN.replace(self.business_section(), business)
+
+        self.assertEqual([], validate_design_document(document))
 
 
 class ValidateExternalVerificationTest(unittest.TestCase):

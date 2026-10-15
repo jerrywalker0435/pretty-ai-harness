@@ -154,6 +154,24 @@ def validate_mermaid_blocks(document: str) -> list[str]:
     return errors
 
 
+def _business_flow_errors(document: str) -> list[str]:
+    panorama = re.sub(r"<!--.*?-->", "", section_body(document, "方案全景"), flags=re.DOTALL)
+    business_heading = re.search(r"^###[ \t]+业务流程[ \t]*$", panorama, re.MULTILINE)
+    if business_heading is None:
+        return ["方案全景必须包含业务流程小节"]
+    errors: list[str] = []
+    technical_heading = re.search(r"^###[ \t]+技术流程[ \t]*$", panorama, re.MULTILINE)
+    if technical_heading and business_heading.start() > technical_heading.start():
+        errors.append("业务流程必须位于技术流程之前")
+    business_body = re.split(r"^###[ \t]+", panorama[business_heading.end():], maxsplit=1, flags=re.MULTILINE)[0]
+    if not any(
+        re.match(r"\s*(?:flowchart|graph)\b", block.group("body"), re.IGNORECASE)
+        for block in MERMAID_BLOCK_PATTERN.finditer(business_body)
+    ):
+        errors.append("业务流程必须包含 Mermaid flowchart 流程图")
+    return errors
+
+
 def _field_value(document: str, field: str) -> str | None:
     lines = document.splitlines()
     marker = re.compile(rf"^-\s*{re.escape(field)}：\s*(.*)$")
@@ -334,8 +352,6 @@ def _impact_errors(impact: str) -> tuple[list[str], list[str]]:
         errors.append("实施影响至少需要一个 TASK")
     if [int(task.split("-")[1]) for task in tasks] != list(range(1, len(tasks) + 1)):
         errors.append("TASK 编号必须从 TASK-001 连续递增")
-    if not re.search(r"^###\s+变更职责链路\s*$", impact, re.MULTILINE):
-        errors.append("实施影响需要供人工评审的变更职责链路")
     if any(_field_value(impact, field) for field in HANDOFF_FIELDS):
         errors.append("实施影响不得包含 Executing交付字段")
     for task, body in task_blocks:
@@ -353,8 +369,6 @@ def _handoff_errors(document: str, handoff: str, impact_tasks: list[str]) -> lis
     task_blocks = _task_blocks(handoff, HANDOFF_TASK_HEADING)
     handoff_tasks = [task for task, _ in task_blocks]
     errors: list[str] = []
-    if re.search(r"^###\s+变更职责链路\s*$", handoff, re.MULTILINE):
-        errors.append("变更职责链路应位于实施影响，不得放入 Executing交付")
     if handoff_tasks != impact_tasks:
         errors.append("Executing交付的 TASK ID 必须与实施影响一致且顺序相同")
     if _has_positive_config_change(document) and not _has_manual_config_owner(handoff):
@@ -378,6 +392,7 @@ def validate_design_document(document: str) -> list[str]:
     if PLACEHOLDER_PATTERN.search(document):
         errors.append("Design 仍包含占位内容或未决项")
     errors.extend(validate_mermaid_blocks(document))
+    errors.extend(_business_flow_errors(document))
     errors.extend(_ddl_code_errors(document))
     errors.extend(_delivery_assignment_errors(document))
     errors.extend(_external_validation_errors(document))
