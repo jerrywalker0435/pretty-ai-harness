@@ -31,7 +31,8 @@ pretty-ai-harness 是一组运行在 Codex 中的 **Skill、文档模板和校�
 
 ### 1.3 如何安装：把这段 Prompt 发给 Codex
 
-在 Codex 中打开要开发的业务项目，将下面的 Prompt 整段发给 Codex，即可让它安装三个核心 Skill 和八个外部依赖 Skill。
+在 Codex 中打开要开发的业务项目，将下面的 Prompt 整段发给 Codex，即可让它安装三个核心 Skill 和九个外部依赖 Skill。
+其中 `i-have-adhd` 是可用时默认加载的精简表达辅助；缺失或暂时无法加载不阻塞三个核心 Skill。
 
 安装需要 Git，以及访问内部 GitLab 和 GitHub 的网络与凭证。运行校验脚本需要 Python 3；执行 Java 任务还需要项目要求的 JDK、Maven/Gradle 或对应 wrapper，以及可生成 JaCoCo XML 的构建配置。如果安装时选择 `npx skills`，还需要 Node.js/npm。
 
@@ -51,7 +52,8 @@ pretty-ai-harness 是一组运行在 Codex 中的 **Skill、文档模板和校�
 如果当前项目就是 pretty-ai-harness，优先使用本地 skills/；否则获取远程默认分支。
 每个 Skill 都要完整安装，保留 SKILL.md 和实际存在的 agents、assets、references、scripts、tests 等配套目录。
 
-2. 安装八个外部依赖 Skill
+2. 安装九个外部依赖 Skill
+其中 `i-have-adhd` 用于可用时默认精简对话和文档；运行时缺失时由三个核心 Skill 的内置规则继续工作。
 从以下仓库按名称定位并安装完整 Skill 目录，不安装整个仓库的全部 Skill：
 - https://github.com/mattpocock/skills.git
   domain-modeling、grilling、codebase-design、tdd
@@ -63,12 +65,14 @@ pretty-ai-harness 是一组运行在 Codex 中的 **Skill、文档模板和校�
   java-code-review
 - https://github.com/github/awesome-copilot.git
   refactor
+- https://github.com/ayghri/i-have-adhd.git
+  i-have-adhd
 
 3. 核对安装结果
 先检查当前项目可发现的已有 Skill；同名 Skill 已可用时复用并报告来源，避免重复安装。
 不要静默覆盖已有本地改动。可使用可用的 Skill 安装器、npx skills，或克隆后复制目录。
 以源仓库 SKILL.md 的 name 为准；若来源或名称不存在，报告具体缺项，不用近似 Skill 替代。
-核对三个核心 Skill、八个依赖 Skill 的名称、SKILL.md 和配套文件，报告实际安装路径。
+核对三个核心 Skill、九个依赖 Skill 的名称、SKILL.md 和配套文件，报告实际安装路径；若 `i-have-adhd` 缺失，标记为可选表达辅助缺项，不阻塞核心 Skill。
 模板和脚本路径按实际安装位置解析，不假定它们位于业务项目的 skills/ 下。
 检查 Codex 能否发现这些 Skill；若尚未显示，提示我重启 Codex 后检查。
 只完成安装与核对，不启动业务开发。
@@ -78,10 +82,11 @@ Codex 支持项目级与用户级 `.agents/skills/`，会自动发现新安装�
 
 #### 依赖 Skill 的分工
 
-安装时准备好全部依赖，运行时按阶段和实际风险调用。
+安装时准备好全部依赖；三个核心 Skill 每次开始前优先加载并应用可用的 `i-have-adhd`，同一会话已加载且仍生效时直接复用。缺失或无法加载时继续使用各 Skill 的内置精简规则，不阻塞工作；其余依赖按阶段和实际风险调用。
 
 | 依赖 Skill | 在工作流中的作用 |
 | --- | --- |
+| `i-have-adhd` | 可用时由三个核心 Skill 默认加载，约束对话、交付表达及文档精简；缺失时使用内置规则并保留完整合同与证据 |
 | `domain-modeling` | PRD 命中术语、状态、身份、唯一性或跨上下文关系等信号时，澄清领域模型并维护 `CONTEXT.md` 等共享上下文 |
 | `grilling` | 外部行为或需求语义不明确时，逐项与用户澄清 |
 | `clean-code-guard` | 为非平凡生产代码提供持续质量约束和阻断审查 |
@@ -93,11 +98,7 @@ Codex 支持项目级与用户级 `.agents/skills/`，会自动发现新安装�
 
 专项 Skill 提供对应规则，执行节奏、验证次数和交付边界由 `pretty-executing` 统一组织。测试守卫是 Executing 内置的审查职责，无需另装一个同名 Skill。
 
-可选安装 [`i-have-adhd`](https://github.com/ayghri/i-have-adhd)，调整对话与交付消息的表达。三个核心 Skill 已内置结果先行、减少重复、聚焦当前行为的要求，它不属于必需依赖：
-
-```text
-请从 https://github.com/ayghri/i-have-adhd.git 安装 i-have-adhd，使用与 pretty-ai-harness 相同的安装范围。
-```
+[`i-have-adhd`](https://github.com/ayghri/i-have-adhd) 可用时默认加载并应用；未安装或无法加载时，核心 Skill 使用内置精简规则继续工作。五项列表上限不用于删减需求、TASK、核心代码或测试证据。
 
 ### 1.4 如何使用
 
@@ -808,10 +809,11 @@ Execution 的完成结论需要实际差异、全部 TASK、行为测试、最�
 
 #### 17. 核心 Skill 与专项 Skill 的关系
 
-三个 Pretty Skill 负责主线；八个外部依赖提供具体问题所需的专业能力：
+三个 Pretty Skill 负责主线；九个外部依赖提供表达约束和专业能力：
 
 | 能力 | 解决的问题 |
 | --- | --- |
+| `i-have-adhd` | 可用时每次工作前默认加载并应用，控制阅读负担、旁支和重复表达；缺失时使用内置规则 |
 | `grilling`、`domain-modeling` | 业务语义、术语、不变量和上下文是否清楚 |
 | `clean-code-guard` | 非平凡生产代码的通用质量约束和阻断审查 |
 | `codebase-design` | 模块边界、规则归属、接口和可测试性是否合理 |
@@ -820,7 +822,7 @@ Execution 的完成结论需要实际差异、全部 TASK、行为测试、最�
 | `tdd` | 公共入口行为测试、断言和边界替身是否有效 |
 | `refactor` | 质量 finding 中职责、抽象、耦合或方法结构问题的限定修复 |
 
-主流程 Skill 决定当前要解决什么问题，专项能力按实际信号介入。`clean-code-guard` 持续约束非平凡生产代码，其他质量专项根据实际增量选择，统一进入一次全量发现 Review；执行节奏、验证次数与交付边界由 Executing 组织。
+主流程 Skill 决定当前要解决什么问题，`i-have-adhd` 在可用时作为共同表达辅助，其余专项能力按实际信号介入。缺失时三个核心 Skill 使用内置精简规则继续工作。`clean-code-guard` 持续约束非平凡生产代码，其他质量专项根据实际增量选择，统一进入一次全量发现 Review；执行节奏、验证次数与交付边界由 Executing 组织。
 
 测试守卫是 Executing 内置的审查职责，不需要安装独立同名 Skill。当前质量补充、Review 合同和脚本位于 `pretty-executing` 内部，也不再依赖单独的 `pretty-common` 共享目录。
 
@@ -933,7 +935,7 @@ Execution 的完成结论需要实际差异、全部 TASK、行为测试、最�
 
 团队落地时，每份产物应回答对应问题，每个重要结论都能回到用户确认、技术合同或仓库事实。文档长短由完整语义决定：不会改变决定的背景可以删去，状态、失败结果、迁移语义和验证边界则必须保留。
 
-先让三个核心 Skill、八个依赖及其配套资源在目标项目中完整可用，再确认项目规范、JDK、构建工具和 JaCoCo 配置。核心 Skill 中的脚本路径按实际安装目录解析，不假定业务项目也使用本仓库的 `skills/` 布局。
+先让三个核心 Skill、九个依赖及其配套资源尽量在目标项目中可用；其中 `i-have-adhd` 缺失不阻塞主流程。再确认项目规范、JDK、构建工具和 JaCoCo 配置。核心 Skill 中的脚本路径按实际安装目录解析，不假定业务项目也使用本仓库的 `skills/` 布局。
 
 团队还需要明确谁审阅需求、谁确认设计、谁负责真实数据库与集成环境验证，以及如何进入既有代码评审和发布流程。本地执行记录应成为后续评审的依据，并清楚标明未验证范围。
 

@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Executing"
   short_description: "生成 Java/Spring 实现或详细执行计划"
-  default_prompt: "Use $pretty-executing to implement the Java/Spring task directly and continue through every TASK and the final quality, build, test, and coverage gates; stop only for an allowed blocker. Use Plan only when the user explicitly requests it."
+  default_prompt: "Use $pretty-executing and, when available, load and apply $i-have-adhd to keep the conversation and execution artifacts concise; if it is unavailable, continue with the built-in concise-writing rules. Implement the Java/Spring task directly and continue through every TASK and the final quality, build, test, and coverage gates; stop only for an allowed blocker. Use Plan only when the user explicitly requests it."

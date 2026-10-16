@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Writing PRD"
   short_description: "创建和修订清晰的 Java/Spring PRD"
-  default_prompt: "Use $pretty-writing-prd to create or revise a concise Java/Spring PRD."
+  default_prompt: "Use $pretty-writing-prd and, when available, load and apply $i-have-adhd to keep the conversation and PRD concise; if it is unavailable, continue with the built-in concise-writing rules. Create or revise a complete Java/Spring PRD."
