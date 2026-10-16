@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for the PRD validator and Design handoff snapshot."""
+"""Regression tests for the PRD validator and Design handoff index."""
 
 from __future__ import annotations
 
@@ -47,13 +47,12 @@ BASE_PRD = """# Example PRD
 """
 
 
-HANDOFF = """\n## Design 交接
+HANDOFF = """\n## Design 交付
 
-- 定位状态：`已核验`
-
-| REQ/AC | 当前公共行为入口 | 当前公共验证入口 |
+| 关联项 | 关键内容 | 定位 |
 | --- | --- | --- |
-| REQ-001 / AC-001 | `module/src/main/java/example/Handler.java#handle` | `module/src/test/java/example/HandlerTest.java#returnsMissing` |
+| REQ-001 / AC-001 | 公共行为入口 | `module/src/main/java/example/Handler.java#handle` |
+| REQ-001 / AC-001 | 公共验证入口 | `module/src/test/java/example/HandlerTest.java#returnsMissing` |
 """
 
 
@@ -86,43 +85,66 @@ class ValidatePrdScenariosTest(unittest.TestCase):
 
 
 class ValidatePrdHandoffTest(unittest.TestCase):
-    def test_prd_without_repository_snapshot_remains_valid(self):
+    def test_prd_without_repository_locators_remains_valid(self):
         self.assertEqual([], validate_prd_document(BASE_PRD))
 
-    def test_verified_snapshot_is_valid(self):
+    def test_index_needs_no_status_or_file_actions(self):
         self.assertEqual([], validate_prd_document(BASE_PRD + HANDOFF))
 
-    def test_snapshot_can_record_only_the_locator_already_read(self):
-        document = (BASE_PRD + HANDOFF).replace(
-            "`module/src/test/java/example/HandlerTest.java#returnsMissing`",
-            "未获取",
-        )
+    def test_index_can_record_only_the_entry_or_test_already_read(self):
+        for label in ("公共行为入口", "公共验证入口"):
+            with self.subTest(label=label):
+                handoff = "\n".join(line for line in HANDOFF.splitlines() if label not in line)
+                self.assertEqual([], validate_prd_document(BASE_PRD + handoff))
 
-        self.assertEqual([], validate_prd_document(document))
+    def test_missing_locators_cannot_be_filled_with_empty_markers(self):
+        for locator in ("无", "未获取", ""):
+            with self.subTest(locator=locator):
+                document = (BASE_PRD + HANDOFF).replace(
+                    "module/src/test/java/example/HandlerTest.java#returnsMissing", locator
+                )
+                self.assertTrue(validate_prd_document(document))
 
-    def test_verified_snapshot_requires_path_and_symbol(self):
-        document = BASE_PRD + HANDOFF.replace(
-            "module/src/test/java/example/HandlerTest.java#returnsMissing",
+    def test_locator_requires_repository_relative_path_and_symbol(self):
+        for locator in (
             "HandlerTest",
+            "/tmp/HandlerTest.java#returnsMissing",
+            "../HandlerTest.java#returnsMissing",
+            "新增 module/src/test/java/example/HandlerTest.java#returnsMissing",
+        ):
+            with self.subTest(locator=locator):
+                document = BASE_PRD + HANDOFF.replace(
+                    "module/src/test/java/example/HandlerTest.java#returnsMissing", locator
+                )
+                self.assertIn(
+                    "Design 交付的定位必须是仓库相对路径#symbol；未获得的定位请省略",
+                    validate_prd_document(document),
+                )
+
+    def test_index_cannot_reference_unknown_contracts(self):
+        for known, unknown in (("REQ-001", "REQ-002"), ("AC-001", "AC-002")):
+            with self.subTest(unknown=unknown):
+                document = BASE_PRD + HANDOFF.replace(known, unknown)
+                self.assertIn(
+                    f"Design 交付引用了不存在的需求或验收编号：{unknown}",
+                    validate_prd_document(document),
+                )
+
+    def test_index_does_not_accept_implementation_decisions(self):
+        document = BASE_PRD + HANDOFF.replace("公共行为入口", "新增文件")
+        self.assertIn(
+            "Design 交付只索引当前公共行为入口或公共验证入口",
+            validate_prd_document(document),
         )
 
-        errors = validate_prd_document(document)
-
-        self.assertIn("Design 交接的公共验证入口必须是仓库 path#symbol 或“未获取”", errors)
-
-    def test_snapshot_cannot_reference_unknown_requirement(self):
-        document = BASE_PRD + HANDOFF.replace("REQ-001 / AC-001", "REQ-002 / AC-001")
-
-        errors = validate_prd_document(document)
-
-        self.assertIn("Design 交接引用了不存在的需求或验收编号：REQ-002", errors)
-
-    def test_snapshot_requires_verified_status(self):
-        document = (BASE_PRD + HANDOFF).replace("`已核验`", "`未获取`")
-
-        errors = validate_prd_document(document)
-
-        self.assertIn("Design 交接必须声明定位状态：已核验", errors)
+    def test_empty_or_malformed_index_is_rejected(self):
+        for handoff in (
+            "\n".join(line for line in HANDOFF.splitlines() if "REQ-001" not in line),
+            HANDOFF.replace("| --- | --- | --- |\n", ""),
+            HANDOFF.replace("| --- | --- | --- |", "| --- | --- |"),
+        ):
+            with self.subTest(handoff=handoff):
+                self.assertTrue(validate_prd_document(BASE_PRD + handoff))
 
 
 if __name__ == "__main__":

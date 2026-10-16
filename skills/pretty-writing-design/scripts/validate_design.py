@@ -17,7 +17,7 @@ REQUIRED_SECTIONS = (
     "设计边界",
     "实施影响",
     "验证与风险",
-    "Executing交付",
+    "Executing 交付",
 )
 FORBIDDEN_HEADINGS = ("覆盖需求", "需求覆盖", "实施计划", "Plan")
 PLACEHOLDER_PATTERN = re.compile(
@@ -40,17 +40,19 @@ DDL_STATEMENT_PATTERN = re.compile(
     r"ALTER\s+TABLE|DROP\s+(?:TABLE|INDEX)|RENAME\s+TABLE)\s+\S",
     re.IGNORECASE | re.MULTILINE,
 )
-DDL_DELIVERY_PATTERN = re.compile(
+DDL_REFERENCE_PATTERN = re.compile(
     r"\bDDL\b(?![ \t：:]*(?:无|不适用)(?:$|[\s；;，,：:]))",
     re.IGNORECASE,
 )
 REQ_REF = re.compile(r"\bREQ-\d{3}\b")
 AC_REF = re.compile(r"\bAC-\d{3}\b")
 TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})[：:]\s*\S.+$", re.MULTILINE)
-HANDOFF_TASK_HEADING = re.compile(r"^###\s+(TASK-\d{3})\s*$", re.MULTILINE)
-TASK_DELIVERY_FIELDS = ("Execution 交付", "人工运维产物")
-HANDOFF_REQUIRED_FIELDS = ("公共验证入口", "影响锚点", *TASK_DELIVERY_FIELDS)
-HANDOFF_FIELDS = (*HANDOFF_REQUIRED_FIELDS, "依赖")
+HANDOFF_TABLE_HEADER = ("关联项", "关键内容", "定位")
+LEGACY_HANDOFF_FIELDS = ("公共验证入口", "影响锚点", "Execution 交付", "人工运维产物", "依赖")
+HANDOFF_IMPLEMENTATION_PATTERN = re.compile(
+    r"\b(?:Add|Modify|Test)\b|(?:新增|修改|删除)文件|构建(?:根|模块)|实施顺序|人工运维产物|^依赖$",
+    re.IGNORECASE,
+)
 EXTERNAL_VALIDATION_PATTERN = re.compile(
     r"集成测试|integration\s+tests?|Testcontainers|端到端测试|\bE2E\b|"
     r"真实(?:数据库|事务)|(?:SQL\s*)?执行计划|联调",
@@ -65,11 +67,6 @@ PATH_SYMBOL_PATTERN = re.compile(
     r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\.[A-Za-z0-9_-]+#"
     r"[A-Za-z_$][A-Za-z0-9_.$]*(?:\([^\n)]*\))?"
 )
-REPOSITORY_FILE_PATTERN = re.compile(
-    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\."
-    r"(?:java|xml|gradle|kts|sql|yaml|yml|properties|json)(?=$|[\s`；;,])",
-    re.IGNORECASE,
-)
 CONFIG_ARTIFACT_PATTERN = re.compile(
     r"配置(?:数据|表)?\s*(?:DML|SQL|脚本|迁移)|配置(?:激活|禁用|回滚)|"
     r"事件定义|模板关系|白名单|种子数据|reference\s+data|seed\s+data",
@@ -83,11 +80,6 @@ CONFIG_CHANGE_PATTERN = re.compile(
     r"[^\n。；;]{0,28}(?:新增|写入|更新|失效|激活|禁用|回滚|删除|DML|SQL|脚本|迁移)|"
     r"(?:新增|写入|更新|失效|激活|禁用|回滚|删除)[^\n。；;]{0,28}"
     r"(?:事件定义|模板关系|白名单|种子数据|reference\s+data|seed\s+data)",
-    re.IGNORECASE,
-)
-STRUCTURAL_DDL_PATTERN = re.compile(
-    r"\b(?:DDL|ALTER\s+TABLE|CREATE\s+(?:TABLE|INDEX)|DROP\s+(?:TABLE|INDEX))\b|"
-    r"表(?:结构)?|字段|索引",
     re.IGNORECASE,
 )
 EXECUTION_CONFIG_ASSIGNMENT = re.compile(
@@ -204,17 +196,14 @@ def _field_value(document: str, field: str) -> str | None:
 def _ddl_code_errors(document: str) -> list[str]:
     panorama = section_body(document, "方案全景")
     ddl_heading = re.search(r"^####\s+表结构变更 DDL(?:[（(].*)?\s*$", panorama, re.MULTILINE)
-    has_ddl_delivery = any(
-        DDL_DELIVERY_PATTERN.search(_field_value(body, "Execution 交付") or "")
-        for _, body in _task_blocks(section_body(document, "Executing交付"), HANDOFF_TASK_HEADING)
-    )
-    if not ddl_heading and not has_ddl_delivery:
+    has_ddl_reference = DDL_REFERENCE_PATTERN.search(section_body(document, "Executing 交付"))
+    if not ddl_heading and not has_ddl_reference:
         return []
     for block in SQL_BLOCK_PATTERN.finditer(panorama):
         sql = re.sub(r"/\*.*?\*/|--[^\n]*", "", block.group("body"), flags=re.DOTALL)
         if DDL_STATEMENT_PATTERN.search(sql):
             return []
-    return ["声明表结构变更 DDL 或 DDL 交付时，方案全景必须直接包含提供 DDL 语句的 sql 代码块"]
+    return ["声明表结构变更 DDL 或 DDL 索引时，方案全景必须直接包含提供 DDL 语句的 sql 代码块"]
 
 
 def _has_positive_config_change(document: str) -> bool:
@@ -225,55 +214,10 @@ def _has_positive_config_change(document: str) -> bool:
     )
 
 
-def _task_delivery_errors(task: str, body: str) -> list[str]:
-    execution_delivery = _field_value(body, "Execution 交付") or ""
-    operations_delivery = _field_value(body, "人工运维产物") or ""
-    errors = []
-    if CONFIG_ARTIFACT_PATTERN.search(execution_delivery):
-        errors.append(f"{task} 不得把配置数据 DML 或配置运维动作列入 Execution 交付")
-    if STRUCTURAL_DDL_PATTERN.search(execution_delivery) and re.search(
-        r"执行|运行|应用|部署|迁移", execution_delivery
-    ):
-        errors.append(f"{task} 的 DDL 只能作为文件交付，不得列为 Execution 执行动作")
-    if _has_positive_config_change(body) and not CONFIG_ARTIFACT_PATTERN.search(operations_delivery):
-        errors.append(f"{task} 提及配置数据变更时必须声明人工运维产物")
-    return errors
-
-
-def _not_applicable(value: str) -> bool:
-    normalized = value.strip().strip("`")
-    return normalized == "无" or normalized.startswith(("不适用：", "不适用:"))
-
-
-def _execution_handoff_errors(task: str, body: str) -> list[str]:
-    public_entry = _field_value(body, "公共验证入口") or ""
-    anchors = _field_value(body, "影响锚点") or ""
-    delivery = _field_value(body, "Execution 交付") or ""
-    errors: list[str] = []
-    for field, value in (("公共验证入口", public_entry), ("影响锚点", anchors)):
-        if _not_applicable(value):
-            continue
-        entries = [entry.strip(" `") for entry in value.splitlines() if entry.strip(" `")]
-        if not entries:
-            entries = [value.strip(" `")]
-        if any(not re.search(r"(?:现有|新增)", entry) for entry in entries):
-            errors.append(f"{task} 的{field}必须标记现有或新增")
-        if any(not PATH_SYMBOL_PATTERN.search(entry) for entry in entries):
-            errors.append(f"{task} 的{field}必须包含仓库相对路径#symbol")
-    if not _not_applicable(delivery):
-        if not re.search(r"(?:构建根|模块)", delivery):
-            errors.append(f"{task} 的 Execution 交付必须声明构建根或模块")
-        if not re.search(r"\b(?:Add|Modify|Test|DDL)\b", delivery):
-            errors.append(f"{task} 的 Execution 交付必须标记 Add/Modify/Test/DDL")
-        if not REPOSITORY_FILE_PATTERN.search(delivery):
-            errors.append(f"{task} 的 Execution 交付必须包含仓库相对文件路径")
-    return errors
-
-
-def _has_manual_config_owner(handoff: str) -> bool:
+def _has_manual_config_owner(document: str) -> bool:
     return any(
-        CONFIG_ARTIFACT_PATTERN.search(_field_value(body, "人工运维产物") or "")
-        for _, body in _task_blocks(handoff, HANDOFF_TASK_HEADING)
+        "人工运维" in line and CONFIG_ARTIFACT_PATTERN.search(line)
+        for line in section_body(document, "设计边界").splitlines()
     )
 
 
@@ -291,7 +235,7 @@ def _delivery_assignment_errors(document: str) -> list[str]:
 
 def _external_validation_errors(document: str) -> list[str]:
     risk_lines = set(section_body(document, "验证与风险").splitlines())
-    handoff_lines = set(section_body(document, "Executing交付").splitlines())
+    handoff_lines = set(section_body(document, "Executing 交付").splitlines())
     errors = []
     for line in document.splitlines():
         if not EXTERNAL_VALIDATION_PATTERN.search(line):
@@ -352,8 +296,8 @@ def _impact_errors(impact: str) -> tuple[list[str], list[str]]:
         errors.append("实施影响至少需要一个 TASK")
     if [int(task.split("-")[1]) for task in tasks] != list(range(1, len(tasks) + 1)):
         errors.append("TASK 编号必须从 TASK-001 连续递增")
-    if any(_field_value(impact, field) for field in HANDOFF_FIELDS):
-        errors.append("实施影响不得包含 Executing交付字段")
+    if any(_field_value(impact, field) for field in LEGACY_HANDOFF_FIELDS):
+        errors.append("实施影响不得包含交付定位或文件清单字段")
     for task, body in task_blocks:
         missing = _missing_fields(body, ("结果", "输入与不变量", "失败语义", "验证观察面"))
         if missing:
@@ -365,20 +309,86 @@ def _impact_errors(impact: str) -> tuple[list[str], list[str]]:
     return tasks, errors
 
 
-def _handoff_errors(document: str, handoff: str, impact_tasks: list[str]) -> list[str]:
-    task_blocks = _task_blocks(handoff, HANDOFF_TASK_HEADING)
-    handoff_tasks = [task for task, _ in task_blocks]
+def _table_cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not (stripped.startswith("|") and stripped.endswith("|")):
+        return None
+    return [cell.strip() for cell in stripped[1:-1].split("|")]
+
+
+def _handoff_rows(handoff: str) -> list[list[str]]:
+    lines = handoff.splitlines()
+    for index, line in enumerate(lines):
+        if _table_cells(line) != list(HANDOFF_TABLE_HEADER):
+            continue
+        separator = _table_cells(lines[index + 1]) if index + 1 < len(lines) else None
+        if separator is None or len(separator) != 3 or not all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator):
+            return []
+        rows: list[list[str]] = []
+        for candidate in lines[index + 2 :]:
+            cells = _table_cells(candidate)
+            if cells is None:
+                break
+            rows.append(cells)
+        return rows
+    return []
+
+
+def _document_locations(document: str) -> set[str]:
+    locations: set[str] = set()
+    parents: list[tuple[int, str]] = []
+    for match in re.finditer(r"^(#{2,6})\s+(.+?)\s*$", document, re.MULTILINE):
+        level, title = len(match.group(1)), match.group(2)
+        while parents and parents[-1][0] >= level:
+            parents.pop()
+        parents.append((level, title))
+        locations.add(" → ".join(title for _, title in parents))
+    return locations
+
+
+def _handoff_locator_errors(label: str, locator: str, locations: set[str]) -> list[str]:
     errors: list[str] = []
-    if handoff_tasks != impact_tasks:
-        errors.append("Executing交付的 TASK ID 必须与实施影响一致且顺序相同")
-    if _has_positive_config_change(document) and not _has_manual_config_owner(handoff):
-        errors.append("Design 提及配置数据变更时必须由 Executing TASK 声明人工运维产物")
-    for task, body in task_blocks:
-        missing = _missing_fields(body, HANDOFF_REQUIRED_FIELDS)
-        if missing:
-            errors.append(f"Executing {task} 缺少字段：{', '.join(missing)}")
-        errors.extend(_task_delivery_errors(task, body))
-        errors.extend(_execution_handoff_errors(task, body))
+    if not label or HANDOFF_IMPLEMENTATION_PATTERN.search(label):
+        errors.append("Executing 交付的关键内容只说明定位用途，不指定文件动作或实施安排")
+    path = locator.split("#", 1)[0]
+    repository_locator = PATH_SYMBOL_PATTERN.fullmatch(locator) and ".." not in path.split("/")
+    if not repository_locator and locator not in locations:
+        errors.append("Executing 交付的定位必须是仓库相对路径#symbol 或文档内存在的章节路径")
+    return errors
+
+
+def _handoff_task_errors(rows: list[list[str]], impact_tasks: list[str], locations: set[str]) -> list[str]:
+    errors: list[str] = []
+    indexed_tasks: list[str] = []
+    contract_tasks: set[str] = set()
+    for row in rows:
+        if len(row) != 3:
+            errors.append("Executing 交付定位表每行必须有三列")
+            continue
+        task, label, locator = row
+        task = task.strip("`")
+        locator = locator.strip("`")
+        if task not in indexed_tasks:
+            indexed_tasks.append(task)
+        errors.extend(_handoff_locator_errors(label, locator, locations))
+        if locator in locations and re.match(rf"实施影响 → {re.escape(task)}[：:]", locator):
+            contract_tasks.add(task)
+    if indexed_tasks != impact_tasks:
+        errors.append("Executing 交付的关联 TASK 必须与实施影响一致且顺序相同")
+    for task in impact_tasks:
+        if task not in contract_tasks:
+            errors.append(f"Executing 交付必须定位 {task} 在实施影响中的结果合同")
+    return errors
+
+
+def _handoff_errors(document: str, handoff: str, impact_tasks: list[str]) -> list[str]:
+    errors: list[str] = []
+    rows = _handoff_rows(handoff)
+    if not rows:
+        errors.append("Executing 交付必须使用“关联项 | 关键内容 | 定位”表格并包含定位")
+    if any(_field_value(handoff, field) for field in LEGACY_HANDOFF_FIELDS):
+        errors.append("Executing 交付只保留定位索引，不列文件清单、人工运维产物或实施依赖")
+    errors.extend(_handoff_task_errors(rows, impact_tasks, _document_locations(document)))
     return errors
 
 
@@ -395,12 +405,14 @@ def validate_design_document(document: str) -> list[str]:
     errors.extend(_business_flow_errors(document))
     errors.extend(_ddl_code_errors(document))
     errors.extend(_delivery_assignment_errors(document))
+    if _has_positive_config_change(document) and not _has_manual_config_owner(document):
+        errors.append("Design 提及配置数据变更时必须在设计边界说明人工运维责任")
     errors.extend(_external_validation_errors(document))
     errors.extend(_quality_directive_errors(document))
     impact = section_body(document, "实施影响")
     impact_tasks, impact_errors = _impact_errors(impact)
     errors.extend(impact_errors)
-    handoff = section_body(document, "Executing交付")
+    handoff = section_body(document, "Executing 交付")
     errors.extend(_handoff_errors(document, handoff, impact_tasks))
     return errors
 

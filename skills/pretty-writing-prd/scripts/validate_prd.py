@@ -26,14 +26,11 @@ PLACEHOLDER_PATTERN = re.compile(
     re.IGNORECASE,
 )
 FLOW_PATTERN = re.compile(r"```mermaid\s+(?:flowchart|graph|stateDiagram(?:-v2)?)\b", re.IGNORECASE)
-HANDOFF_STATUS_PATTERN = re.compile(
-    r"^-\s*定位状态：\s*`?已核验`?\s*$", re.MULTILINE
-)
 HANDOFF_LOCATOR_PATTERN = re.compile(
     r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.$-]+\.[A-Za-z0-9_-]+#"
     r"[A-Za-z_$][A-Za-z0-9_.$]*(?:\([^`\n]*\))?"
 )
-HANDOFF_TABLE_HEADER = ("REQ/AC", "当前公共行为入口", "当前公共验证入口")
+HANDOFF_TABLE_HEADER = ("关联项", "关键内容", "定位")
 
 
 def section_headings(document: str) -> list[str]:
@@ -64,30 +61,27 @@ def _table_cells(line: str) -> list[str] | None:
     return [cell.strip() for cell in stripped[1:-1].split("|")]
 
 
-def _handoff_rows(body: str) -> tuple[list[list[str]], bool]:
+def _handoff_rows(body: str) -> list[list[str]]:
     lines = body.splitlines()
     for index, line in enumerate(lines):
         cells = _table_cells(line)
         if cells != list(HANDOFF_TABLE_HEADER):
             continue
-        if index + 1 >= len(lines) or _table_cells(lines[index + 1]) is None:
-            return [], True
+        separator = _table_cells(lines[index + 1]) if index + 1 < len(lines) else None
+        if separator is None or len(separator) != 3 or not all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator):
+            return []
         rows: list[list[str]] = []
         for candidate in lines[index + 2 :]:
             cells = _table_cells(candidate)
             if cells is None:
                 break
-            if all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells):
-                continue
             rows.append(cells)
-        return rows, True
-    return [], False
+        return rows
+    return []
 
 
 def _handoff_locator_valid(value: str) -> bool:
     normalized = value.strip().strip("`")
-    if normalized == "未获取":
-        return True
     path = normalized.split("#", 1)[0]
     if any(part == ".." for part in path.split("/")):
         return False
@@ -95,39 +89,31 @@ def _handoff_locator_valid(value: str) -> bool:
 
 
 def _design_handoff_errors(document: str) -> list[str]:
-    if "## Design 交接" not in document.splitlines():
+    if "## Design 交付" not in document.splitlines():
         return []
-    body = section_body(document, "Design 交接")
+    body = section_body(document, "Design 交付")
     errors: list[str] = []
-    status_match = HANDOFF_STATUS_PATTERN.search(body)
-    if status_match is None:
-        return ["Design 交接必须声明定位状态：已核验"]
-
-    rows, has_table = _handoff_rows(body)
-    if not has_table or not rows:
-        return ["Design 交接为已核验时必须提供至少一条定位表记录"]
+    rows = _handoff_rows(body)
+    if not rows:
+        return ["Design 交付必须使用“关联项 | 关键内容 | 定位”表格并包含至少一个定位"]
 
     defined_req = set(re.findall(r"^###\s+(REQ-\d{3})：", document, re.MULTILINE))
     defined_ac = set(re.findall(r"^###\s+(AC-\d{3})：", document, re.MULTILINE))
-    has_locator = False
     for row in rows:
         if len(row) != 3:
-            errors.append("Design 交接定位表每行必须有 REQ/AC、行为入口、验证入口三列")
+            errors.append("Design 交付定位表每行必须有三列")
             continue
         req_refs = set(re.findall(r"\bREQ-\d{3}\b", row[0]))
         ac_refs = set(re.findall(r"\bAC-\d{3}\b", row[0]))
         if not req_refs or not ac_refs:
-            errors.append("Design 交接定位表每行必须关联至少一个 REQ-* 和 AC-*")
+            errors.append("Design 交付定位表每行必须关联至少一个 REQ-* 和 AC-*")
         unknown = (req_refs - defined_req) | (ac_refs - defined_ac)
         if unknown:
-            errors.append("Design 交接引用了不存在的需求或验收编号：" + ", ".join(sorted(unknown)))
-        for label, value in zip(("公共行为入口", "公共验证入口"), row[1:]):
-            if not _handoff_locator_valid(value):
-                errors.append(f"Design 交接的{label}必须是仓库 path#symbol 或“未获取”")
-            elif value.strip().strip("`") != "未获取":
-                has_locator = True
-    if not has_locator:
-        errors.append("Design 交接为已核验时至少需要一个 path#symbol")
+            errors.append("Design 交付引用了不存在的需求或验收编号：" + ", ".join(sorted(unknown)))
+        if row[1] not in ("公共行为入口", "公共验证入口"):
+            errors.append("Design 交付只索引当前公共行为入口或公共验证入口")
+        if not _handoff_locator_valid(row[2]):
+            errors.append("Design 交付的定位必须是仓库相对路径#symbol；未获得的定位请省略")
     return sorted(set(errors))
 
 
@@ -137,6 +123,8 @@ def validate_prd_document(document: str) -> list[str]:
     errors: list[str] = []
     errors.extend(f"缺少章节：{section}" for section in REQUIRED_SECTIONS if section not in headings)
     errors.extend(f"禁止章节：{heading}" for heading in FORBIDDEN_HEADINGS if heading in headings)
+    if "Design 交接" in headings:
+        errors.append("请将 Design 交接改为 Design 交付定位索引")
     if PLACEHOLDER_PATTERN.search(document):
         errors.append("PRD 仍包含占位内容或未澄清项")
     if CONTRACT_REFERENCE_PATTERN.search(section_body(document, "用户与场景")):

@@ -60,12 +60,11 @@ flowchart TD
 
 <!-- 同一结果的不同输入在本 AC 下增加条目；不复制 REQ 全部规则，也不用编号代替条件或结果。 -->
 
-## Design 交接
+## Design 交付
 
-<!-- 本节按触发保留，遵循“有则必记、无则不查”。这里只记录为确认当前行为已经读取的公共入口/测试定位，不指定未来实现。未读取时删除本节；只读取其中一项时，另一列写“未获取”。 -->
+<!-- 交付是下一阶段的定位索引，与 Design 的 Executing 交付使用相同三列表格。只记录为确认当前行为已经读取的公共入口或测试，每个定位一行；未获得的定位省略，未读取任何入口或测试时删除本节。不为填表搜索，不指定未来实现。 -->
 
-- 定位状态：`已核验`
-
-| REQ/AC | 当前公共行为入口 | 当前公共验证入口 |
+| 关联项 | 关键内容 | 定位 |
 | --- | --- | --- |
-| REQ-001 / AC-001 | `module/src/main/java/example/Entry.java#handle` | `module/src/test/java/example/EntryTest.java#returnsResult` |
+| REQ-001 / AC-001 | 公共行为入口 | `module/src/main/java/example/Entry.java#handle` |
+| REQ-001 / AC-001 | 公共验证入口 | `module/src/test/java/example/EntryTest.java#returnsResult` |
