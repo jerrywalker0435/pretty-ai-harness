@@ -262,7 +262,8 @@ ADR 只在 Prompt-only 路径或 Design 明确引用的例外需要核验时读�
   流程、命令或阈值复制进本 Skill。
 - 只有真实事实证明需要时才增加模块边界、类型设计、Java 运行时或行为测试专项约束。
 - Plan 与 Execution 均按[信息充分性原则](references/quality-principles.md#注释与日志的信息充分性)
-  主动补充受影响链路中必要的注释与日志，无须需求逐项声明；全量发现 Review 按
+  主动补充受影响链路中必要的注释与日志，并逐次记录本次新增或修改的 RPC/HTTP 外部调用和 MQ 收发，
+  无须需求逐项声明；全量发现 Review 按
   [对应语义审查要求](references/quality-review-contract.md#注释与日志信息充分性核验)检查具体缺口并纳入限定修复。
 
 路由匹配后，在每个行为切片首次生成时直接落实约束。执行模式只保留以下收尾关键路径；Plan
