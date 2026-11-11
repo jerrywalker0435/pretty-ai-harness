@@ -15,6 +15,18 @@ from validate_design import validate_design_document
 
 VALID_DESIGN = """# Example Design
 
+## 项目背景
+
+当前申请入口未区分查询未命中与远端失败，调用方无法判断受理结果。
+
+## 目标
+
+REQ-001、AC-001：调用方获得明确的受理结果，并能区分查询未命中与远端失败。
+
+## 非目标
+
+除 PRD 已明确的范围边界外，无额外非目标。
+
 ## 设计结论
 
 采用现有入口扩展结果合同。
