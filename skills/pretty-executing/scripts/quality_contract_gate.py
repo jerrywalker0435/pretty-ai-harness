@@ -344,8 +344,8 @@ def _void_tail_return_findings(scan: _ControlFlowScan) -> list[Finding]:
             if semicolon != position + 1 or semicolon != len(direct) - 1:
                 continue
             return_position = scan.tokens[token_index].start
-            method_end = scan.tokens[body_closing].end
-            if _span_changed(scan.source, scan.tokens[body_opening].start, method_end, scan.changed_lines):
+            return_end = scan.tokens[direct[semicolon]].end
+            if _span_changed(scan.source, return_position, return_end, scan.changed_lines):
                 findings.append(_finding("VOID_TAIL_RETURN", scan.path, scan.source, return_position))
     return findings
 

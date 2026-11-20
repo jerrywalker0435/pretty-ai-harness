@@ -340,6 +340,27 @@ class ValidateExecutionTest(unittest.TestCase):
         ))
         self.assertEqual([], errors)
 
+        review["findings"] = [{
+            "id": "QF-001", "source": "clean-code-guard", "rule": "21", "severity": "advisory",
+            "location": "src/main/java/Handler.java:8#execute",
+            "evidence": "execute already ended with an unconditional return before this task",
+            "allowed_scope": [], "repair_group": "QG-001", "status": "open", "attempts": 0,
+            "advisory": {
+                "reason": "pre-existing-structure",
+                "facts": "HEAD already has this return; only the validation before it changed",
+            },
+        }]
+        document = VALID_EXECUTION.replace(
+            "机械门禁通过", "机械门禁通过；非阻断建议 QF-001：Handler.java#execute 原有尾部 return",
+        )
+        errors = _final_gate_errors(FinalGateInput(
+            document, contract,
+            {"status": "pass", "line_percentage": 100.0, "branch_percentage": 90.0},
+            review, {"production_java": ["src/main/java/Handler.java"], "routes": []},
+            Path("."), "HEAD", ("src/main/java/Handler.java",),
+        ))
+        self.assertEqual([], errors)
+
     @patch(
         "validate_execution._git_paths",
         return_value={"src/main/java/Handler.java", "src/main/java/Outbox.java"},

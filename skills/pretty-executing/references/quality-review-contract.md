@@ -63,20 +63,50 @@
   `pretty-executing-test-guard`（内置测试审查）或实际命中的专项路由名。
   `pretty-executing-quality` 和 `pretty-executing-test-guard` 均为内置规则的来源标签，不是独立 Skill，
   不加入 `routes_applied`；测试审查规则见 [SKILL.md](../SKILL.md) 的“强制质量闭环”步骤。
-- `location` 和 `allowed_scope` 必须定位到 `path#symbol`；行号只作为辅助证据。
+- `location` 和阻断项的 `allowed_scope` 必须定位到 `path#symbol`；行号只作为辅助证据。
 - 同一根因使用相同且稳定的 `QG-001` 形式 `repair_group`；`attempts` 表示该组共享的累计修复次数，
-  组内所有 finding 必须一致且最多为两次。
+  组内阻断 finding 必须一致且最多为两次；advisory 保留根因组但不参与修复计数。
 - `fixed` 必须记录至少一次修复、实际 resolution 和 verification。
 - `exception` 必须包含 `reason`、`facts` 和 `revisit_trigger`；普通实现偏好不能构成例外。
-- `open` 表示尚未关闭；达到两次修复、需要越界或没有新证据时保持 `open` 并停止执行。
+- `open` 表示尚未关闭；阻断项达到两次修复、必要修复需要越界或没有新证据时保持 `open` 并停止执行。
+
+## 问题分级与非阻断建议
+
+按 [重构授权与问题分级](../SKILL.md#重构授权与问题分级) 对照本次开始基线及 symbol 语义判定，
+不按整个文件、完整展示的旧方法或 diff 的 `+` 行授权重构。此分级适用于下文全部检查及专项路由。
+
+- `severity=blocking`：本次引入或加重的问题、必要的正确性修复，以及用户明确指定重构范围内的
+  问题；须在授权范围内局部修复或提供有效合同例外。下述确需连带重构旧代码的纯结构优化除外。
+- `severity=advisory`：未获重构授权的历史结构问题，或新增代码的纯结构优化确实需要连带重构
+  旧代码。只作建议，不自动修复，不阻断交付。错误、行为回归、必要修复及可在本次增量内解决的
+  新质量问题不得降级。历史问题被本次修改加重时，应局部消除加重部分。
+
+advisory 沿用 finding ID、source/rule、location、evidence 和 repair_group，不另建清单；必须为
+`status=open`、`attempts=0`、`allowed_scope=[]`，不标记为 fixed 或 exception，并附：
+
+```json
+"advisory": {
+  "reason": "pre-existing-structure",
+  "facts": "基线 <commit> 的 OrderService#save 已同时写库并返回结果；本次仅新增入参校验，未增加副作用或改变返回值用途，用户未授权重构"
+}
+```
+
+`reason` 只能为 `pre-existing-structure` 或 `requires-legacy-refactor`。后一种的 `facts` 须指出
+必须调整的旧 symbol、为何无法只在新增代码内优化，以及为何不影响本次行为正确性；前一种须说明
+基线事实和本次修改未引入或加重问题的依据。门禁校验字段与状态，Reviewer 核验事实和授权，
+不能用空泛理由规避阻断项。用户后续明确授权时，保留 ID 并转为 blocking，填写实际允许范围后再修复。
+
+`--require-closed` 只要求阻断项关闭；四项汇总计数也只统计 blocking。advisory 在 `execution.md`
+现有“审查”字段简述；Plan 模式在现有约束中说明，不生成执行 Review JSON，也不把建议变成实施 TASK。
 
 ### 控制流终点 Review 规则
 
-全量 Review 必须检查每个新增或修改方法的控制流终点：方法自然到达末尾时，禁止保留无条件尾部
-`return;`；仅当 `return` 位于仍有后续可执行语句的方法中，或表达明确的提前结束语义时允许。
-此项使用 `source=clean-code-guard`、`rule="21"`，并在 finding 中提供具体的
-`path:line#symbol` 位置和控制流证据。未修复时 `status="open"`，`--require-closed` 必须拒绝进入
-最终验收；例外仍须满足本合同的 `reason`、`facts` 和 `revisit_trigger` 要求。
+全量 Review 必须检查每个新增或修改方法的控制流终点：方法自然到达末尾时，无条件尾部
+`return;` 属于冗余；表达明确提前结束语义的 return 不属于该问题。
+此项使用 `source=clean-code-guard`、`rule="21"`，提供具体 `path:line#symbol` 和控制流、基线证据。
+未获重构授权的旧方法原有尾部 return 只作 advisory；本次引入或用户明确指定整改时才阻断。
+机械扫描限定到改动的 return 语句，不能代替 Review 对删除、移动等变更的语义核验；例如删除后续
+逻辑新造成的尾部冗余仍须修正。阻断项未修复时 `status="open"`，`--require-closed` 拒绝验收。
 
 ## 整体实现简洁性核验
 
@@ -86,11 +116,13 @@
 判断整体理解成本；单调用方、方法行数、参数数量或分支语法本身不构成违规。
 复用实现与 CQS 核验中已读取的定义和调用方，只定向补查缺少的必要证据。
 
-发现冗余时，`evidence` 必须引用具体定义与调用方，说明可采用的直接实现、合并或删除，以及
+发现冗余时，先区分历史结构、本次引入问题与跨旧代码的纯结构优化；`evidence` 引用具体定义与
+调用方，说明可采用的直接实现、合并或删除，以及
 为何不损失业务行为、必要约束或边界。优先使用实际适用的 `clean-code-guard` 或专项路由规则；
 没有对应规则时使用 `source=pretty-executing-quality`、`rule=UNNECESSARY-STRUCTURE`。不得仅以
 “代码太多”“看起来复杂”或偏好某种模式记录 finding，也不得在修复时以更多抽象替代原有冗余。
 
+按本合同分级；仅阻断项进入限定修复，不因检查了完整调用链就自动迁移旧职责。
 沿用现有 finding、类型必要性记录和限定修复流程，不新增逐方法 JSON 清单或第二次 Review。
 复核实际修复的 symbol 与调用方，确认整体简化且合同保持；门禁只校验证据结构和关闭状态，
 门禁通过不替代本项语义核验。
@@ -99,15 +131,16 @@
 
 在同一次全量发现 Review 中，按[禁止使用魔法值](quality-principles.md#禁止使用魔法值)检查本次新增
 或修改的代码及其必要定义，核对字面量的实际语义、单位、规则归属和已有可复用符号。Plan 收尾
-Review 同样检查文档内代码，直接修订违规片段，不生成执行模式的 Review JSON。
+Review 同样检查文档内代码，只修订本次引入或明确授权整改的违规片段，不生成执行模式的 Review JSON。
 
-发现魔法值时记录阻断 finding：`source=pretty-executing-quality`、`rule=MAGIC-VALUE`。
+本次引入或修改语义的魔法值记录阻断 finding；旧方法中未引入或加重的历史魔法值仅作 advisory。
+两者使用 `source=pretty-executing-quality`、`rule=MAGIC-VALUE`。
 `evidence` 引用具体表达式，说明其承载但未表达的业务或技术约定，以及应复用或定义的语义表示；
 `location` 指向具体 `path#symbol`，`allowed_scope` 限定必要修复位置。同一问题不重复记录为通用
 质量规则 finding。修复须保持原值、单位、协议与行为，并核验名称确实表达含义；单纯提取为无意义
 常量或添加注释不能关闭。含义无法确定时按合同缺口处理，不猜测值或业务名称。
 
-沿用现有 finding 和限定复核流程；未关闭时阻断交付。不新增 JSON 清单、独立 Review 或机械扫描；
+沿用现有 finding 和限定复核流程；阻断项未关闭时阻断交付。不新增 JSON 清单、独立 Review 或机械扫描；
 门禁校验记录结构与关闭状态，字面量是否构成魔法值由 Reviewer 根据上下文判断。
 
 ## 注释与日志信息充分性核验
@@ -154,8 +187,9 @@ Review 同样检查文档内代码，直接修订违规片段，不生成执行�
 
 `status=clear` 只能用于 `side_effects` 为空且 `finding_ids` 为空的条目。存在副作用时，必须完成调用
 方消费核验，并将状态设为 `finding` 或 `exception`；两种状态都必须关联 finding。副作用与返回值并存
-时按 `clean-code-guard` 第 4 条记录 finding；返回值仅用于日志、调试或被丢弃不能豁免。finding 的
-证据必须同时引用 `side_effects[].location` 与 `caller_consumption[].location`。合同明确要求返回执行
+时按 `clean-code-guard` 第 4 条记录 finding；返回值仅用于日志、调试或被丢弃本身不能豁免。历史 CQS
+结构问题未被本次引入或加重时记为 advisory，检查仍用 `status=finding` 关联它，不伪称 clear 或 exception。
+finding 的证据必须同时引用 `side_effects[].location` 与 `caller_consumption[].location`。合同明确要求返回执行
 结果时，按既有质量例外机制记录；`status=exception` 只能关联 `status=exception` 的 finding，不得
 自行豁免。未完成调用方核验，不得将条目标为 `clear` 或关闭 Review。
 
@@ -171,9 +205,10 @@ Reviewer 根据实际 diff 逐一核对本次新增或修改职责的生产类�
 - 删除该类型后，是否会丢失业务约束、破坏分层，或导致规则重复？
 - 它是否只是对已有实体和可直接计算的标记进行包装？
 
-如果只有包装和转发作用，删除后不损失上述价值，必须按实际命中的质量路由记录阻断 finding；
+如果只有包装和转发作用，删除后不损失上述价值，按实际命中的质量路由记录 finding，并按重构授权分级；
 未命中专项路由时使用 clean-code-guard 的适用规则。不得仅因业务命名、符合 CQS 或出现在 Design
-中判定合规。两字段、单调用方及 DTO 后缀不构成违规或豁免；合法 DTO、值对象和端口可以凭协议、
+中判定合规。旧类型原有的包装问题可记为 advisory，`conclusion=unnecessary` 仍关联该 finding。
+两字段、单调用方及 DTO 后缀不构成违规或豁免；合法 DTO、值对象和端口可以凭协议、
 不变量或分层证据证明必要性。Reviewer 确认路由适用性并将其具体规则落实到证据和 finding 的
 source/rule，不为本核验增加专项 Skill 的构建流程。
 
@@ -208,9 +243,10 @@ source/rule，不为本核验增加专项 Skill 的构建流程。
   不适用；有记录时不得同时声明不适用。纯数据载体的测试或覆盖率豁免不等于新增类型免审。
 
 Design/Plan 中的类型仍须审查。发现不必要时记录 finding，并在 `contract_constraints` 区分内部
-实现建议与明确的保留要求或业务合同。仅在示例或 Files 中出现的内部类型可在既定范围内直接
-简化；删除会违反明确保留要求或业务合同时，只有当前用户已授权该变化才能实施，否则保持
-open，报告具体约束并停止请求方向。仅“Design 指定”不能关闭为 exception；不得自行改写
+实现建议与明确的保留要求或业务合同。仅在示例或 Files 中出现的内部类型也须遵循重构授权，
+历史结构和需连带重构旧代码的纯结构优化仅作 advisory。阻断项删除会违反明确保留要求或业务
+合同时，只有当前用户已授权该变化才能实施，否则保持 open，报告具体约束并停止请求方向。
+仅“Design 指定”不能关闭为 exception；不得自行改写
 上游文档。其他真实不可修改合同的质量例外仍按既有机制提供事实与复查条件，由 Reviewer 判断。
 
 门禁仅检查已申报记录的字段完整性、位置范围、类型重复、结论及 finding 引用一致性；类型是否
@@ -228,7 +264,8 @@ python3 skills/pretty-executing/scripts/quality_review_gate.py \
   --path module/src/main/java/example/OrderRepository.java
 ```
 
-全部 finding 关闭后，用相同生产文件集合执行阻断检查；只有退出码为 `0` 才进入最终验证：
+全部 blocking finding 关闭后，用相同生产文件集合执行阻断检查；advisory 可保持 open，
+只有退出码为 `0` 才进入最终验证：
 
 ```bash
 python3 skills/pretty-executing/scripts/quality_review_gate.py \
@@ -241,5 +278,5 @@ python3 skills/pretty-executing/scripts/quality_review_gate.py \
 将命令输出的唯一汇总行原样写入 `execution.md` 的“质量门禁”。不把完整 finding、测试清单或阶段
 状态复制到执行记录。
 
-限定修复 CQS finding 时，返回值仅供日志使用应优先评估将执行方法改为 `void`，并由掌握执行结论的
-位置记录日志；不得为满足 CQS 新增结果查询、共享状态或额外存储。
+限定修复 blocking CQS finding 时，在新增单元或用户明确指定的重构范围内评估将仅供日志使用的
+返回值改为 `void`，并由掌握执行结论的位置记录日志；不得为满足 CQS 新增结果查询、共享状态或额外存储。

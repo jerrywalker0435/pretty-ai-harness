@@ -18,6 +18,7 @@ CONTROL_FLOW_REVIEW_RULE = "21"
 ALLOWED_STATUS = {"fixed", "exception", "open"}
 CQS_STATUS = {"clear", "finding", "exception"}
 CQS_PLACEHOLDERS = {"unknown", "n/a", "not checked", "todo"}
+ADVISORY_REASONS = ("pre-existing-structure", "requires-legacy-refactor")
 
 
 def _non_empty_string(candidate_text: object) -> bool:
@@ -437,7 +438,8 @@ def _common_finding_errors(finding: dict[str, object], finding_id: str) -> list[
     location = finding.get("location")
     if _non_empty_string(location) and not _valid_symbol_location(location):
         errors.append(f"{finding_id}.location must use path:line#symbol or path#symbol")
-    errors.extend(_validate_scope(finding.get("allowed_scope"), f"{finding_id}.allowed_scope"))
+    if finding.get("severity") != "advisory":
+        errors.extend(_validate_scope(finding.get("allowed_scope"), f"{finding_id}.allowed_scope"))
     return errors
 
 
@@ -491,11 +493,29 @@ def _review_scope_errors(
 
 def _status_errors(finding: dict[str, object], finding_id: str) -> list[str]:
     errors: list[str] = []
-    if finding.get("severity") != "blocking":
-        errors.append(f"{finding_id}.severity must be blocking")
+    if finding.get("severity") not in ("blocking", "advisory"):
+        errors.append(f"{finding_id}.severity must be blocking or advisory")
     status = finding.get("status")
     if not isinstance(status, str) or status not in ALLOWED_STATUS:
         errors.append(f"{finding_id}.status must be one of {sorted(ALLOWED_STATUS)}")
+    return errors
+
+
+def _advisory_errors(finding: dict[str, object], finding_id: str) -> list[str]:
+    if finding.get("severity") != "advisory":
+        return []
+    errors = []
+    if finding.get("status") != "open" or finding.get("attempts") != 0:
+        errors.append(f"{finding_id} advisory must remain open with zero repair attempts")
+    if finding.get("allowed_scope") != []:
+        errors.append(f"{finding_id} advisory allowed_scope must be empty; no refactor is authorized")
+    advisory = finding.get("advisory")
+    if not isinstance(advisory, dict):
+        return [*errors, f"{finding_id} advisory needs a reason and facts object"]
+    if advisory.get("reason") not in ADVISORY_REASONS:
+        errors.append(f"{finding_id} advisory.reason must be one of {ADVISORY_REASONS}")
+    if not _specific_cqs_text(advisory.get("facts")):
+        errors.append(f"{finding_id} advisory.facts must explain the baseline or required legacy refactor")
     return errors
 
 
@@ -535,6 +555,7 @@ def _validate_finding(
     errors.extend(_review_scope_errors(finding, finding_id, reviewed_paths))
     errors.extend(_validate_cqs_finding_evidence(finding, finding_id, reviewed_paths))
     errors.extend(_status_errors(finding, finding_id))
+    errors.extend(_advisory_errors(finding, finding_id))
     errors.extend(_attempt_errors(finding, finding_id))
     errors.extend(_resolution_errors(finding, finding_id))
     return errors
@@ -571,7 +592,7 @@ def _finding_id_errors(finding_ids: list[str]) -> list[str]:
 def _repair_group_consistency_errors(findings: list[object]) -> list[str]:
     attempts_by_group: dict[str, set[int]] = {}
     for finding in findings:
-        if not isinstance(finding, dict):
+        if not isinstance(finding, dict) or finding.get("severity") == "advisory":
             continue
         repair_group = finding.get("repair_group")
         attempts = finding.get("attempts")
@@ -602,7 +623,7 @@ def _open_finding_errors(findings: list[object]) -> list[str]:
     open_ids = [
         finding.get("id", f"finding[{index}]")
         for index, finding in enumerate(findings)
-        if isinstance(finding, dict) and finding.get("status") == "open"
+        if isinstance(finding, dict) and finding.get("severity") == "blocking" and finding.get("status") == "open"
     ]
     return [f"blocking findings remain open: {open_ids}"] if open_ids else []
 
@@ -713,10 +734,12 @@ def validate_closed(payload: object, expected_paths: Sequence[str] = ()) -> list
 
 
 def summary(payload: dict[str, Any]) -> str:
-    findings = payload.get("findings", [])
-    statuses = [finding.get("status") for finding in findings if isinstance(finding, dict)]
+    statuses = [
+        finding.get("status") for finding in payload.get("findings", [])
+        if isinstance(finding, dict) and finding.get("severity") == "blocking"
+    ]
     return (
-        f"clean-code-guard found={len(findings)} "
+        f"clean-code-guard found={len(statuses)} "
         f"fixed={statuses.count('fixed')} "
         f"exception={statuses.count('exception')} "
         f"open={statuses.count('open')}"

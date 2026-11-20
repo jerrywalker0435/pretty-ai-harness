@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from quality_review_gate import main, validate, validate_closed
+from quality_review_gate import main, summary, validate, validate_closed
 
 
 PRODUCTION_PATH = "src/main/java/example/OrderService.java"
@@ -54,7 +54,79 @@ def fixed_finding():
     }
 
 
+def advisory_finding():
+    return {
+        "id": "QF-001",
+        "source": "pretty-executing-quality",
+        "rule": "UNNECESSARY-STRUCTURE",
+        "severity": "advisory",
+        "location": f"{PRODUCTION_PATH}#loadOrder",
+        "evidence": "existing method repeats a normalization step",
+        "allowed_scope": [],
+        "repair_group": "QG-001",
+        "status": "open",
+        "attempts": 0,
+        "advisory": {
+            "reason": "pre-existing-structure",
+            "facts": "baseline HEAD already repeats normalization; the change only adds input validation",
+        },
+    }
+
+
 class QualityReviewGateTest(unittest.TestCase):
+    def test_legacy_and_cross_scope_advice_allow_delivery(self):
+        for reason, facts in (
+            ("pre-existing-structure", "HEAD already repeats normalization; no new repetition was added"),
+            ("requires-legacy-refactor", "sharing the rule requires moving legacy loadOrder logic; behavior is correct"),
+        ):
+            with self.subTest(reason=reason):
+                finding = advisory_finding()
+                finding["advisory"] = {"reason": reason, "facts": facts}
+                self.assertEqual([], validate_closed(review_document([finding]), [PRODUCTION_PATH]))
+
+    def test_advice_requires_valid_scope_evidence_and_no_automatic_repair(self):
+        for changes in (
+            {"advisory": None},
+            {"advisory": {"reason": "pre-existing-structure", "facts": "todo"}},
+            {"advisory": {"reason": "new-bug", "facts": "new code swallows errors"}},
+            {"advisory": {"reason": {}, "facts": "invalid reason"}},
+            {"status": "fixed", "attempts": 1, "resolution": "rewrote legacy code", "verification": "tested"},
+            {"attempts": 1},
+            {"allowed_scope": [f"{PRODUCTION_PATH}#loadOrder"]},
+            {"severity": "warning"},
+        ):
+            with self.subTest(changes=changes):
+                finding = advisory_finding()
+                finding.update(changes)
+                self.assertTrue(validate_closed(review_document([finding])))
+
+    def test_advice_does_not_hide_an_open_blocker_or_inflate_repair_counts(self):
+        blocker = fixed_finding()
+        blocker.update(id="QF-002", status="open", attempts=1)
+        document = review_document([advisory_finding(), blocker])
+        self.assertEqual(["blocking findings remain open: ['QF-002']"], validate_closed(document))
+        self.assertEqual("clean-code-guard found=1 fixed=0 exception=0 open=1", summary(document))
+        blocker["status"] = "fixed"
+        self.assertEqual([], validate_closed(document))
+        self.assertEqual("clean-code-guard found=1 fixed=1 exception=0 open=0", summary(document))
+
+    def test_explicit_authorization_promotes_advice_to_a_blocking_repair(self):
+        finding = advisory_finding()
+        finding.update(severity="blocking", allowed_scope=[f"{PRODUCTION_PATH}#loadOrder"])
+        finding.pop("advisory")
+        document = review_document([finding])
+        self.assertIn("blocking findings remain open", " ".join(validate_closed(document)))
+        finding.update(status="fixed", attempts=1, resolution="removed repeated normalization", verification="behavior tests passed")
+        self.assertEqual([], validate_closed(document))
+
+    def test_advice_cannot_bypass_evidence_path_checks(self):
+        finding = advisory_finding()
+        finding["location"] = "other.java#loadOrder"
+        self.assertIn("included in reviewed_paths", " ".join(validate_closed(review_document([finding]))))
+
+    def test_legacy_wrapper_advice_retains_type_review_without_blocking(self):
+        self.assertEqual([], validate_closed(self.type_review("unnecessary", [advisory_finding()])))
+
     def type_review(self, conclusion="necessary", findings=None):
         document = review_document(findings)
         document.pop("type_necessity_not_applicable")
@@ -247,6 +319,14 @@ class QualityReviewGateTest(unittest.TestCase):
         document.pop("cqs_not_applicable")
 
         self.assertEqual([], validate_closed(document, [PRODUCTION_PATH]))
+
+        # The same CQS evidence remains required when the structure predates the task.
+        finding.update(severity="advisory", status="open", attempts=0, allowed_scope=[],
+                       advisory=advisory_finding()["advisory"])
+        finding["advisory"]["facts"] = "HEAD already writes and returns a result; this change only adds validation"
+        self.assertEqual([], validate_closed(document, [PRODUCTION_PATH]))
+        document["cqs_checks"][0]["caller_consumption"] = []
+        self.assertIn("requires caller_consumption evidence", " ".join(validate_closed(document)))
 
     def test_cqs_exception_requires_exception_finding(self):
         finding = fixed_finding()
@@ -446,6 +526,17 @@ class QualityReviewGateTest(unittest.TestCase):
 
         self.assertEqual(1, exit_code)
         self.assertIn("blocking findings remain open", standard_error.getvalue())
+
+    def test_cli_accepts_open_advice_without_reporting_it_as_fixed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            review_file = Path(directory) / "quality-review.json"
+            review_file.write_text(json.dumps(review_document([advisory_finding()])), encoding="utf-8")
+            standard_output = StringIO()
+            with redirect_stdout(standard_output), redirect_stderr(StringIO()):
+                exit_code = main([str(review_file), "--path", PRODUCTION_PATH, "--require-closed"])
+
+        self.assertEqual(0, exit_code)
+        self.assertEqual("clean-code-guard found=0 fixed=0 exception=0 open=0", standard_output.getvalue().strip())
 
 
 if __name__ == "__main__":

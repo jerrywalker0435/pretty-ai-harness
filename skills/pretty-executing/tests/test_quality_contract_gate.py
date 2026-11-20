@@ -243,7 +243,7 @@ class QualityContractGateTest(unittest.TestCase):
 
         self.assertNotIn("VOID_TAIL_RETURN", self.codes(findings))
 
-    def test_tail_return_is_checked_when_an_earlier_line_in_the_method_changes(self):
+    def test_existing_tail_return_does_not_block_an_unrelated_method_edit(self):
         source = """class Example {
     void changedMethod() {
         doWork();
@@ -254,7 +254,28 @@ class QualityContractGateTest(unittest.TestCase):
 
         findings = findings_for(source, {3})
 
+        self.assertNotIn("VOID_TAIL_RETURN", self.codes(findings))
+
+    def test_new_tail_return_in_an_existing_method_still_blocks(self):
+        source = "class Example {\n    void execute() {\n        doWork();\n        return;\n    }\n}"
+
+        self.assertFinding(findings_for(source, {4}), "VOID_TAIL_RETURN", ERROR)
+
+    def test_new_method_in_existing_file_is_checked_without_touching_old_method(self):
+        source = """class Example {
+    void oldMethod() {
+        return;
+    }
+    void newMethod() {
+        doWork();
+        return;
+    }
+}
+"""
+        findings = findings_for(source, {5, 6, 7, 8})
+
         self.assertFinding(findings, "VOID_TAIL_RETURN", ERROR)
+        self.assertEqual(7, findings[0].line)
 
     def test_whole_object_serialization_in_a_log_is_an_error(self):
         source = 'log.info("request={}", objectMapper.writeValueAsString(request));'
