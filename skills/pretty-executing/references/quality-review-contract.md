@@ -142,6 +142,7 @@ advisory 沿用 finding ID、source/rule、location、evidence 和 repair_group�
 | 禁止 JSONObject | 声明、使用及解析/工厂的实际返回类型；同时检查全限定名、静态调用及类型推断 | `JSONOBJECT-USAGE` |
 | Map 事先授权 | 每项新增用途的位置、键值语义、必要性与替代方案，以及该用途是否已在写入代码前获用户明确授权 | `MAP-WITHOUT-AUTHORIZATION` |
 | 查询与条件无写调用 | 查询/条件位置、直接及间接调用链、实际写入位置和状态变化；不能只看名称、返回类型或注解 | `WRITE-IN-QUERY-OR-CONDITION` |
+| 禁止 continue | 普通及带标签的 continue 语句位置、机械扫描结果及本次实质修改的完整实现 | `CONTINUE-STATEMENT` |
 
 除下文复用 CQS finding 的情况外，执行模式的适用违规使用 `source=pretty-executing-quality`、
 `severity=blocking`，沿用既有 finding、`location`、`evidence`、`allowed_scope` 和限定复核流程，
@@ -151,7 +152,7 @@ advisory 沿用 finding ID、source/rule、location、evidence 和 repair_group�
 
 检查通过的复杂度计数及 Map 必要性和授权依据在现有 Plan 约束或执行记录的审查字段紧凑记录，
 可引用已有静态分析结果；不新增报告、逐项 JSON 清单或独立审批文件。Review JSON 门禁只校验既有
-记录结构和 finding 关闭状态，不自动证明这五项已满足，Reviewer 必须核验真实代码与授权。
+记录结构和 finding 关闭状态，不自动证明所有强制约束已满足，Reviewer 必须核验真实代码与授权。
 
 对查询或条件中的写调用，`evidence` 必须同时引用读取/判断位置、调用链与实际写位置。与已有非 `void`
 生产方法 CQS finding 同根因时，复用 `source=clean-code-guard`、`rule=4` 的 blocking finding，

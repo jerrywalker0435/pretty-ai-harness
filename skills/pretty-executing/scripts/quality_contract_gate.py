@@ -410,7 +410,7 @@ def scan_java_source(path: str, source: str, changed_lines: set[int] | None = No
     findings: list[Finding] = []
     findings.extend(_control_flow_findings(path, source, masked, changed_lines))
     findings.extend(_matches(
-        "LABELED-CONTINUE", re.compile(r"\bcontinue\s+[A-Za-z_$][\w$]*\s*;"),
+        "CONTINUE-STATEMENT", re.compile(r"(?<![\w$])continue(?:\s+[\w$]+)?\s*;"),
         path, source, masked, changed_lines,
     ))
     if _LOG_CALL.search(masked):

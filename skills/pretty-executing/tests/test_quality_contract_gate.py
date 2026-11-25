@@ -52,7 +52,7 @@ class QualityContractGateTest(unittest.TestCase):
         self.assertTrue(REMOVED_RULE_CODES.isdisjoint(RULE_BY_CODE))
         self.assertEqual(
             {
-                "LABELED-CONTINUE",
+                "CONTINUE-STATEMENT",
                 "VOID_TAIL_RETURN",
                 "UNREACHABLE_STATEMENT",
                 "EMPTY_CATCH",
@@ -63,11 +63,11 @@ class QualityContractGateTest(unittest.TestCase):
             set(RULE_BY_CODE),
         )
 
-    def test_plain_continue_is_not_a_mechanical_finding(self):
+    def test_plain_continue_is_an_error(self):
         findings = findings_for("for (Order order : orders) { continue; }")
 
+        self.assertFinding(findings, "CONTINUE-STATEMENT", ERROR)
         self.assertNotIn("CONTROL-FLOW-SKIP", self.codes(findings))
-        self.assertNotIn("LABELED-CONTINUE", self.codes(findings))
 
     def test_context_dependent_patterns_are_not_mechanical_findings(self):
         source = """
@@ -100,11 +100,6 @@ class QualityContractGateTest(unittest.TestCase):
                 String classify(boolean cold, boolean large) {
                     return cold ? "cold" : large ? "large" : "ambient";
                 }
-                void visit(List<Order> orders) {
-                    for (Order order : orders) {
-                        continue;
-                    }
-                }
                 // Step 1: old scaffolding comment
                 @Disabled
                 void skippedTest() {}
@@ -116,10 +111,37 @@ class QualityContractGateTest(unittest.TestCase):
         self.assertEqual([], self.codes(findings))
 
     def test_labeled_continue_is_an_error(self):
-        findings = findings_for("orders: for (;;) { continue orders; }")
+        for label in ("orders", "$orders", "待处理订单"):
+            with self.subTest(label=label):
+                findings = findings_for(f"{label}: for (;;) {{ continue {label}; }}")
+                self.assertFinding(findings, "CONTINUE-STATEMENT", ERROR)
 
-        self.assertFinding(findings, "LABELED-CONTINUE", ERROR)
-        self.assertNotIn("CONTROL-FLOW-SKIP", self.codes(findings))
+    def test_continue_in_comments_strings_and_identifiers_is_not_reported(self):
+        source = '''
+            // continue;
+            /* continue orders; */
+            String action = "continue;";
+            String description = """
+                continue orders;
+                """;
+            boolean continueProcessing = true;
+            boolean $continue = continueProcessing;
+            boolean shouldContinue = $continue;
+        '''
+
+        self.assertEqual([], findings_for(source))
+
+    def test_continue_scan_respects_changes_across_the_statement(self):
+        sources = (
+            "while (hasPendingOrders()) {\n    continue\n        ;\n}",
+            "orders: while (hasPendingOrders()) {\n    continue /* skip order */\n        orders;\n}",
+        )
+        for source in sources:
+            with self.subTest(source=source):
+                self.assertEqual([], findings_for(source, {1}))
+                findings = findings_for(source, {3})
+                self.assertFinding(findings, "CONTINUE-STATEMENT", ERROR)
+                self.assertEqual(2, findings[0].line)
 
     def test_void_tail_return_is_an_error(self):
         source = """
@@ -346,7 +368,7 @@ class QualityContractGateTest(unittest.TestCase):
             repo = Path(directory)
             source = repo / "Example.java"
             output = repo / "quality.json"
-            source.write_text("orders: for (;;) { continue orders; }", encoding="utf-8")
+            source.write_text("for (;;) { continue; }", encoding="utf-8")
 
             with redirect_stdout(StringIO()), redirect_stderr(StringIO()):
                 exit_code = main([
@@ -359,6 +381,7 @@ class QualityContractGateTest(unittest.TestCase):
 
         self.assertEqual(1, exit_code)
         self.assertEqual({"scanned_files", "findings", "errors"}, set(payload))
+        self.assertEqual(["CONTINUE-STATEMENT"], [finding["code"] for finding in payload["findings"]])
         self.assertEqual(["error"], [finding["severity"] for finding in payload["findings"]])
 
     def assertFinding(self, findings, code: str, severity: str):

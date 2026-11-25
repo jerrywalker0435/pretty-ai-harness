@@ -19,7 +19,7 @@ class RuleSpec:
 
 
 RULES = (
-    RuleSpec("LABELED-CONTINUE", "labeled continue hides a cross-level control-flow jump"),
+    RuleSpec("CONTINUE-STATEMENT", "continue statements are forbidden, with or without a label"),
     RuleSpec("VOID_TAIL_RETURN", "void methods must not end with an unconditional return statement"),
     RuleSpec("UNREACHABLE_STATEMENT", "a statement after an unconditional control-flow terminator is unreachable"),
     RuleSpec("EMPTY_CATCH", "catch blocks must contain handling statements"),

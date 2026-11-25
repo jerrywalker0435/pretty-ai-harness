@@ -107,6 +107,12 @@ Plan 和 Execution 在完整满足合同与项目必要边界的前提下，优�
 - 调整必须保持原有执行次数、短路求值、事务与幂等边界；不得把原本有条件的写入变成无条件执行，
   也不得通过新增查询、状态副本或共享存储掩盖副作用。
 
+### 禁止 continue 语句
+
+禁止普通 `continue;` 和带标签的 `continue label;`，包括嵌套循环中的使用。按业务条件组织循环体，
+必要时提取有独立业务语义的处理方法；保持遍历顺序、每轮处理及副作用次数，不用 `break`、异常或
+标记变量机械替换，也不能因消除 continue 使圈复杂度超过 5。
+
 上述要求按[强制约束核验](quality-review-contract.md#强制代码约束核验)纳入同一次 Review；
 不新增独立审查阶段，不用词法扫描替代复杂度计数、业务语义、真实类型、授权及调用链核验。
 
@@ -236,7 +242,7 @@ Plan 代码块与 Execution 新增或实质修改的核心业务规则必须有�
 
 机械门禁只保留无需理解业务上下文即可判定的 Java/Spring 交付错误：
 
-- `LABELED-CONTINUE`
+- `CONTINUE-STATEMENT`
 - `VOID_TAIL_RETURN`
 - `UNREACHABLE_STATEMENT`
 - `EMPTY_CATCH`
@@ -247,6 +253,8 @@ Plan 代码块与 Execution 新增或实质修改的核心业务规则必须有�
 优先使用项目已接入的 Checkstyle/PMD 和编译器规则，并核实实际配置及运行结果；不能仅因存在
 配置文件就视为通过。本仓库的辅助门禁提供无新增依赖的受限词法扫描作为补充：
 
+- `CONTINUE-STATEMENT`：拒绝普通及带标签的 continue 语句；忽略注释和字符串中的文本，增量扫描
+  检查语句跨度内的改动。Review 仍核对本次实质修改的完整实现，不能因关键字所在行未改动而豁免。
 - `VOID_TAIL_RETURN`：检查 `void` 方法体的最后一条直接语句是否为无条件 `return;`；增量扫描仅在
   该 return 语句有改动时报告，不因修改方法内其他行而要求删除历史 return。
 - `UNREACHABLE_STATEMENT`：检查同一块内无条件 `return/throw/break/continue` 后的直接语句；
