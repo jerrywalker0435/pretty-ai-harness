@@ -1,4 +1,4 @@
 interface:
   display_name: "Pretty Writing Design"
-  short_description: "为 Java/Spring Design 明确技术合同、实施影响和结果 TASK"
-  default_prompt: "Use $pretty-writing-design and, when available, load and apply $i-have-adhd to keep the conversation and Design concise; if it is unavailable, continue with the built-in concise-writing rules. Create an executable Design from the approved PRD, then stop for user Review. Continue with $pretty-executing for Plan or direct implementation."
+  short_description: "先比较 2～3 个技术方案，用户确认后编写承接 PRD 的 Java/Spring Design"
+  default_prompt: "Use $pretty-writing-design and, when available, load and apply $i-have-adhd to keep the conversation and Design concise; if it is unavailable, continue with the built-in concise-writing rules. Present two or three brief technical approaches and wait for the user to confirm one before creating a detailed Design; reuse an explicit confirmation that still applies. Carry the approved PRD's background and problems, goals and non-goals into the Design, then stop for user Review. Continue with $pretty-executing for Plan or direct implementation."

@@ -11,9 +11,8 @@ from typing import Sequence
 
 
 REQUIRED_SECTIONS = (
-    "项目背景",
-    "目标",
-    "非目标",
+    "背景与问题",
+    "目标与非目标",
     "设计结论",
     "方案全景",
     "关键设计与权衡",
